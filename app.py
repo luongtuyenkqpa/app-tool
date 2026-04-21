@@ -7,12 +7,10 @@ from flask import Flask, request, jsonify, redirect, make_response
 
 app = Flask(__name__)
 DB_FILE = './database.json'
-ADMIN_PASSWORD = 'admin' # ← THAY MẬT KHẨU Ở ĐÂY
+ADMIN_PASSWORD = 'admin' 
 
-# Lưu trữ các phiên mở khóa từ xa (Web độc lập -> Tool)
 remote_unlocks = {}
 
-# ====================== CHO PHÉP GIAO TIẾP TỪ WEB ĐỘC LẬP (CORS) ======================
 @app.after_request
 def add_cors_headers(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -20,15 +18,17 @@ def add_cors_headers(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
-# ====================== QUẢN LÝ DATABASE ======================
 def load_db():
-    if not os.path.exists(DB_FILE): return {"keys": {}, "logs": [], "banned_ips": {}}
+    if not os.path.exists(DB_FILE): return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": []}
     with open(DB_FILE, 'r', encoding='utf-8') as f:
         try:
             data = json.load(f)
-            if "keys" not in data: return {"keys": data, "logs": [], "banned_ips": {}}
+            if "keys" not in data: data["keys"] = {}
+            if "logs" not in data: data["logs"] = []
+            if "banned_ips" not in data: data["banned_ips"] = {}
+            if "logout_pins" not in data: data["logout_pins"] = [] # Database lưu phiên đăng xuất
             return data
-        except: return {"keys": {}, "logs": [], "banned_ips": {}}
+        except: return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": []}
 
 def save_db(db):
     with open(DB_FILE, 'w', encoding='utf-8') as f: json.dump(db, f, indent=2, ensure_ascii=False)
@@ -42,19 +42,17 @@ def get_real_ip():
 
 @app.before_request
 def check_auth():
-    # Bỏ chặn các API public để web loader độc lập có thể gọi được
-    if request.path in ['/login', '/api/check', '/api/remote_unlock', '/api/poll_unlock'] or request.path.startswith('/static'): return
-    if request.method == 'OPTIONS': return # Preflight requests cho CORS
+    if request.path in ['/login', '/api/check', '/api/remote_unlock', '/api/poll_unlock', '/api/trigger_logout'] or request.path.startswith('/static'): return
+    if request.method == 'OPTIONS': return 
     if request.cookies.get('admin_auth') != 'true': return redirect('/login')
 
-# ====================== CORE LOGIC KIỂM TRA KEY ======================
 def process_key_validation(key, deviceId, real_ip):
     db = load_db()
     if real_ip in db.get("banned_ips", {}):
         ban_exp = db["banned_ips"][real_ip]
         if ban_exp == 'permanent' or int(time.time() * 1000) < ban_exp:
             add_log(db, "BỊ CHẶN IP", key or "N/A", real_ip, deviceId); save_db(db)
-            return False, {"status": "error", "message": "IP của bạn đã bị khóa khỏi hệ thống!"}
+            return False, {"status": "error", "message": "IP của bạn đã bị khóa!"}
         else: del db["banned_ips"][real_ip]
 
     if not key or key not in db["keys"]:
@@ -81,24 +79,35 @@ def process_key_validation(key, deviceId, real_ip):
     return True, {"status": "success", "message": "Xác thực thành công!", "exp": keyData.get('exp'), "vip": keyData.get('vip', False), "devices": f"{len(keyData.get('devices', []))}/{keyData.get('maxDevices', 1)}"}
 
 # ====================== CÁC API CỦA HỆ THỐNG TỪ XA ======================
-@app.route('/api/check', methods=['POST'])
+@app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_key():
+    if request.method == 'OPTIONS': return jsonify({}), 200
     data = request.get_json() or {}
+    pin = data.get('pin')
+    
+    # Kiểm tra ngầm xem Tool có bị Web Loader bắt Đăng Xuất không (Lưu ở Database)
+    if pin:
+        db = load_db()
+        if pin in db.get("logout_pins", []):
+            db["logout_pins"].remove(pin)
+            save_db(db)
+            return jsonify({"status": "error", "message": "Đã bị đăng xuất từ xa bởi Web Loader!"})
+
     success, response = process_key_validation(data.get('key'), data.get('deviceId', 'Unknown'), get_real_ip())
     return jsonify(response)
 
 @app.route('/api/remote_unlock', methods=['POST', 'OPTIONS'])
 def remote_unlock():
-    if request.method == 'OPTIONS': return jsonify({}), 200 # Xác nhận CORS
+    if request.method == 'OPTIONS': return jsonify({}), 200 
     
     data = request.get_json() or {}
     key, pin, deviceId = data.get('key'), data.get('pin'), data.get('deviceId', 'Unknown')
-    if not pin: return jsonify({"status": "error", "message": "Thiếu mã PIN kết nối!"})
+    if not pin: return jsonify({"status": "error", "message": "Thiếu mã PIN!"})
     
     success, response = process_key_validation(key, deviceId, get_real_ip())
     if success:
         if not response.get('vip'): return jsonify({"status": "error", "message": "Chỉ Key VIP mới mở khóa được Tool!"})
-        remote_unlocks[pin] = key # Lưu Key vào RAM Server đợi Tool lấy
+        remote_unlocks[pin] = key 
         response['message'] = "ĐÃ MỞ KHÓA TOOL TỪ XA THÀNH CÔNG!"
     return jsonify(response)
 
@@ -106,10 +115,21 @@ def remote_unlock():
 def poll_unlock():
     pin = request.json.get('pin')
     if pin in remote_unlocks: 
-        return jsonify({"status": "success", "key": remote_unlocks.pop(pin)}) # Gửi cho Tool rồi xóa luôn
+        return jsonify({"status": "success", "key": remote_unlocks.pop(pin)}) 
     return jsonify({"status": "pending"})
 
-# ====================== QUẢN TRỊ ADMIN VÀ HTML ======================
+@app.route('/api/trigger_logout', methods=['POST', 'OPTIONS'])
+def trigger_logout():
+    if request.method == 'OPTIONS': return jsonify({}), 200
+    pin = (request.get_json() or {}).get('pin')
+    if pin: 
+        db = load_db()
+        if pin not in db.setdefault("logout_pins", []):
+            db["logout_pins"].append(pin)
+        save_db(db)
+    return jsonify({"status": "success"})
+
+# ====================== QUẢN TRỊ ADMIN ======================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -133,7 +153,6 @@ def create_key():
     db = load_db()
     for _ in range(qty):
         nk = f"{pfx}-{random.randint(1000000, 9999999)}"
-        # ĐÃ FIX Ở ĐÂY: Sử dụng biến md (maxDevices) thay vì fix cứng 999
         db["keys"][nk] = {"exp": "permanent" if t == 'permanent' else "pending", "maxDevices": md, "devices": [], "status": "active", "vip": vip}
         if t != 'permanent': db["keys"][nk]["durationMs"] = int(dur) * multipliers.get(t, 86400000)
     save_db(db); return redirect('/')
