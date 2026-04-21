@@ -133,7 +133,8 @@ def create_key():
     db = load_db()
     for _ in range(qty):
         nk = f"{pfx}-{random.randint(1000000, 9999999)}"
-        db["keys"][nk] = {"exp": "permanent" if t == 'permanent' else "pending", "maxDevices": 999 if vip else md, "devices": [], "status": "active", "vip": vip}
+        # ĐÃ FIX Ở ĐÂY: Sử dụng biến md (maxDevices) thay vì fix cứng 999
+        db["keys"][nk] = {"exp": "permanent" if t == 'permanent' else "pending", "maxDevices": md, "devices": [], "status": "active", "vip": vip}
         if t != 'permanent': db["keys"][nk]["durationMs"] = int(dur) * multipliers.get(t, 86400000)
     save_db(db); return redirect('/')
 
