@@ -10,6 +10,7 @@ DB_FILE = './database.json'
 ADMIN_PASSWORD = 'admin' 
 
 remote_unlocks = {}
+logout_pins = set()
 
 @app.after_request
 def add_cors_headers(response):
@@ -26,7 +27,7 @@ def load_db():
             if "keys" not in data: data["keys"] = {}
             if "logs" not in data: data["logs"] = []
             if "banned_ips" not in data: data["banned_ips"] = {}
-            if "logout_pins" not in data: data["logout_pins"] = [] # Database lưu phiên đăng xuất
+            if "logout_pins" not in data: data["logout_pins"] = []
             return data
         except: return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": []}
 
@@ -46,7 +47,7 @@ def check_auth():
     if request.method == 'OPTIONS': return 
     if request.cookies.get('admin_auth') != 'true': return redirect('/login')
 
-def process_key_validation(key, deviceId, real_ip):
+def process_key_validation(key, deviceId, real_ip, target_app, expected_type):
     db = load_db()
     if real_ip in db.get("banned_ips", {}):
         ban_exp = db["banned_ips"][real_ip]
@@ -60,6 +61,22 @@ def process_key_validation(key, deviceId, real_ip):
         return False, {"status": "error", "message": "Key không tồn tại!"}
 
     keyData = db["keys"][key]
+    
+    # 1. CHECK CHÉO HỆ THỐNG (TOOL VS OLM)
+    actual_target = keyData.get('target', 'tool')
+    if actual_target != target_app:
+        add_log(db, "SAI HỆ THỐNG", key, real_ip, deviceId); save_db(db)
+        sys_name = "LVT Tool" if actual_target == "tool" else "OLM"
+        return False, {"status": "error", "message": f"LỖI: Key này là của hệ thống {sys_name}. Hãy chọn đúng Công Tắc Hệ Thống!"}
+
+    # 2. CHECK CHÉO CÔNG TẮC VIP/THƯỜNG CỦA NGƯỜI DÙNG
+    is_key_vip = keyData.get('vip', False)
+    is_expect_vip = (expected_type == 'vip')
+    if is_expect_vip and not is_key_vip:
+        return False, {"status": "error", "message": "Key của bạn là Key THƯỜNG. Hãy gạt công tắc sang 'Key Thường'!"}
+    if not is_expect_vip and is_key_vip:
+        return False, {"status": "error", "message": "Key của bạn là Key VIP. Hãy gạt công tắc sang 'Key VIP'!"}
+
     if keyData.get('status') == 'banned':
         add_log(db, "KEY BỊ BANNED", key, real_ip, deviceId); save_db(db)
         return False, {"status": "error", "message": "Key này đã bị khóa (Banned)!"}
@@ -71,51 +88,43 @@ def process_key_validation(key, deviceId, real_ip):
 
     if deviceId not in keyData.get('devices', []):
         if len(keyData.get('devices', [])) >= keyData.get('maxDevices', 1):
-            add_log(db, "QUÁ GIỚI HẠN THIẾT BỊ", key, real_ip, deviceId); save_db(db)
-            return False, {"status": "error", "message": "Key đã đạt giới hạn thiết bị!"}
+            add_log(db, "QUÁ GIỚI HẠN TB", key, real_ip, deviceId); save_db(db)
+            return False, {"status": "error", "message": "Key đã đầy thiết bị!"}
         keyData.setdefault('devices', []).append(deviceId)
 
     add_log(db, "THÀNH CÔNG", key, real_ip, deviceId); save_db(db)
-    return True, {"status": "success", "message": "Xác thực thành công!", "exp": keyData.get('exp'), "vip": keyData.get('vip', False), "devices": f"{len(keyData.get('devices', []))}/{keyData.get('maxDevices', 1)}"}
+    return True, {"status": "success", "message": "Xác thực thành công!", "exp": keyData.get('exp'), "vip": is_key_vip, "devices": f"{len(keyData.get('devices', []))}/{keyData.get('maxDevices', 1)}"}
 
-# ====================== CÁC API CỦA HỆ THỐNG TỪ XA ======================
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_key():
     if request.method == 'OPTIONS': return jsonify({}), 200
     data = request.get_json() or {}
     pin = data.get('pin')
-    
-    # Kiểm tra ngầm xem Tool có bị Web Loader bắt Đăng Xuất không (Lưu ở Database)
     if pin:
         db = load_db()
         if pin in db.get("logout_pins", []):
-            db["logout_pins"].remove(pin)
-            save_db(db)
-            return jsonify({"status": "error", "message": "Đã bị đăng xuất từ xa bởi Web Loader!"})
-
-    success, response = process_key_validation(data.get('key'), data.get('deviceId', 'Unknown'), get_real_ip())
+            db["logout_pins"].remove(pin); save_db(db)
+            return jsonify({"status": "error", "message": "Đã bị đăng xuất từ xa!"})
+    success, response = process_key_validation(data.get('key'), data.get('deviceId', 'Unknown'), get_real_ip(), data.get('target_app', 'tool'), data.get('expected_type', 'normal'))
     return jsonify(response)
 
 @app.route('/api/remote_unlock', methods=['POST', 'OPTIONS'])
 def remote_unlock():
     if request.method == 'OPTIONS': return jsonify({}), 200 
-    
     data = request.get_json() or {}
-    key, pin, deviceId = data.get('key'), data.get('pin'), data.get('deviceId', 'Unknown')
+    key, pin, deviceId, target_app, expected_type = data.get('key'), data.get('pin'), data.get('deviceId', 'Unknown'), data.get('target_app', 'tool'), data.get('expected_type', 'normal')
     if not pin: return jsonify({"status": "error", "message": "Thiếu mã PIN!"})
     
-    success, response = process_key_validation(key, deviceId, get_real_ip())
+    success, response = process_key_validation(key, deviceId, get_real_ip(), target_app, expected_type)
     if success:
-        if not response.get('vip'): return jsonify({"status": "error", "message": "Chỉ Key VIP mới mở khóa được Tool!"})
         remote_unlocks[pin] = key 
-        response['message'] = "ĐÃ MỞ KHÓA TOOL TỪ XA THÀNH CÔNG!"
+        response['message'] = f"ĐÃ KÍCH HOẠT VÀO HỆ THỐNG {target_app.upper()}!"
     return jsonify(response)
 
 @app.route('/api/poll_unlock', methods=['POST'])
 def poll_unlock():
     pin = request.json.get('pin')
-    if pin in remote_unlocks: 
-        return jsonify({"status": "success", "key": remote_unlocks.pop(pin)}) 
+    if pin in remote_unlocks: return jsonify({"status": "success", "key": remote_unlocks.pop(pin)}) 
     return jsonify({"status": "pending"})
 
 @app.route('/api/trigger_logout', methods=['POST', 'OPTIONS'])
@@ -124,12 +133,11 @@ def trigger_logout():
     pin = (request.get_json() or {}).get('pin')
     if pin: 
         db = load_db()
-        if pin not in db.setdefault("logout_pins", []):
-            db["logout_pins"].append(pin)
+        if pin not in db.setdefault("logout_pins", []): db["logout_pins"].append(pin)
         save_db(db)
     return jsonify({"status": "success"})
 
-# ====================== QUẢN TRỊ ADMIN ======================
+# ====================== QUẢN TRỊ ADMIN (CẬP NHẬT 2 FORM) ======================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -149,11 +157,14 @@ def logout():
 multipliers = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
 @app.route('/admin/create', methods=['POST'])
 def create_key():
-    dur, t, md, qty, vip, pfx = request.form.get('duration'), request.form.get('type'), int(request.form.get('maxDevices', 1)), int(request.form.get('quantity', 1)), request.form.get('is_vip')=='on', request.form.get('prefix', 'LVT').strip() or 'LVT'
+    target_app = request.form.get('target_app', 'tool')
+    dur, t, md, qty, vip, pfx = request.form.get('duration'), request.form.get('type'), int(request.form.get('maxDevices', 1)), int(request.form.get('quantity', 1)), request.form.get('is_vip')=='on', request.form.get('prefix', '').strip()
+    
+    if not pfx: pfx = "LVT" if target_app == "tool" else "OLM"
     db = load_db()
     for _ in range(qty):
         nk = f"{pfx}-{random.randint(1000000, 9999999)}"
-        db["keys"][nk] = {"exp": "permanent" if t == 'permanent' else "pending", "maxDevices": md, "devices": [], "status": "active", "vip": vip}
+        db["keys"][nk] = {"exp": "permanent" if t == 'permanent' else "pending", "maxDevices": md, "devices": [], "status": "active", "vip": vip, "target": target_app}
         if t != 'permanent': db["keys"][nk]["durationMs"] = int(dur) * multipliers.get(t, 86400000)
     save_db(db); return redirect('/')
 
@@ -197,8 +208,11 @@ def dashboard():
     db = load_db()
     keys_html = ''
     for k, data in db["keys"].items():
-        is_banned, is_vip = data.get('status') == 'banned', data.get('vip', False)
-        status_badge = '<span class="badge bg-danger">BANNED</span>' if is_banned else ('<span class="badge bg-warning text-dark">VIP</span>' if is_vip else '<span class="badge bg-success">ACTIVE</span>')
+        is_banned, is_vip, sys_target = data.get('status') == 'banned', data.get('vip', False), data.get('target', 'tool')
+        
+        status_badge = '<span class="badge bg-danger">BANNED</span>' if is_banned else ('<span class="badge bg-warning text-dark">VIP</span>' if is_vip else '<span class="badge bg-success">THƯỜNG</span>')
+        sys_badge = '<span class="badge bg-info">LVT Tool</span>' if sys_target == 'tool' else '<span class="badge bg-danger">OLM</span>'
+
         current_time, is_expired = int(time.time() * 1000), False
         if data.get('exp') == 'pending': exp_text = '<span class="text-info">Chờ kích hoạt</span>'
         elif data.get('exp') == 'permanent': exp_text = '<span class="text-success fw-bold">Vĩnh viễn</span>'
@@ -206,11 +220,12 @@ def dashboard():
             is_expired = current_time > data.get('exp', 0)
             exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-light"}">{time.strftime("%d/%m/%Y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
         if is_expired: status_badge = '<span class="badge bg-secondary">HẾT HẠN</span>'
+        
         keys_html += f'''
         <tr class="key-row" data-status="{ "banned" if is_banned else ("expired" if is_expired else "active") }">
-            <td><div class="d-flex align-items-center"><strong class="me-2 text-info">{k}</strong><button class="btn btn-sm btn-outline-light copy-btn" onclick="copyText('{k}')" title="Sao chép">📋</button></div><div class="mt-1">{status_badge}</div></td>
+            <td><div class="d-flex align-items-center"><strong class="me-2 text-info">{k}</strong><button class="btn btn-sm btn-outline-light copy-btn" onclick="copyText('{k}')" title="Sao chép">📋</button></div><div class="mt-1">{status_badge} {sys_badge}</div></td>
             <td>{exp_text}</td><td><span class="badge bg-primary">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
-            <td><div class="btn-group btn-group-sm"><button class="btn btn-info" onclick="openExtendModal('{k}')">⏳</button><a href="/admin/action/add-dev/{k}" class="btn btn-success">+</a><a href="/admin/action/sub-dev/{k}" class="btn btn-warning">-</a><a href="/admin/action/reset-dev/{k}" class="btn btn-secondary">🔄</a><a href="/admin/action/{"unban" if is_banned else "ban"}/{k}" class="btn btn-{"light" if is_banned else "danger"}">{"Mở Khóa" if is_banned else "Khóa"}</a><a href="/admin/action/delete/{k}" class="btn btn-dark" onclick="return confirm('Bạn chắc chắn muốn xóa?')">🗑️</a></div></td>
+            <td><div class="btn-group btn-group-sm"><button class="btn btn-info" onclick="openExtendModal('{k}')">⏳</button><a href="/admin/action/add-dev/{k}" class="btn btn-success">+</a><a href="/admin/action/sub-dev/{k}" class="btn btn-warning">-</a><a href="/admin/action/reset-dev/{k}" class="btn btn-secondary">🔄</a><a href="/admin/action/{"unban" if is_banned else "ban"}/{k}" class="btn btn-{"light" if is_banned else "danger"}">{"Mở" if is_banned else "Khóa"}</a><a href="/admin/action/delete/{k}" class="btn btn-dark" onclick="return confirm('Xóa?')">🗑️</a></div></td>
         </tr>'''
 
     ips_html = ''
@@ -220,11 +235,17 @@ def dashboard():
 
     logs_html = ''
     for log in db.get("logs", []):
-        color = "success" if log['action'] == "THÀNH CÔNG" else ("danger" if "BANNED" in log['action'] or "BỊ CHẶN" in log['action'] else "warning")
+        color = "success" if log['action'] == "THÀNH CÔNG" else ("danger" if "BANNED" in log['action'] or "BỊ CHẶN" in log['action'] or "SAI" in log['action'] else "warning")
         logs_html += f'<tr><td><small class="text-muted">{time.strftime("%H:%M:%S %d/%m", time.localtime(log["time"]))}</small></td><td><span class="badge bg-{color}">{log["action"]}</span></td><td class="text-info">{log["key"]}</td><td><span class="badge bg-secondary">{log["ip"]}</span></td></tr>'
 
     return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4"><div class="card p-3 mb-4"><h4>🔑 Tạo Key</h4><form action="/admin/create" method="POST" class="row g-2"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (LVT)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch"><label class="form-check-label text-warning" for="vipSwitch">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100">TẠO KEY</button></div></form></div><div class="card p-3"><h4 class="text-danger">🛡️ Block IP</h4><form action="/admin/ban-ip" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container" style="max-height:200px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div></div><div class="col-lg-8"><div class="card p-3 mb-4"><div class="d-flex justify-content-between align-items-center mb-3"><h4>📋 Quản Lý Key</h4><div class="d-flex gap-2"><select id="statusFilter" class="form-select form-select-sm bg-dark text-light" onchange="filterTable()"><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="expired">Hết hạn</option><option value="banned">Bị khóa</option></select><input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light" placeholder="Tìm Key..." onkeyup="filterTable()"></div></div><div class="table-container"><table class="table table-dark table-hover mb-0 align-middle"><thead><tr><th>Key</th><th>Hạn</th><th>Thiết bị</th><th>Điều Khiển</th></tr></thead><tbody id="keyTableBody">{keys_html}</tbody></table></div></div><div class="card p-3"><h4>📡 Lịch sử Logs</h4><div class="table-container" style="max-height:250px;"><table class="table table-dark table-sm table-striped mb-0"><thead><tr><th>Time</th><th>Trạng thái</th><th>Key</th><th>IP</th></tr></thead><tbody>{logs_html}</tbody></table></div></div></div></div></div><div class="modal fade" id="extendModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card);"><div class="modal-header"><h5 class="modal-title">⏳ Gia hạn Key</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form action="/admin/extend" method="POST"><div class="modal-body"><input type="hidden" name="key" id="extendKeyInput"><p>Key: <strong id="extendKeyDisplay" class="text-info"></strong></p><div class="row g-2"><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option></select></div></div></div><div class="modal-footer"><button type="submit" class="btn btn-primary w-100">Gia hạn</button></div></form></div></div></div><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script><script>function copyText(text) {{ navigator.clipboard.writeText(text); alert("Đã copy: " + text); }} function filterTable() {{ let s = document.getElementById('searchInput').value.toLowerCase(), f = document.getElementById('statusFilter').value; document.querySelectorAll('.key-row').forEach(r => {{ r.style.display = (r.innerText.toLowerCase().includes(s) && (f==='all' || r.dataset.status===f)) ? '' : 'none'; }}); }} function openExtendModal(key) {{ document.getElementById('extendKeyInput').value = key; document.getElementById('extendKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('extendModal')).show(); }}</script></body></html>
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4">
+    
+    <div class="card p-3 mb-4" style="border-color: #00ffcc;"><h4><i class="fas fa-wrench"></i> Tạo Key LVT Tool</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="tool"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: LVT)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch1"><label class="form-check-label text-warning" for="vipSwitch1">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #00ffcc, #0066ff); color:black;">TẠO KEY LVT</button></div></form></div>
+    
+    <div class="card p-3 mb-4" style="border-color: #ff3366;"><h4><i class="fas fa-crosshairs"></i> Tạo Key OLM</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="olm"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: OLM)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch2"><label class="form-check-label text-warning" for="vipSwitch2">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #ff3366, #ff9900); color:white;">TẠO KEY OLM</button></div></form></div>
+    
+    <div class="card p-3"><h4 class="text-danger">🛡️ Block IP</h4><form action="/admin/ban-ip" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container" style="max-height:200px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div></div><div class="col-lg-8"><div class="card p-3 mb-4"><div class="d-flex justify-content-between align-items-center mb-3"><h4>📋 Quản Lý Key</h4><div class="d-flex gap-2"><select id="statusFilter" class="form-select form-select-sm bg-dark text-light" onchange="filterTable()"><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="expired">Hết hạn</option><option value="banned">Bị khóa</option></select><input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light" placeholder="Tìm Key..." onkeyup="filterTable()"></div></div><div class="table-container"><table class="table table-dark table-hover mb-0 align-middle"><thead><tr><th>Key</th><th>Hạn</th><th>Thiết bị</th><th>Điều Khiển</th></tr></thead><tbody id="keyTableBody">{keys_html}</tbody></table></div></div><div class="card p-3"><h4>📡 Lịch sử Logs</h4><div class="table-container" style="max-height:400px;"><table class="table table-dark table-sm table-striped mb-0"><thead><tr><th>Time</th><th>Trạng thái</th><th>Key</th><th>IP</th></tr></thead><tbody>{logs_html}</tbody></table></div></div></div></div></div><div class="modal fade" id="extendModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card);"><div class="modal-header"><h5 class="modal-title">⏳ Gia hạn Key</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form action="/admin/extend" method="POST"><div class="modal-body"><input type="hidden" name="key" id="extendKeyInput"><p>Key: <strong id="extendKeyDisplay" class="text-info"></strong></p><div class="row g-2"><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option></select></div></div></div><div class="modal-footer"><button type="submit" class="btn btn-primary w-100">Gia hạn</button></div></form></div></div></div><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script><script>function copyText(text) {{ navigator.clipboard.writeText(text); alert("Đã copy: " + text); }} function filterTable() {{ let s = document.getElementById('searchInput').value.toLowerCase(), f = document.getElementById('statusFilter').value; document.querySelectorAll('.key-row').forEach(r => {{ r.style.display = (r.innerText.toLowerCase().includes(s) && (f==='all' || r.dataset.status===f)) ? '' : 'none'; }}); }} function openExtendModal(key) {{ document.getElementById('extendKeyInput').value = key; document.getElementById('extendKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('extendModal')).show(); }}</script></body></html>
     '''
 
 def render_login_html():
