@@ -36,16 +36,14 @@ logout_pins = set()
 multipliers = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
 
 # === BIẾN THEO DÕI IP ONLINE ===
-active_sessions = {} # Lưu trạng thái người đang truy cập OLM
+active_sessions = {} 
 
 def session_monitor():
-    """Luồng ngầm quét xem ai vừa tắt/thoát web OLM"""
     while True:
         time.sleep(5)
         now = time.time()
         to_remove = []
         for did, info in active_sessions.items():
-            # Nếu 35s không nhận được tín hiệu (do họ tắt web)
             if now - info['last_seen'] > 35:
                 to_remove.append(did)
         
@@ -77,7 +75,6 @@ def load_db():
             data.setdefault("logout_pins", [])
             data.setdefault("locked_olm", {})
             data.setdefault("ip_strikes", {})
-            # Đồng bộ format notice cũ sang cấu trúc từ điển mới để tính thời gian
             if not isinstance(data.get("global_notice"), dict):
                 data["global_notice"] = {"msg": str(data.get("global_notice", "")), "exp": "permanent"}
             return data
@@ -97,7 +94,7 @@ def add_log(db, action, key, ip, device, olm_name="N/A"):
         "device": device,
         "olm_name": olm_name
     })
-    db["logs"] = db["logs"][:300] # Tăng giới hạn lưu log lên 300
+    db["logs"] = db["logs"][:300] 
 
 def get_real_ip():
     if request.headers.getlist("X-Forwarded-For"):
@@ -114,7 +111,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
     db = load_db()
     current_time = int(time.time() * 1000)
 
-    # CHECK IP BỊ BAN
     if real_ip in db.get("banned_ips", {}):
         ban_exp = db["banned_ips"][real_ip]
         if ban_exp == 'permanent' or current_time < ban_exp:
@@ -124,7 +120,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         else: 
             del db["banned_ips"][real_ip]
 
-    # CHECK TÀI KHOẢN OLM BỊ KHÓA
     if olm_name != "N/A" and olm_name in db.get("locked_olm", {}):
         olm_exp = db["locked_olm"][olm_name]
         if olm_exp == 'permanent' or current_time < olm_exp:
@@ -146,7 +141,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
 
     keyData = db["keys"][key]
     
-    # CHECK CHÉO HỆ THỐNG
     actual_target = keyData.get('target', 'tool')
     if actual_target != target_app:
         add_log(db, "SAI HỆ THỐNG", key, real_ip, f"{device_name} ({deviceId})", olm_name)
@@ -154,7 +148,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         sys_name = "LVT Tool" if actual_target == "tool" else "OLM"
         return False, {"status": "error", "message": f"LỖI: Key này là của hệ thống {sys_name}!"}
 
-    # CHECK CHÉO VIP/THƯỜNG
     is_key_vip = keyData.get('vip', False)
     is_expect_vip = (expected_type == 'vip')
     if is_expect_vip and not is_key_vip:
@@ -175,7 +168,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         save_db(db)
         return False, {"status": "error", "message": "Key đã hết hạn!"}
 
-    # ANTI-SHARING (CHECK IP)
     known_ips = keyData.setdefault('known_ips', [])
     if real_ip not in known_ips:
         if len(known_ips) >= keyData.get('maxDevices', 1):
@@ -207,7 +199,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         else:
             known_ips.append(real_ip)
 
-    # CHECK DEVICE ID
     if deviceId not in keyData.get('devices', []):
         if len(keyData.get('devices', [])) >= keyData.get('maxDevices', 1):
             add_log(db, "QUÁ GIỚI HẠN TB", key, real_ip, f"{device_name} ({deviceId})", olm_name)
@@ -215,7 +206,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
             return False, {"status": "error", "message": "Key đã đầy thiết bị!"}
         keyData.setdefault('devices', []).append(deviceId)
 
-    # === XỬ LÝ RADAR THEO DÕI OLM VÀO/RA ===
     if target_app == "olm":
         if deviceId not in active_sessions:
             add_log(db, "TRUY CẬP OLM", key, real_ip, f"{device_name} ({deviceId})", olm_name)
@@ -224,18 +214,19 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
             "ip": real_ip, "olm_name": olm_name, "key": key, "last_seen": time.time()
         }
     else:
-        # Nếu là app bình thường, vẫn lưu log Thành công như cũ để check
         add_log(db, "THÀNH CÔNG", key, real_ip, f"{device_name} ({deviceId})", olm_name)
         save_db(db)
 
-    # XỬ LÝ THÔNG BÁO CÓ THỜI HẠN
+    # === [ĐÃ FIX] LẤY VÀ GỬI NOTICE_EXP ĐỂ HẾT BỊ NaN ===
     notice_data = db.get("global_notice", {})
     notice_msg = ""
-    if notice_data.get("msg"):
+    notice_exp = "permanent"
+    
+    if isinstance(notice_data, dict) and notice_data.get("msg"):
         if notice_data.get("exp") == "permanent" or current_time < notice_data.get("exp", 0):
             notice_msg = notice_data["msg"]
+            notice_exp = notice_data["exp"]
         else:
-            # Hết hạn thông báo -> Xóa
             db["global_notice"] = {"msg": "", "exp": "permanent"}
             save_db(db)
 
@@ -245,7 +236,8 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         "exp": keyData.get('exp'), 
         "vip": is_key_vip, 
         "devices": f"{len(keyData.get('devices', []))}/{keyData.get('maxDevices', 1)}",
-        "notice": notice_msg
+        "notice": notice_msg,
+        "notice_exp": notice_exp # Truyền mốc thời gian để Script JS tính toán
     }
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
@@ -399,7 +391,6 @@ def key_actions(action, key):
         save_db(db)
     return redirect('/')
 
-# ROUTE MỚI: QUẢN LÝ IP ĐANG ONLINE TRÊN OLM
 @app.route('/admin/online')
 def online_ips():
     html_rows = ""
