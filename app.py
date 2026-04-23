@@ -68,20 +68,22 @@ def session_monitor():
 
 threading.Thread(target=session_monitor, daemon=True).start()
 
-# --- AUTO RECOVER & ANTI-SLEEP (CHỐNG MẤT DỮ LIỆU RENDER) ---
+# --- AUTO RECOVER & ANTI-SLEEP (CHỐNG MẤT DỮ LIỆU) ---
 def keep_alive_and_backup():
+    # Tự động setup Menu lệnh cho Telegram khi Server khởi động
+    try: requests.post(f"{TELEGRAM_API_URL}/setMyCommands", json={"commands": [{"command": "start", "description": "🏠 Menu Khách Hàng"}, {"command": "loaderkey", "description": "🔗 Kích Hoạt Tool Từ Xa"}, {"command": "admin", "description": "👑 Bảng Điều Khiển Server"}]})
+    except: pass
+
     while True:
-        time.sleep(240) # Cứ 4 phút gọi 1 lần để Render không ngủ
-        try:
-            requests.get("http://127.0.0.1:" + str(os.environ.get('PORT', 5000)) + "/webhook")
+        time.sleep(240) # 4 phút Ping 1 lần để Server thức
+        try: requests.get("http://127.0.0.1:" + str(os.environ.get('PORT', 5000)) + "/webhook")
         except: pass
-        # Backup DB
         if os.path.exists(DB_FILE):
             try: shutil.copy2(DB_FILE, DB_BACKUP)
             except: pass
 
 threading.Thread(target=keep_alive_and_backup, daemon=True).start()
-# ------------------------------------------------------------
+# ----------------------------------------------------
 
 @app.after_request
 def add_cors_headers(response):
@@ -92,23 +94,20 @@ def add_cors_headers(response):
 
 def load_db():
     if not os.path.exists(DB_FILE) and os.path.exists(DB_BACKUP):
-        shutil.copy2(DB_BACKUP, DB_FILE) # Khôi phục dữ liệu nếu file chính mất
+        shutil.copy2(DB_BACKUP, DB_FILE)
     
     if not os.path.exists(DB_FILE): 
         return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}, "bot_users": {}}
     with open(DB_FILE, 'r', encoding='utf-8') as f:
         try:
             data = json.load(f)
-            data.setdefault("bot_users", {})
-            data.setdefault("locked_olm", {})
-            data.setdefault("banned_ips", {})
-            data.setdefault("keys", {})
-            data.setdefault("logs", [])
+            data.setdefault("bot_users", {}); data.setdefault("locked_olm", {}); data.setdefault("banned_ips", {}); data.setdefault("keys", {}); data.setdefault("logs", [])
             if not isinstance(data.get("global_notice"), dict): data["global_notice"] = {"msg": "", "exp": "permanent"}
             for uid in data["bot_users"]:
                 data["bot_users"][uid].setdefault("purchases", [])
                 data["bot_users"][uid].setdefault("notices", [])
-                data["bot_users"][uid].setdefault("connected_key", "")
+                data["bot_users"][uid].setdefault("loader_active", False)
+                data["bot_users"][uid].setdefault("loader_key", "")
             return data
         except: return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}, "bot_users": {}}
 
@@ -130,8 +129,7 @@ def check_auth():
     if request.method == 'OPTIONS': return 
     if request.cookies.get('admin_auth') != 'true': return redirect('/login')
 
-def process_key_validation(key, deviceId, real_ip, target_app, expected_type, device_name="Unknown", olm_name="N/A"):
-    db = load_db()
+def process_key_validation(db, key, deviceId, real_ip, target_app, expected_type, device_name="Unknown", olm_name="N/A"):
     current_time = int(time.time() * 1000)
 
     if real_ip in db["banned_ips"]:
@@ -174,7 +172,7 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
     return True, {"status": "success", "exp": kData.get('exp'), "vip": kData.get('vip'), "notice": notice_msg}
 
 # ====================================================================
-# TELEGRAM BOT ENGINE
+# TELEGRAM BOT ENGINE (TỐI THƯỢNG)
 # ====================================================================
 def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return
@@ -212,25 +210,23 @@ def telegram_loader_monitor():
         now_ms = int(time.time() * 1000)
         changed = False
         for uid, u in db.get("bot_users", {}).items():
-            if u.get("state") == "loader_connected":
-                k = u.get("connected_key")
+            if u.get("loader_active"):
+                k = u.get("loader_key")
                 valid = True
                 reason = ""
-                
                 if not k or k not in db["keys"]:
-                    valid, reason = False, "Key không tồn tại hoặc đã bị Admin xóa."
+                    valid, reason = False, "Key không tồn tại hoặc đã bị Admin xóa/thu hồi."
                 else:
                     kData = db["keys"][k]
                     if kData.get("status") == "banned":
                         valid, reason = False, "Key đã bị Admin khóa (Banned)."
                     elif kData.get("exp") != "permanent" and kData.get("exp") != "pending" and kData.get("exp", 0) < now_ms:
-                        valid, reason = False, "Key đã hết hạn."
+                        valid, reason = False, "Key đã hết hạn sử dụng."
                 
                 if not valid:
-                    u["state"] = "none"
-                    u["connected_key"] = ""
+                    u["loader_active"] = False; u["loader_key"] = ""
                     changed = True
-                    send_telegram_message(uid, f"⚠️ <b>KẾT NỐI BỊ NGẮT!</b>\nLý do: {reason}\n\n👉 Vui lòng sử dụng lại lệnh /loaderkey để kết nối mã PIN và Key mới.")
+                    send_telegram_message(uid, f"⚠️ <b>KẾT NỐI BỊ NGẮT ÉP BUỘC!</b>\n\nLý do: {reason}\n\n👉 Bạn đã bị văng khỏi Tool. Vui lòng sử dụng lại lệnh /loaderkey để kết nối bằng Key mới.", {"inline_keyboard": [[{"text": "🔗 Kích Hoạt Lại", "callback_data": "LOADER_MENU"}]]})
         if changed: save_db(db)
 
 threading.Thread(target=telegram_loader_monitor, daemon=True).start()
@@ -256,7 +252,8 @@ def telegram_webhook():
             payload = data["callback_query"]["data"]
             user_name = data["callback_query"]["from"].get("first_name", "Khách")
             tg_username = data["callback_query"]["from"].get("username", "")
-            requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": data["callback_query"]["id"]})
+            try: requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": data["callback_query"]["id"]}, timeout=3)
+            except: pass
 
         if not chat_id: return "ok", 200
         db = load_db()
@@ -268,9 +265,8 @@ def telegram_webhook():
         is_new_user = False
         if sid not in db["bot_users"]:
             is_new_user = True
-            db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "connected_key": ""}
-        else: 
-            db["bot_users"][sid]["username"] = f_uname
+            db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": ""}
+        else: db["bot_users"][sid]["username"] = f_uname
         
         user = db["bot_users"][sid]
         save_db(db)
@@ -280,10 +276,24 @@ def telegram_webhook():
                 if uinfo.get("is_admin"):
                     send_telegram_message(uid, f"🚨 <b>CÓ KHÁCH HÀNG MỚI!</b>\n👤 Tên: {safe_name} {f_uname}\n🆔 ID: <code>{sid}</code>\nVừa sử dụng Bot lần đầu tiên.")
 
-        # ======= XỬ LÝ LỆNH CHÍNH (COMMANDS) =======
+        # Nếu gõ lệnh Menu, lập tức DỌN DẸP TRẠNG THÁI để chống kẹt
+        if msg_text.startswith("/"):
+            user["state"] = "none"; save_db(db)
+
+        # ======= XỬ LÝ LỆNH CHÍNH =======
         if msg_text.upper() == "/START" or payload == "MENU_MAIN":
-            user["state"] = "none"; user["connected_key"] = ""; save_db(db)
-            txt = f"👋 Chào mừng <b>{safe_name}</b> đến với hệ thống LVT!\n\n💳 <b>THÔNG TIN TÀI KHOẢN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Lượt Reset Key: <b>{user['resets']}/3</b>\n\n👇 <i>Vui lòng chọn dịch vụ:</i>"
+            active_notices = []
+            valid_notices = []
+            for n in user["notices"]:
+                if n["exp"] == 'permanent' or n["exp"] > now_ms:
+                    valid_notices.append(n); active_notices.append(n["msg"])
+            user["notices"] = valid_notices; save_db(db)
+            
+            txt = ""
+            if active_notices:
+                txt += "🔔 <b>THÔNG BÁO TỪ ADMIN:</b>\n" + "\n".join([f"🔸 {m}" for m in active_notices]) + "\n➖➖➖➖➖➖➖➖\n\n"
+            
+            txt += f"👋 Chào mừng <b>{safe_name}</b> đến với hệ thống LVT!\n\n💳 <b>THÔNG TIN TÀI KHOẢN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Lượt Reset Key: <b>{user['resets']}/3</b>\n\n👇 <i>Vui lòng chọn dịch vụ:</i>"
             markup = {"inline_keyboard": [
                 [{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}],
                 [{"text": "🔗 Loader Tool (Nhập Key)", "callback_data": "LOADER_MENU"}]
@@ -300,40 +310,39 @@ def telegram_webhook():
             return "ok", 200
 
         elif payload == "LOADER_STATUS":
-            if user["state"] == "loader_connected" and user["connected_key"] in db["keys"]:
-                k = user["connected_key"]
+            if user["loader_active"] and user["loader_key"] in db["keys"]:
+                k = user["loader_key"]
                 kData = db["keys"][k]
                 t_left = format_time_left(kData["exp"], now_ms)
                 txt = f"🟢 <b>ĐANG GIÁM SÁT TOOL</b>\n\n🔑 Key đang chạy: <code>{k}</code>\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái: Hoạt động bình thường"
                 markup = {"inline_keyboard": [[{"text": "🔄 Cập Nhật Thời Gian", "callback_data": "LOADER_STATUS"}], [{"text": "❌ Ngắt Kết Nối Tool", "callback_data": "LOADER_DISCONNECT"}]]}
                 edit_telegram_message(chat_id, message_id, txt, markup)
             else:
-                user["state"] = "none"; save_db(db)
-                send_telegram_message(chat_id, "❌ Phiên kết nối không hợp lệ hoặc đã hết hạn.")
+                user["loader_active"] = False; save_db(db)
+                edit_telegram_message(chat_id, message_id, "❌ Phiên kết nối không hợp lệ hoặc đã bị khóa/hết hạn.", {"inline_keyboard": [[{"text": "🔗 Kích Hoạt Lại", "callback_data": "LOADER_MENU"}]]})
             return "ok", 200
             
         elif payload == "LOADER_DISCONNECT":
-            user["state"] = "none"; user["connected_key"] = ""; save_db(db)
+            user["loader_active"] = False; user["loader_key"] = ""; save_db(db)
             edit_telegram_message(chat_id, message_id, "✅ <b>ĐÃ NGẮT KẾT NỐI BẢO MẬT.</b>\nBạn đã rời khỏi phiên giám sát Tool.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
             return "ok", 200
 
         elif msg_text.upper() == "/ADMIN" or payload == "ADM_MENU":
             if user.get("is_admin"):
                 adm_key = user.get("admin_key", "")
-                success, _ = process_key_validation(adm_key, sid, "TELEGRAM", "admin_bot", "any")
+                success, _ = process_key_validation(db, adm_key, sid, "TELEGRAM", "admin_bot", "any")
                 if not success:
-                    user["is_admin"] = False; user["admin_key"] = ""; user["state"] = "none"; save_db(db)
+                    user["is_admin"] = False; user["admin_key"] = ""; save_db(db)
                     send_telegram_message(chat_id, "⚠️ <b>Key Admin của bạn đã bị khóa hoặc hết hạn.</b> Hệ thống đã tự động tước quyền Admin!")
                     return "ok", 200
 
-                user["state"] = "none"; save_db(db)
                 exp_ms = db["keys"][adm_key]["exp"]
                 time_left = format_time_left(exp_ms, now_ms)
                 markup = {"inline_keyboard": [
                     [{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}],
                     [{"text": "🔒 Khóa Nick OLM", "callback_data": "ADM_W_LOCK"}, {"text": "🚫 Chặn IP Máy", "callback_data": "ADM_W_BAN"}],
                     [{"text": "📢 TB Lên Tool", "callback_data": "ADM_W_NOTE"}, {"text": "💬 TB Vào Bot", "callback_data": "ADM_BOT_NOTE"}],
-                    [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Sửa/Xóa Key", "callback_data": "ADM_MANAGE"}],
+                    [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}],
                     [{"text": "📜 Theo Dõi Lịch Sử Log (Radar)", "callback_data": "ADM_LOGS"}],
                     [{"text": "❌ Hủy Quyền Admin", "callback_data": "ADM_LOGOUT"}]
                 ]}
@@ -345,7 +354,7 @@ def telegram_webhook():
                 send_telegram_message(chat_id, "🔐 <b>BẢO MẬT SERVER</b>\nVui lòng nhập <code>Key Admin</code> để mở khóa bảng điều khiển:")
             return "ok", 200
 
-        # ======= XỬ LÝ NÚT BẤM (PAYLOADS) =======
+        # ======= XỬ LÝ PAYLOADS (NÚT BẤM) =======
         if payload:
             if payload == "BUY":
                 markup = {"inline_keyboard": [[{"text": "👑 Mua Key VIP", "callback_data": "BUY_VIP"}, {"text": "👤 Mua Key Thường", "callback_data": "BUY_NOR"}],[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]}
@@ -354,11 +363,7 @@ def telegram_webhook():
                 edit_telegram_message(chat_id, message_id, "🛠 <b>Tính năng Mua Key Thường đang bảo trì.</b>\nVui lòng nâng cấp sử dụng Key VIP nhé!", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]})
             elif payload == "BUY_VIP":
                 txt = "🛒 <b>BẢNG GIÁ KEY VIP TỐI THƯỢNG:</b>\n\n🕒 1 Giờ: <b>7,000đ</b>\n📅 7 Ngày: <b>30,000đ</b>\n📆 30 Ngày: <b>85,000đ</b>\n🏆 1 Năm: <b>200,000đ</b>\n\n👇 <i>Chọn gói VIP bạn muốn mua:</i>"
-                markup = {"inline_keyboard": [
-                    [{"text": "🕒 1 Giờ", "callback_data": "V_1H"},{"text": "📅 7 Ngày", "callback_data": "V_7D"}],
-                    [{"text": "📆 30 Ngày", "callback_data": "V_30D"},{"text": "🏆 1 Năm", "callback_data": "V_1Y"}],
-                    [{"text": "🔙 Quay Lại", "callback_data": "BUY"}]
-                ]}
+                markup = {"inline_keyboard": [[{"text": "🕒 1 Giờ", "callback_data": "V_1H"},{"text": "📅 7 Ngày", "callback_data": "V_7D"}], [{"text": "📆 30 Ngày", "callback_data": "V_30D"},{"text": "🏆 1 Năm", "callback_data": "V_1Y"}], [{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]}
                 edit_telegram_message(chat_id, message_id, txt, markup)
             elif payload.startswith("V_"):
                 user["state"] = f"wait_qty_{payload}"; save_db(db)
@@ -391,34 +396,57 @@ def telegram_webhook():
                     edit_telegram_message(chat_id, message_id, "💬 <b>GỬI TIN NHẮN VÀO BOT TELEGRAM</b>", markup)
                 elif payload == "ADM_BN_ALL":
                     user["state"] = "adm_bn_all"; save_db(db)
-                    edit_telegram_message(chat_id, message_id, "💬 <b>GỬI TẤT CẢ KHÁCH</b>\nCú pháp: <code>Nội_dung</code>\nVD: <code>Chúc ae năm mới vui vẻ!</code>")
+                    edit_telegram_message(chat_id, message_id, "💬 <b>GỬI TẤT CẢ KHÁCH</b>\nCú pháp: <code>Thời_gian_hết_hạn Nội_dung</code>\nVD: <code>1d Chúc ae năm mới vui vẻ!</code>")
                 elif payload == "ADM_BN_PRIV":
                     user["state"] = "adm_bn_priv"; save_db(db)
-                    edit_telegram_message(chat_id, message_id, "👤 <b>GỬI TIN RIÊNG TƯ</b>\nCú pháp: <code>@user Nội_dung</code>\nVD: <code>@luongtuyen20 Đừng share key nữa!</code>")
+                    edit_telegram_message(chat_id, message_id, "👤 <b>GỬI TIN RIÊNG TƯ</b>\nCú pháp: <code>@user Thời_gian Nội_dung</code>\nVD: <code>@luongtuyen20 1h Đừng share key nữa!</code>")
                 elif payload == "ADM_USER":
                     user["state"] = "adm_check_user"; save_db(db)
                     edit_telegram_message(chat_id, message_id, "👤 <b>SOI THÔNG TIN KHÁCH HÀNG</b>\nVui lòng nhập <code>@username</code> hoặc <code>ID Telegram</code> của khách để soi toàn bộ dữ liệu:")
                 elif payload == "ADM_MANAGE":
-                    user["state"] = "adm_manage"; save_db(db)
-                    instruct = "🛠 <b>HƯỚNG DẪN QUẢN LÝ KEY:</b>\n\n🗑 <b>1. Xóa 1 Key:</b>\nCú pháp: <code>XOA Mã_Key</code>\n\n🔥 <b>2. Xóa ALL Key Khách (Thu hồi):</b>\nCú pháp: <code>XOA_ALL @user</code>\n\n🔄 <b>3. Gỡ thiết bị/IP:</b>\nCú pháp: <code>RESET Mã_Key</code>\n\n🌟 <b>4. Bật/Tắt VIP:</b>\nCú pháp: <code>VIP Mã_Key</code>\n\n⏳ <b>5. Gia hạn / Cộng giờ:</b>\nCú pháp: <code>GIAHAN Mã_Key Thời_gian</code>\nVD: <code>GIAHAN OLM-123 30d</code>"
-                    edit_telegram_message(chat_id, message_id, instruct)
+                    user["state"] = "adm_manage_input"; save_db(db)
+                    edit_telegram_message(chat_id, message_id, "🛠 <b>QUẢN LÝ KEY / USER</b>\n\n📝 Vui lòng nhập:\n- <b>Mã Key</b> (Để sửa/xóa/gia hạn)\n- <b>@username</b> hoặc <b>ID</b> (Để xóa sạch mọi Key của khách đó)")
                 elif payload == "ADM_LOGOUT":
                     user["is_admin"] = False; user["admin_key"] = ""; save_db(db); edit_telegram_message(chat_id, message_id, "👋 Đã đăng xuất Admin thành công!")
                 elif payload == "ADM_LOGS":
                     txt = "📜 <b>RADAR LOGS (10 HOẠT ĐỘNG MỚI NHẤT):</b>\n\n"
                     for l in db.get("logs", [])[:10]: txt += f"• {time.strftime('%H:%M %d/%m', time.localtime(l['time']))} | <b>{l['action']}</b>\n  └ Key: <code>{l['key']}</code> | {l['ip']} | User: {l.get('olm_name','')}\n"
                     edit_telegram_message(chat_id, message_id, txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                
+                # --- XỬ LÝ NÚT BẤM CỦA PANEL QUẢN LÝ KEY ---
+                elif payload.startswith("K_RST_"):
+                    k = payload.replace("K_RST_", "")
+                    if k in db["keys"]:
+                        db["keys"][k]["devices"] = []; db["keys"][k]["known_ips"] = []; save_db(db)
+                        edit_telegram_message(chat_id, message_id, f"✅ Đã Gỡ sạch TB/IP của Key: <code>{k}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_DEL_"):
+                    k = payload.replace("K_DEL_", "")
+                    if k in db["keys"]:
+                        del db["keys"][k]; save_db(db)
+                        edit_telegram_message(chat_id, message_id, f"✅ Đã XÓA VĨNH VIỄN Key: <code>{k}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_VIP_"):
+                    k = payload.replace("K_VIP_", "")
+                    if k in db["keys"]:
+                        db["keys"][k]["vip"] = not db["keys"][k].get("vip", False); save_db(db)
+                        st = "VIP" if db["keys"][k]["vip"] else "Thường"
+                        edit_telegram_message(chat_id, message_id, f"✅ Đã đổi Key <code>{k}</code> thành hạng: <b>{st}</b>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_BAN_"):
+                    k = payload.replace("K_BAN_", "")
+                    if k in db["keys"]:
+                        if db["keys"][k]["status"] == "active": db["keys"][k]["status"] = "banned"
+                        else: db["keys"][k]["status"] = "active"
+                        save_db(db)
+                        st = "BỊ KHÓA" if db["keys"][k]["status"] == "banned" else "HOẠT ĐỘNG"
+                        edit_telegram_message(chat_id, message_id, f"✅ Đã đổi trạng thái Key <code>{k}</code> thành: <b>{st}</b>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_EXT_"):
+                    k = payload.replace("K_EXT_", "")
+                    user["state"] = f"adm_ext_{k}"; save_db(db)
+                    send_telegram_message(chat_id, f"⏳ Nhập thời gian muốn gia hạn thêm cho Key <code>{k}</code>\n(VD: 30d, 1h, 15m, vv):")
             return "ok", 200
 
-        # ======= XỬ LÝ NHẬP VĂN BẢN THEO TRẠNG THÁI =======
+        # ======= XỬ LÝ NHẬP VĂN BẢN (TEXT) =======
         if msg_text:
-            # --- LOADER KEY LOGIC (TRỰC TIẾP GIÁM SÁT) ---
-            if user["state"] == "loader_connected":
-                # Nếu đang giám sát mà gõ bậy, chặn luôn ko cho gõ lệnh khác ngoài /start /admin
-                if not msg_text.startswith("/"):
-                    send_telegram_message(chat_id, "🟢 Bạn đang trong phiên giám sát Tool. Vui lòng ấn các nút trên Menu để thao tác.")
-                return "ok", 200
-
+            # --- LOADER KEY ---
             if user["state"] == "wait_loader_pin":
                 user["temp_pin"] = msg_text
                 user["state"] = "wait_loader_key"; save_db(db)
@@ -428,13 +456,11 @@ def telegram_webhook():
             elif user["state"] == "wait_loader_key":
                 pin = user.get("temp_pin", "")
                 key = msg_text
-                # Xác thực nhẹ để tránh nhập key ảo
-                success, _ = process_key_validation(key, "Telegram_Loader", get_real_ip(), "telegram_loader", "any")
+                success, _ = process_key_validation(db, key, "Telegram_Loader", get_real_ip(), "telegram_loader", "any")
                 if key in db["keys"] and success:
                     remote_unlocks[pin] = key
-                    user["state"] = "loader_connected"
-                    user["connected_key"] = key
-                    save_db(db)
+                    user["loader_active"] = True; user["loader_key"] = key; user["state"] = "none"; save_db(db)
+                    
                     kData = db["keys"][key]
                     t_left = format_time_left(kData["exp"], now_ms)
                     txt = f"✅ <b>KẾT NỐI THÀNH CÔNG! Tool sẽ đăng nhập sau 3s.</b>\n\n🟢 <b>ĐANG GIÁM SÁT TOOL</b>\n🔑 Key đang chạy: <code>{key}</code>\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái: Hoạt động bình thường"
@@ -442,7 +468,7 @@ def telegram_webhook():
                     send_telegram_message(chat_id, txt, markup)
                 else:
                     user["state"] = "none"; save_db(db)
-                    send_telegram_message(chat_id, "❌ <b>Key không tồn tại, hết hạn hoặc sai hệ thống!</b>\nVui lòng sử dụng lại lệnh /loaderkey để thử lại.")
+                    send_telegram_message(chat_id, "❌ <b>Key không tồn tại, hết hạn hoặc bị khóa!</b>\nVui lòng sử dụng lại lệnh /loaderkey để thử lại.")
                 return "ok", 200
 
             # --- MUA KEY ---
@@ -468,8 +494,7 @@ def telegram_webhook():
                     else:
                         user["state"] = "none"; save_db(db)
                         send_telegram_message(chat_id, f"❌ <b>SỐ DƯ KHÔNG ĐỦ!</b>\nBạn cần {total_cost}đ để mua {qty} Key. Số dư hiện tại chỉ có {user['balance']}đ.\n\nVui lòng nạp thêm tiền.", {"inline_keyboard": [[{"text": "🔙 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
-                else: 
-                    send_telegram_message(chat_id, "❌ Vui lòng chỉ nhập SỐ lớn hơn 0.")
+                else: send_telegram_message(chat_id, "❌ Vui lòng chỉ nhập SỐ lớn hơn 0.")
                 return "ok", 200
 
             # --- RESET KEY ---
@@ -478,24 +503,20 @@ def telegram_webhook():
                     db["keys"][msg_text]["devices"] = []; db["keys"][msg_text]["known_ips"] = []
                     user["resets"] -= 1; user["state"] = "none"; save_db(db)
                     send_telegram_message(chat_id, f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch thiết bị và IP cũ.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
-                else: 
-                    send_telegram_message(chat_id, "❌ Key không tồn tại! Vui lòng thử lại.")
+                else: send_telegram_message(chat_id, "❌ Key không tồn tại! Vui lòng thử lại.")
                 return "ok", 200
 
             # --- NHẬP KEY ADMIN ---
             if user["state"] == "wait_admin_key":
-                success, _ = process_key_validation(msg_text, sid, "TELEGRAM", "admin_bot", "any")
+                success, _ = process_key_validation(db, msg_text, sid, "TELEGRAM", "admin_bot", "any")
                 if success:
                     user["is_admin"] = True; user["admin_key"] = msg_text; user["state"] = "none"; save_db(db)
                     send_telegram_message(chat_id, "✅ <b>XÁC THỰC ADMIN THÀNH CÔNG!</b>\nVui lòng gõ lại /admin để mở Bảng Điều Khiển.")
-                else: 
-                    send_telegram_message(chat_id, "❌ Key Admin sai hoặc đã hết hạn!")
+                else: send_telegram_message(chat_id, "❌ Key Admin sai hoặc đã hết hạn!")
                 return "ok", 200
 
             # --- ADMIN COMMANDS INPUT ---
             if user.get("is_admin") and user["state"].startswith("adm_"):
-                if msg_text.upper() == "/CANCEL":
-                    user["state"] = "none"; save_db(db); send_telegram_message(chat_id, "Đã hủy thao tác."); return "ok", 200
                 try:
                     parts = msg_text.split()
                     if user["state"] == "adm_create":
@@ -503,49 +524,54 @@ def telegram_webhook():
                         dur = parse_duration(dur_str)
                         nk = f"{sys_t}-{random.randint(1000,9999)}"
                         db["keys"][nk] = {"exp": "pending", "maxDevices": devs, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": sys_t.lower(), "durationMs": dur}
-                        send_telegram_message(chat_id, f"✅ Đã tạo Key mới:\n<code>{nk}</code>")
+                        send_telegram_message(chat_id, f"✅ Đã tạo Key mới:\n<code>{nk}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     
                     elif user["state"] == "adm_bal":
                         t_user, amt, rst = parts[0], int(parts[1]), int(parts[2])
                         t_id = get_user_id_by_username(db, t_user) if t_user.startswith('@') else t_user
                         if t_id and t_id in db["bot_users"]:
                             db["bot_users"][t_id]["balance"] += amt; db["bot_users"][t_id]["resets"] += rst
-                            send_telegram_message(chat_id, f"✅ Đã nạp <b>{amt}đ</b> và <b>{rst}</b> reset cho {t_user}")
-                            send_telegram_message(t_id, f"🎉 <b>Admin vừa nạp tiền!</b>\n💰 +{amt}đ | 🔄 +{rst} reset.")
+                            send_telegram_message(chat_id, f"✅ Đã nạp <b>{amt}đ</b> và <b>{rst}</b> reset cho {t_user}", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                            send_telegram_message(t_id, f"🎉 <b>Admin vừa nạp tiền!</b>\n💰 +{amt}đ | 🔄 +{rst} reset.\n\n👉 Bấm /start để kiểm tra số dư.")
                         else: send_telegram_message(chat_id, "❌ Không tìm thấy User!")
 
                     elif user["state"] == "adm_lock":
                         dur_str, target = parts[0], parts[1]
                         dur = parse_duration(dur_str)
                         db["locked_olm"][target] = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
-                        send_telegram_message(chat_id, f"✅ Đã Khóa OLM: <b>{target}</b> ({dur_str})")
+                        send_telegram_message(chat_id, f"✅ Đã Khóa OLM: <b>{target}</b> ({dur_str})", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
 
                     elif user["state"] == "adm_ban":
                         dur_str, target = parts[0], parts[1]
                         dur = parse_duration(dur_str)
                         db["banned_ips"][target] = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
-                        send_telegram_message(chat_id, f"✅ Đã Ban IP: <b>{target}</b> ({dur_str})")
+                        send_telegram_message(chat_id, f"✅ Đã Ban IP: <b>{target}</b> ({dur_str})", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
 
                     elif user["state"] == "adm_note":
                         parts = msg_text.split(maxsplit=1)
                         dur_str, msg = parts[0], parts[1]
                         dur = parse_duration(dur_str)
                         db["global_notice"] = {"msg": msg, "exp": "permanent" if dur == 'permanent' else int(time.time()*1000) + dur}
-                        send_telegram_message(chat_id, f"✅ Đã cài TB Lên Tool ({dur_str}): {msg}")
+                        send_telegram_message(chat_id, f"✅ Đã cài TB Lên Tool ({dur_str}): {msg}", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     
                     elif user["state"] == "adm_bn_all":
-                        msg = msg_text
+                        parts = msg_text.split(maxsplit=1)
+                        dur, msg = parse_duration(parts[0]), parts[1]
+                        exp = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
                         for uid in db["bot_users"]: 
+                            db["bot_users"][uid]["notices"].append({"msg": msg, "exp": exp})
                             send_telegram_message(uid, f"🔔 <b>THÔNG BÁO TỪ ADMIN:</b>\n{msg}")
-                        send_telegram_message(chat_id, f"✅ Đã đẩy Thông Báo Trực Tiếp cho TOÀN BỘ Khách Hàng.")
+                        send_telegram_message(chat_id, f"✅ Đã đẩy Thông Báo Trực Tiếp cho TOÀN BỘ Khách Hàng.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     
                     elif user["state"] == "adm_bn_priv":
-                        parts = msg_text.split(maxsplit=1)
-                        t_user, msg = parts[0], parts[1]
+                        parts = msg_text.split(maxsplit=2)
+                        t_user, dur, msg = parts[0], parse_duration(parts[1]), parts[2]
                         t_id = get_user_id_by_username(db, t_user) if t_user.startswith('@') else t_user
                         if t_id and t_id in db["bot_users"]:
+                            exp = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
+                            db["bot_users"][t_id]["notices"].append({"msg": msg, "exp": exp})
                             send_telegram_message(t_id, f"🔔 <b>TIN NHẮN TỪ ADMIN:</b>\n{msg}")
-                            send_telegram_message(chat_id, f"✅ Đã gửi TB trực tiếp cho {t_user}.")
+                            send_telegram_message(chat_id, f"✅ Đã gửi TB trực tiếp cho {t_user}.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                         else: send_telegram_message(chat_id, "❌ Không tìm thấy User!")
 
                     elif user["state"] == "adm_check_user":
@@ -567,14 +593,12 @@ def telegram_webhook():
                                     count +=1
                                     if count >= 10: break
                             if count == 0: txt += "<i>Khách này chưa từng đăng nhập tool.</i>"
-                            
                             send_telegram_message(chat_id, txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                         else: send_telegram_message(chat_id, "❌ Khách hàng không tồn tại trong hệ thống!")
 
-                    elif user["state"] == "adm_manage":
-                        action = parts[0].upper()
-                        k = parts[1] if len(parts) > 1 else ""
-                        if action == "XOA_ALL" and k:
+                    elif user["state"] == "adm_manage_input":
+                        k = msg_text
+                        if k.startswith('@') or k.isdigit():
                             t_id = get_user_id_by_username(db, k) if k.startswith('@') else k
                             if t_id and t_id in db["bot_users"]:
                                 user_keys = [p["key"] for p in db["bot_users"][t_id].get("purchases", [])]
@@ -582,27 +606,33 @@ def telegram_webhook():
                                 for uk in user_keys:
                                     if uk in db["keys"]: del db["keys"][uk]; deleted += 1
                                 db["bot_users"][t_id]["purchases"] = []
-                                send_telegram_message(chat_id, f"✅ Đã xóa sạch <b>{deleted}</b> Key của Khách {k}.")
+                                send_telegram_message(chat_id, f"✅ Đã xóa sạch <b>{deleted}</b> Key của Khách {k}.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                             else: send_telegram_message(chat_id, "❌ Khách hàng không tồn tại!")
                         elif k in db["keys"]:
-                            if action == "XOA":
-                                del db["keys"][k]; send_telegram_message(chat_id, f"✅ Đã xóa vĩnh viễn Key: <code>{k}</code>")
-                            elif action == "RESET":
-                                db["keys"][k]["devices"] = []; db["keys"][k]["known_ips"] = []
-                                send_telegram_message(chat_id, f"✅ Đã Gỡ sạch Thiết bị/IP của Key: {k}")
-                            elif action == "VIP":
-                                db["keys"][k]["vip"] = not db["keys"][k].get("vip", False)
-                                send_telegram_message(chat_id, f"✅ Trạng thái VIP của Key {k} hiện tại: <b>{db['keys'][k]['vip']}</b>")
-                            elif action == "GIAHAN" and len(parts) == 3:
-                                dur = parse_duration(parts[2])
-                                if db["keys"][k]['exp'] not in ['permanent', 'pending']:
-                                    db["keys"][k]['exp'] = max(db["keys"][k]['exp'], int(time.time()*1000)) + dur
-                                    send_telegram_message(chat_id, f"✅ Đã cộng thêm {parts[2]} cho Key {k}")
+                            kd = db["keys"][k]
+                            st = "Hoạt động" if kd['status']=='active' else "Bị Khóa"
+                            is_vip = "VIP" if kd.get('vip') else "Thường"
+                            exp = format_time_left(kd['exp'], now_ms) if kd['exp']!='pending' else 'Chờ kích hoạt'
+                            txt = f"🔑 <b>BẢNG ĐIỀU KHIỂN KEY:</b> <code>{k}</code>\n\n📌 Hệ thống: {kd['target'].upper()}\n💎 Loại: {is_vip}\n⚡ Trạng thái: {st}\n⏳ Hạn: {exp}\n📱 Thiết bị: {len(kd.get('devices',[]))}/{kd['maxDevices']}"
+                            markup = {"inline_keyboard": [
+                                [{"text": "🔄 Gỡ Thiết Bị", "callback_data": f"K_RST_{k}"}, {"text": "🗑 Xóa Key", "callback_data": f"K_DEL_{k}"}],
+                                [{"text": "🌟 Đổi VIP", "callback_data": f"K_VIP_{k}"}, {"text": "⏳ Gia Hạn", "callback_data": f"K_EXT_{k}"}],
+                                [{"text": "🔒 Khóa/Mở Key", "callback_data": f"K_BAN_{k}"}]
+                            ]}
+                            send_telegram_message(chat_id, txt, markup)
                         else: send_telegram_message(chat_id, "❌ Lệnh sai hoặc Không tìm thấy Mã Key!")
-                    
+
+                    elif user["state"].startswith("adm_ext_"):
+                        k = user["state"].replace("adm_ext_", "")
+                        dur = parse_duration(msg_text)
+                        if k in db["keys"]:
+                            if db["keys"][k]['exp'] not in ['permanent', 'pending']:
+                                db["keys"][k]['exp'] = max(db["keys"][k]['exp'], int(time.time()*1000)) + dur
+                                send_telegram_message(chat_id, f"✅ Đã gia hạn thành công Key <code>{k}</code> thêm {msg_text}!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                
                     save_db(db); user["state"] = "none"; save_db(db)
                 except Exception as e: 
-                    send_telegram_message(chat_id, f"❌ Lỗi cú pháp! Gõ /admin để làm lại.")
+                    send_telegram_message(chat_id, f"❌ Lỗi cú pháp! Vui lòng ấn nút để thao tác lại.")
             return "ok", 200
 
     except Exception as e:
@@ -614,7 +644,8 @@ def telegram_webhook():
 def check_key():
     if request.method == 'OPTIONS': return jsonify({}), 200
     data = request.get_json() or {}
-    success, res = process_key_validation(data.get('key'), data.get('deviceId'), get_real_ip(), data.get('target_app', 'tool'), data.get('expected_type', 'normal'), data.get('device_name'), data.get('olm_name'))
+    db = load_db()
+    success, res = process_key_validation(db, data.get('key'), data.get('deviceId'), get_real_ip(), data.get('target_app', 'tool'), data.get('expected_type', 'normal'), data.get('device_name'), data.get('olm_name'))
     return jsonify(res)
 
 @app.route('/api/remote_unlock', methods=['POST', 'OPTIONS'])
@@ -624,7 +655,8 @@ def remote_unlock():
     key, pin, deviceId = data.get('key'), data.get('pin'), data.get('deviceId', 'Unknown')
     target_app, expected_type = data.get('target_app', 'tool'), data.get('expected_type', 'normal')
     if not pin: return jsonify({"status": "error", "message": "Thiếu mã PIN!"})
-    success, response = process_key_validation(key, deviceId, get_real_ip(), target_app, expected_type)
+    db = load_db()
+    success, response = process_key_validation(db, key, deviceId, get_real_ip(), target_app, expected_type)
     if success:
         remote_unlocks[pin] = key 
         response['message'] = f"ĐÃ KÍCH HOẠT VÀO HỆ THỐNG {target_app.upper()}!"
