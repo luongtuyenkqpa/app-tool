@@ -35,6 +35,29 @@ remote_unlocks = {}
 logout_pins = set()
 multipliers = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
 
+# === BIẾN THEO DÕI IP ONLINE ===
+active_sessions = {} # Lưu trạng thái người đang truy cập OLM
+
+def session_monitor():
+    """Luồng ngầm quét xem ai vừa tắt/thoát web OLM"""
+    while True:
+        time.sleep(5)
+        now = time.time()
+        to_remove = []
+        for did, info in active_sessions.items():
+            # Nếu 35s không nhận được tín hiệu (do họ tắt web)
+            if now - info['last_seen'] > 35:
+                to_remove.append(did)
+        
+        for did in to_remove:
+            info = active_sessions.pop(did)
+            db = load_db()
+            add_log(db, "THOÁT OLM", info['key'], info['ip'], f"Device ({did})", info['olm_name'])
+            save_db(db)
+
+threading.Thread(target=session_monitor, daemon=True).start()
+# ===============================
+
 @app.after_request
 def add_cors_headers(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -44,7 +67,7 @@ def add_cors_headers(response):
 
 def load_db():
     if not os.path.exists(DB_FILE): 
-        return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": "", "locked_olm": {}, "ip_strikes": {}}
+        return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}}
     with open(DB_FILE, 'r', encoding='utf-8') as f:
         try:
             data = json.load(f)
@@ -52,12 +75,14 @@ def load_db():
             data.setdefault("logs", [])
             data.setdefault("banned_ips", {})
             data.setdefault("logout_pins", [])
-            data.setdefault("global_notice", "")
             data.setdefault("locked_olm", {})
             data.setdefault("ip_strikes", {})
+            # Đồng bộ format notice cũ sang cấu trúc từ điển mới để tính thời gian
+            if not isinstance(data.get("global_notice"), dict):
+                data["global_notice"] = {"msg": str(data.get("global_notice", "")), "exp": "permanent"}
             return data
         except: 
-            return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": "", "locked_olm": {}, "ip_strikes": {}}
+            return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}}
 
 def save_db(db):
     with open(DB_FILE, 'w', encoding='utf-8') as f: 
@@ -72,7 +97,7 @@ def add_log(db, action, key, ip, device, olm_name="N/A"):
         "device": device,
         "olm_name": olm_name
     })
-    db["logs"] = db["logs"][:200]
+    db["logs"] = db["logs"][:300] # Tăng giới hạn lưu log lên 300
 
 def get_real_ip():
     if request.headers.getlist("X-Forwarded-For"):
@@ -89,7 +114,7 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
     db = load_db()
     current_time = int(time.time() * 1000)
 
-    # CHECK IP BỊ BAN (CHUNG HOẶC DO CHIA SẺ)
+    # CHECK IP BỊ BAN
     if real_ip in db.get("banned_ips", {}):
         ban_exp = db["banned_ips"][real_ip]
         if ban_exp == 'permanent' or current_time < ban_exp:
@@ -190,17 +215,37 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
             return False, {"status": "error", "message": "Key đã đầy thiết bị!"}
         keyData.setdefault('devices', []).append(deviceId)
 
-    add_log(db, "THÀNH CÔNG", key, real_ip, f"{device_name} ({deviceId})", olm_name)
-    save_db(db)
-    
-    notice = db.get("global_notice", "")
+    # === XỬ LÝ RADAR THEO DÕI OLM VÀO/RA ===
+    if target_app == "olm":
+        if deviceId not in active_sessions:
+            add_log(db, "TRUY CẬP OLM", key, real_ip, f"{device_name} ({deviceId})", olm_name)
+            save_db(db)
+        active_sessions[deviceId] = {
+            "ip": real_ip, "olm_name": olm_name, "key": key, "last_seen": time.time()
+        }
+    else:
+        # Nếu là app bình thường, vẫn lưu log Thành công như cũ để check
+        add_log(db, "THÀNH CÔNG", key, real_ip, f"{device_name} ({deviceId})", olm_name)
+        save_db(db)
+
+    # XỬ LÝ THÔNG BÁO CÓ THỜI HẠN
+    notice_data = db.get("global_notice", {})
+    notice_msg = ""
+    if notice_data.get("msg"):
+        if notice_data.get("exp") == "permanent" or current_time < notice_data.get("exp", 0):
+            notice_msg = notice_data["msg"]
+        else:
+            # Hết hạn thông báo -> Xóa
+            db["global_notice"] = {"msg": "", "exp": "permanent"}
+            save_db(db)
+
     return True, {
         "status": "success", 
         "message": "Xác thực thành công!", 
         "exp": keyData.get('exp'), 
         "vip": is_key_vip, 
         "devices": f"{len(keyData.get('devices', []))}/{keyData.get('maxDevices', 1)}",
-        "notice": notice
+        "notice": notice_msg
     }
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
@@ -309,8 +354,10 @@ def unlock_olm(user):
 @app.route('/admin/notice', methods=['POST'])
 def set_notice():
     msg = request.form.get('message', '').strip()
+    dur, t = request.form.get('duration'), request.form.get('type')
     db = load_db()
-    db["global_notice"] = msg
+    exp = "permanent" if t == 'permanent' else int(time.time() * 1000) + int(dur) * multipliers.get(t, 1000)
+    db["global_notice"] = {"msg": msg, "exp": exp}
     save_db(db); return redirect('/')
 
 @app.route('/admin/delete_all', methods=['POST'])
@@ -324,7 +371,7 @@ def unban_ip(ip):
     db = load_db()
     if ip in db.get("banned_ips", {}): del db["banned_ips"][ip]
     if ip in db.get("ip_strikes", {}): del db["ip_strikes"][ip]
-    save_db(db); return redirect('/')
+    save_db(db); return redirect(request.referrer or '/')
 
 @app.route('/admin/extend', methods=['POST'])
 def extend_key():
@@ -352,13 +399,27 @@ def key_actions(action, key):
         save_db(db)
     return redirect('/')
 
+# ROUTE MỚI: QUẢN LÝ IP ĐANG ONLINE TRÊN OLM
+@app.route('/admin/online')
+def online_ips():
+    html_rows = ""
+    for did, info in active_sessions.items():
+        onl_time = time.strftime('%H:%M:%S', time.localtime(info["last_seen"]))
+        html_rows += f"<tr><td>{info['ip']}</td><td class='text-warning'>{info['olm_name']}</td><td class='text-info'>{info['key']}</td><td>{did}</td><td>{onl_time}</td><td><a href='/admin/action/ban/{info['key']}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
+    
+    return f'''
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Giám Sát Online - LVT</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>body{{background:#0a0a12;color:white;}}</style></head><body class="p-4">
+    <div class="container"><div class="d-flex justify-content-between mb-4"><h2>📡 RADAR GIÁM SÁT OLM ONLINE</h2><a href="/" class="btn btn-secondary">Quay lại Dashboard</a></div>
+    <div class="card bg-dark p-3"><table class="table table-dark table-hover"><thead><tr><th>IP Máy</th><th>Tên OLM</th><th>Key Đang Dùng</th><th>Mã TB</th><th>Tín Hiệu Cuối</th><th>Thao Tác</th></tr></thead><tbody>{html_rows if html_rows else "<tr><td colspan='6' class='text-center text-muted'>Hiện không có ai đang làm OLM.</td></tr>"}</tbody></table></div></div>
+    <script>setInterval(() => location.reload(), 10000);</script></body></html>
+    '''
+
 @app.route('/')
 def dashboard():
     db = load_db()
     keys_html = ''
     for k, data in db["keys"].items():
         is_banned, is_vip, sys_target = data.get('status') == 'banned', data.get('vip', False), data.get('target', 'tool')
-        
         status_badge = '<span class="badge bg-danger">BANNED</span>' if is_banned else ('<span class="badge bg-warning text-dark">VIP</span>' if is_vip else '<span class="badge bg-success">THƯỜNG</span>')
         sys_badge = '<span class="badge bg-info">LVT Tool</span>' if sys_target == 'tool' else '<span class="badge bg-danger">OLM</span>'
 
@@ -389,13 +450,18 @@ def dashboard():
 
     logs_html = ''
     for log in db.get("logs", []):
-        color = "success" if log['action'] == "THÀNH CÔNG" else ("danger" if "BANNED" in log['action'] or "BỊ CHẶN" in log['action'] or "SAI" in log['action'] or "GIỚI HẠN" in log['action'] else "warning")
+        if "THOÁT OLM" in log['action']: color = "secondary"
+        elif "TRUY CẬP OLM" in log['action']: color = "info"
+        elif "THÀNH CÔNG" in log['action']: color = "success"
+        elif "BANNED" in log['action'] or "BỊ CHẶN" in log['action'] or "SAI" in log['action'] or "GIỚI HẠN" in log['action']: color = "danger"
+        else: color = "warning"
+        
         logs_html += f'<tr><td><small class="text-muted">{time.strftime("%H:%M:%S %d/%m", time.localtime(log["time"]))}</small></td><td><span class="badge bg-{color}">{log["action"]}</span></td><td class="text-info">{log["key"]}</td><td><span class="badge bg-secondary">{log["ip"]}</span><br><small class="text-muted">{log.get("olm_name","")}</small><br><small style="font-size:10px;">{log.get("device","")}</small></td></tr>'
 
-    current_notice = db.get("global_notice", "")
+    current_notice = db.get("global_notice", {}).get("msg", "")
 
     return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4">
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4">
     
     <div class="card p-3 mb-4" style="border-color: #00ffcc;"><h4><i class="fas fa-wrench"></i> Tạo Key LVT Tool</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="tool"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: LVT)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch1"><label class="form-check-label text-warning" for="vipSwitch1">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #00ffcc, #0066ff); color:black;">TẠO KEY LVT</button></div></form></div>
     
@@ -407,9 +473,22 @@ def dashboard():
     
     </div><div class="col-lg-8">
     
-    <div class="card p-3 mb-4" style="border-color: #bd00ff;"><h4>📢 Thông Báo Toàn Cầu (Gửi đến Script/Tool)</h4><form action="/admin/notice" method="POST" class="d-flex gap-2"><input type="text" name="message" class="form-control bg-dark text-light" placeholder="Nhập thông báo hiện lên màn hình người dùng..." value="{current_notice}"><button type="submit" class="btn btn-info">Lưu</button></form></div>
+    <div class="card p-3 mb-4" style="border-color: #bd00ff;"><h4>📢 Thông Báo Toàn Cầu (Gửi đến Script/Tool)</h4><form action="/admin/notice" method="POST" class="row g-2"><div class="col-12"><input type="text" name="message" class="form-control bg-dark text-light" placeholder="Nhập thông báo hiện lên màn hình người dùng..." value="{current_notice}"></div><div class="col-4"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required value="10"></div><div class="col-5"><select name="type" class="form-select bg-dark text-light"><option value="sec">Giây</option><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="year">Năm</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-3"><button type="submit" class="btn btn-info w-100 fw-bold">Phát Loa</button></div></form></div>
     
-    <div class="card p-3 mb-4"><div class="d-flex justify-content-between align-items-center mb-3"><h4>📋 Quản Lý Key</h4><div class="d-flex gap-2"><form action="/admin/delete_all" method="POST"><button class="btn btn-sm btn-danger fw-bold" onclick="return confirm('CHẮC CHẮN XÓA TOÀN BỘ KEY?')">Xóa ALL Key</button></form><select id="statusFilter" class="form-select form-select-sm bg-dark text-light" onchange="filterTable()"><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="expired">Hết hạn</option><option value="banned">Bị khóa</option></select><input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light" placeholder="Tìm Key..." onkeyup="filterTable()"></div></div><div class="table-container"><table class="table table-dark table-hover mb-0 align-middle"><thead><tr><th>Key</th><th>Hạn</th><th>Thiết bị</th><th>Điều Khiển</th></tr></thead><tbody id="keyTableBody">{keys_html}</tbody></table></div></div><div class="card p-3"><h4>📡 Lịch sử Logs (Chi tiết IP, TB, User)</h4><div class="table-container" style="max-height:400px;"><table class="table table-dark table-sm table-striped mb-0"><thead><tr><th>Time</th><th>Trạng thái</th><th>Key</th><th>Thông tin IP / Device / OLM</th></tr></thead><tbody>{logs_html}</tbody></table></div></div></div></div></div><div class="modal fade" id="extendModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card);"><div class="modal-header"><h5 class="modal-title">⏳ Gia hạn Key</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form action="/admin/extend" method="POST"><div class="modal-body"><input type="hidden" name="key" id="extendKeyInput"><p>Key: <strong id="extendKeyDisplay" class="text-info"></strong></p><div class="row g-2"><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option></select></div></div></div><div class="modal-footer"><button type="submit" class="btn btn-primary w-100">Gia hạn</button></div></form></div></div></div><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script><script>function copyText(text) {{ navigator.clipboard.writeText(text); alert("Đã copy: " + text); }} function filterTable() {{ let s = document.getElementById('searchInput').value.toLowerCase(), f = document.getElementById('statusFilter').value; document.querySelectorAll('.key-row').forEach(r => {{ r.style.display = (r.innerText.toLowerCase().includes(s) && (f==='all' || r.dataset.status===f)) ? '' : 'none'; }}); }} function openExtendModal(key) {{ document.getElementById('extendKeyInput').value = key; document.getElementById('extendKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('extendModal')).show(); }}</script></body></html>
+    <div class="card p-3 mb-4"><div class="d-flex justify-content-between align-items-center mb-3"><h4>📋 Quản Lý Key</h4><div class="d-flex gap-2"><form action="/admin/delete_all" method="POST"><button class="btn btn-sm btn-danger fw-bold" onclick="return confirm('CHẮC CHẮN XÓA TOÀN BỘ KEY?')">Xóa ALL Key</button></form><select id="statusFilter" class="form-select form-select-sm bg-dark text-light" onchange="filterTable()"><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="expired">Hết hạn</option><option value="banned">Bị khóa</option></select><input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light" placeholder="Tìm Key..." onkeyup="filterTable()"></div></div><div class="table-container"><table class="table table-dark table-hover mb-0 align-middle"><thead><tr><th>Key</th><th>Hạn</th><th>Thiết bị</th><th>Điều Khiển</th></tr></thead><tbody id="keyTableBody">{keys_html}</tbody></table></div></div><div class="card p-3"><h4>📡 Lịch sử Logs (Chi tiết IP, TB, User)</h4><div class="table-container" style="max-height:400px;"><table class="table table-dark table-sm table-striped mb-0"><thead><tr><th>Time</th><th>Trạng thái</th><th>Key</th><th>Thông tin IP / Device / OLM</th></tr></thead><tbody>{logs_html}</tbody></table></div></div></div></div></div><div class="modal fade" id="extendModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card);"><div class="modal-header"><h5 class="modal-title">⏳ Gia hạn Key</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form action="/admin/extend" method="POST"><div class="modal-body"><input type="hidden" name="key" id="extendKeyInput"><p>Key: <strong id="extendKeyDisplay" class="text-info"></strong></p><div class="row g-2"><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option></select></div></div></div><div class="modal-footer"><button type="submit" class="btn btn-primary w-100">Gia hạn</button></div></form></div></div></div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function copyText(text) {{ navigator.clipboard.writeText(text); alert("Đã copy: " + text); }} 
+        function filterTable() {{ let s = document.getElementById('searchInput').value.toLowerCase(), f = document.getElementById('statusFilter').value; document.querySelectorAll('.key-row').forEach(r => {{ r.style.display = (r.innerText.toLowerCase().includes(s) && (f==='all' || r.dataset.status===f)) ? '' : 'none'; }}); }} 
+        function openExtendModal(key) {{ document.getElementById('extendKeyInput').value = key; document.getElementById('extendKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('extendModal')).show(); }}
+        
+        /* AUTO RELOAD MỖI 15s (Tự dừng khi đang gõ phím) */
+        let reloadTimer = setTimeout(() => location.reload(), 15000);
+        document.querySelectorAll('input, select').forEach(el => {{
+            el.addEventListener('focus', () => clearTimeout(reloadTimer));
+            el.addEventListener('blur', () => reloadTimer = setTimeout(() => location.reload(), 15000));
+        }});
+    </script></body></html>
     '''
 
 def render_login_html():
