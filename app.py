@@ -6,6 +6,7 @@ import secrets
 import hashlib
 import threading
 import sys
+import requests
 from flask import Flask, request, jsonify, redirect, make_response
 
 # --- ANTI-BUG / ANTI-TAMPER (TỰ SẬP KHI SỬA CODE SAU KHI CHẠY) ---
@@ -21,7 +22,7 @@ def __anti_tamper__():
         try:
             with open(__file__, 'rb') as f:
                 if hashlib.md5(f.read()).hexdigest() != __original_hash__:
-                    os._exit(0) # Tự sập code nếu bị can thiệp
+                    os._exit(0) 
         except: pass
 
 threading.Thread(target=__anti_tamper__, daemon=True).start()
@@ -31,11 +32,17 @@ app = Flask(__name__)
 DB_FILE = './database.json'
 ADMIN_PASSWORD = 'admin120510'
 
+# ========================================================
+# CẤU HÌNH BOT FACEBOOK MESSENGER
+# ========================================================
+FB_PAGE_TOKEN = "ĐIỀN_PAGE_ACCESS_TOKEN_CỦA_BẠN_VÀO_ĐÂY"
+FB_VERIFY_TOKEN = "LVT_BOT_VIP_123" # Mã này dùng để xác minh trên Facebook Developer
+# ========================================================
+
 remote_unlocks = {}
 logout_pins = set()
 multipliers = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
 
-# === BIẾN THEO DÕI IP ONLINE ===
 active_sessions = {} 
 
 def session_monitor():
@@ -54,7 +61,6 @@ def session_monitor():
             save_db(db)
 
 threading.Thread(target=session_monitor, daemon=True).start()
-# ===============================
 
 @app.after_request
 def add_cors_headers(response):
@@ -65,7 +71,7 @@ def add_cors_headers(response):
 
 def load_db():
     if not os.path.exists(DB_FILE): 
-        return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}}
+        return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}, "bot_users": {}}
     with open(DB_FILE, 'r', encoding='utf-8') as f:
         try:
             data = json.load(f)
@@ -75,11 +81,12 @@ def load_db():
             data.setdefault("logout_pins", [])
             data.setdefault("locked_olm", {})
             data.setdefault("ip_strikes", {})
+            data.setdefault("bot_users", {})
             if not isinstance(data.get("global_notice"), dict):
                 data["global_notice"] = {"msg": str(data.get("global_notice", "")), "exp": "permanent"}
             return data
         except: 
-            return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}}
+            return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}, "bot_users": {}}
 
 def save_db(db):
     with open(DB_FILE, 'w', encoding='utf-8') as f: 
@@ -103,7 +110,7 @@ def get_real_ip():
 
 @app.before_request
 def check_auth():
-    if request.path in ['/login', '/api/check', '/api/remote_unlock', '/api/poll_unlock', '/api/trigger_logout'] or request.path.startswith('/static'): return
+    if request.path in ['/login', '/api/check', '/api/remote_unlock', '/api/poll_unlock', '/api/trigger_logout', '/webhook'] or request.path.startswith('/static'): return
     if request.method == 'OPTIONS': return 
     if request.cookies.get('admin_auth') != 'true': return redirect('/login')
 
@@ -125,12 +132,7 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         if olm_exp == 'permanent' or current_time < olm_exp:
             add_log(db, "OLM BỊ KHÓA", key or "N/A", real_ip, f"{device_name} ({deviceId})", olm_name)
             save_db(db)
-            return False, {
-                "status": "error", 
-                "message": f"Tài khoản OLM '{olm_name}' đang bị khóa hệ thống!",
-                "is_locked_olm": True, 
-                "lock_exp": olm_exp
-            }
+            return False, {"status": "error", "message": f"Tài khoản OLM '{olm_name}' đang bị khóa hệ thống!", "is_locked_olm": True, "lock_exp": olm_exp}
         else:
             del db["locked_olm"][olm_name]
 
@@ -217,7 +219,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         add_log(db, "THÀNH CÔNG", key, real_ip, f"{device_name} ({deviceId})", olm_name)
         save_db(db)
 
-    # === [ĐÃ FIX] LẤY VÀ GỬI NOTICE_EXP ĐỂ HẾT BỊ NaN ===
     notice_data = db.get("global_notice", {})
     notice_msg = ""
     notice_exp = "permanent"
@@ -237,8 +238,122 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         "vip": is_key_vip, 
         "devices": f"{len(keyData.get('devices', []))}/{keyData.get('maxDevices', 1)}",
         "notice": notice_msg,
-        "notice_exp": notice_exp # Truyền mốc thời gian để Script JS tính toán
+        "notice_exp": notice_exp 
     }
+
+# ====================================================================
+# TÍCH HỢP FACEBOOK MESSENGER BOT
+# ====================================================================
+def send_fb_message(sender_id, text, quick_replies=None):
+    if not FB_PAGE_TOKEN or FB_PAGE_TOKEN == "ĐIỀN_PAGE_ACCESS_TOKEN_CỦA_BẠN_VÀO_ĐÂY": return
+    payload = {"recipient": {"id": sender_id}, "message": {"text": text}}
+    if quick_replies:
+        payload["message"]["quick_replies"] = [{"content_type": "text", "title": qr[0], "payload": qr[1]} for qr in quick_replies]
+    try: requests.post(f"https://graph.facebook.com/v18.0/me/messages?access_token={FB_PAGE_TOKEN}", json=payload)
+    except: pass
+
+def get_fb_name(sender_id):
+    if not FB_PAGE_TOKEN or FB_PAGE_TOKEN == "ĐIỀN_PAGE_ACCESS_TOKEN_CỦA_BẠN_VÀO_ĐÂY": return "Khách hàng"
+    try:
+        res = requests.get(f"https://graph.facebook.com/{sender_id}?fields=first_name,last_name&access_token={FB_PAGE_TOKEN}").json()
+        return f"{res.get('last_name', '')} {res.get('first_name', '')}".strip() or "Khách hàng"
+    except: return "Khách hàng"
+
+@app.route('/webhook', methods=['GET', 'POST'])
+def fb_webhook():
+    if request.method == 'GET':
+        if request.args.get("hub.verify_token") == FB_VERIFY_TOKEN:
+            return request.args.get("hub.challenge")
+        return "Invalid verify token", 403
+
+    if request.method == 'POST':
+        data = request.json
+        for entry in data.get('entry', []):
+            for messaging_event in entry.get('messaging', []):
+                sender_id = messaging_event['sender']['id']
+                db = load_db()
+                
+                # Tạo user mới nếu chưa có
+                if sender_id not in db["bot_users"]:
+                    db["bot_users"][sender_id] = {"name": get_fb_name(sender_id), "balance": 0, "resets": 3, "state": "none"}
+                    save_db(db)
+                
+                user = db["bot_users"][sender_id]
+                
+                # Bắt Payload từ Quick Reply hoặc chữ gõ vào
+                msg_text = ""
+                payload = ""
+                if messaging_event.get('message'):
+                    msg_text = messaging_event['message'].get('text', '').strip()
+                    if 'quick_reply' in messaging_event['message']:
+                        payload = messaging_event['message']['quick_reply']['payload']
+                elif messaging_event.get('postback'):
+                    payload = messaging_event['postback']['payload']
+
+                # --- XỬ LÝ NHẬP KEY ĐỂ RESET ---
+                if user["state"] == "waiting_for_reset_key":
+                    if payload: # Nếu họ bấm nút Hủy
+                        user["state"] = "none"; save_db(db)
+                    else:
+                        key_to_reset = msg_text
+                        if key_to_reset in db["keys"]:
+                            db["keys"][key_to_reset]["devices"] = []
+                            db["keys"][key_to_reset]["known_ips"] = []
+                            user["resets"] -= 1
+                            user["state"] = "none"
+                            save_db(db)
+                            send_fb_message(sender_id, f"✅ Reset thành công Key: {key_to_reset}\nTất cả thiết bị và IP đã được xóa sạch!", [["🔙 Quay lại", "MENU_MAIN"]])
+                        else:
+                            send_fb_message(sender_id, "❌ Key không tồn tại! Vui lòng kiểm tra lại hoặc gõ lại:", [["Hủy Reset", "MENU_MAIN"]])
+                        continue
+
+                # --- XỬ LÝ LỆNH BÌNH THƯỜNG ---
+                cmd = payload if payload else (msg_text.upper() if msg_text else "MENU_MAIN")
+                
+                if cmd == "MENU_MAIN" or "CHÀO" in cmd or "HI" in cmd:
+                    txt = f"👋 Chào {user['name']}!\n🆔 ID của bạn: {sender_id}\n💰 Số dư: {user['balance']}đ\n🔄 Lần Reset Key còn lại: {user['resets']}/3\n\nVui lòng chọn dịch vụ dưới đây:"
+                    send_fb_message(sender_id, txt, [["🔑 Mua Key", "MENU_BUY"], ["🔄 Reset Key", "MENU_RESET"]])
+                
+                elif cmd == "MENU_BUY":
+                    send_fb_message(sender_id, "Bạn muốn mua loại Key nào?", [["👑 Key VIP", "BUY_VIP"], ["👤 Key Thường", "BUY_NORMAL"], ["🔙 Quay lại", "MENU_MAIN"]])
+                
+                elif cmd == "BUY_NORMAL":
+                    send_fb_message(sender_id, "🛠 Tính năng Mua Key Thường hiện đang bảo trì. Vui lòng quay lại sau hoặc mua Key VIP nhé!", [["🔙 Menu Chính", "MENU_MAIN"]])
+                
+                elif cmd == "BUY_VIP":
+                    txt = "🛒 BẢNG GIÁ KEY VIP OLM:\n- 1 Giờ: 7,000đ\n- 7 Ngày: 30,000đ\n- 30 Ngày: 85,000đ\n- 1 Năm: 200,000đ\n\nChọn gói muốn mua:"
+                    send_fb_message(sender_id, txt, [["🕒 1 Giờ (7k)", "VIP_1H"], ["📅 7 Ngày (30k)", "VIP_7D"], ["📆 30 Ngày (85k)", "VIP_30D"], ["🏆 1 Năm (200k)", "VIP_1Y"]])
+                
+                elif cmd.startswith("VIP_"):
+                    prices = {"VIP_1H": (7000, 3600000), "VIP_7D": (30000, 604800000), "VIP_30D": (85000, 2592000000), "VIP_1Y": (200000, 31536000000)}
+                    if cmd in prices:
+                        cost, duration_ms = prices[cmd]
+                        if user["balance"] >= cost:
+                            # Thanh toán và tạo Key
+                            user["balance"] -= cost
+                            nk = f"OLMVIP-{random.randint(1000000, 9999999)}"
+                            db["keys"][nk] = {"exp": int(time.time()*1000) + duration_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm"}
+                            save_db(db)
+                            send_fb_message(sender_id, f"🎉 MUA KEY THÀNH CÔNG!\n\n🔑 Key của bạn: {nk}\n💰 Số dư còn lại: {user['balance']}đ\n\nHãy copy Key và dán vào Tool nhé!", [["🔙 Quay lại", "MENU_MAIN"]])
+                        else:
+                            send_fb_message(sender_id, f"❌ Số dư không đủ! Gói này giá {cost}đ nhưng bạn chỉ có {user['balance']}đ.\n\nVui lòng copy ID: {sender_id} gửi cho Admin để nạp tiền.", [["🔙 Quay lại", "MENU_MAIN"]])
+                
+                elif cmd == "MENU_RESET":
+                    if user["resets"] <= 0:
+                        send_fb_message(sender_id, "❌ Bạn đã hết lượt Reset miễn phí (0/3).", [["🔙 Quay lại", "MENU_MAIN"]])
+                    else:
+                        send_fb_message(sender_id, f"Bạn đang còn {user['resets']} lượt Reset. Bạn muốn reset loại Key nào?", [["Reset Key VIP", "RESET_ACTION"], ["Reset Key Thường", "RESET_ACTION"], ["🔙 Quay lại", "MENU_MAIN"]])
+                        
+                elif cmd == "RESET_ACTION":
+                    user["state"] = "waiting_for_reset_key"
+                    save_db(db)
+                    send_fb_message(sender_id, "📝 Vui lòng gõ (nhập) chính xác Key bạn muốn Reset và gửi cho Bot:", [["Hủy bỏ", "MENU_MAIN"]])
+                    
+                else:
+                    # Gõ bậy bạ
+                    send_fb_message(sender_id, "🤖 Bot không hiểu lệnh này. Vui lòng sử dụng các nút chức năng bên dưới.", [["Hiển thị Menu", "MENU_MAIN"]])
+
+        return "ok", 200
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_key():
@@ -391,6 +506,17 @@ def key_actions(action, key):
         save_db(db)
     return redirect('/')
 
+@app.route('/admin/add_balance', methods=['POST'])
+def add_balance():
+    fbid = request.form.get('fbid').strip()
+    amount = int(request.form.get('amount', 0))
+    db = load_db()
+    if fbid in db["bot_users"]:
+        db["bot_users"][fbid]["balance"] += amount
+        save_db(db)
+        send_fb_message(fbid, f"🎉 Chúc mừng! Admin vừa cộng thêm {amount}đ vào tài khoản của bạn.\n💰 Số dư mới: {db['bot_users'][fbid]['balance']}đ", [["Cảm ơn Admin", "MENU_MAIN"]])
+    return redirect('/')
+
 @app.route('/admin/online')
 def online_ips():
     html_rows = ""
@@ -449,14 +575,22 @@ def dashboard():
         
         logs_html += f'<tr><td><small class="text-muted">{time.strftime("%H:%M:%S %d/%m", time.localtime(log["time"]))}</small></td><td><span class="badge bg-{color}">{log["action"]}</span></td><td class="text-info">{log["key"]}</td><td><span class="badge bg-secondary">{log["ip"]}</span><br><small class="text-muted">{log.get("olm_name","")}</small><br><small style="font-size:10px;">{log.get("device","")}</small></td></tr>'
 
+    users_html = ''
+    for uid, udata in db.get("bot_users", {}).items():
+        users_html += f'<tr><td><strong class="text-info">{udata["name"]}</strong><br><small class="text-muted">{uid}</small></td><td><span class="badge bg-success">{udata["balance"]}đ</span></td><td>{udata["resets"]} lần</td></tr>'
+
     current_notice = db.get("global_notice", {}).get("msg", "")
 
     return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4">
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4">
     
     <div class="card p-3 mb-4" style="border-color: #00ffcc;"><h4><i class="fas fa-wrench"></i> Tạo Key LVT Tool</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="tool"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: LVT)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch1"><label class="form-check-label text-warning" for="vipSwitch1">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #00ffcc, #0066ff); color:black;">TẠO KEY LVT</button></div></form></div>
     
     <div class="card p-3 mb-4" style="border-color: #ff3366;"><h4><i class="fas fa-crosshairs"></i> Tạo Key OLM</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="olm"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: OLM)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch2"><label class="form-check-label text-warning" for="vipSwitch2">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #ff3366, #ff9900); color:white;">TẠO KEY OLM</button></div></form></div>
+    
+    <div class="card p-3 mb-4" style="border-color: #1877F2;"><h4><i class="fab fa-facebook-messenger"></i> Quản Lý User Bot</h4>
+    <form action="/admin/add_balance" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="fbid" class="form-control bg-dark text-light" placeholder="Nhập Facebook ID của khách..." required></div><div class="col-7"><input type="number" name="amount" class="form-control bg-dark text-light" placeholder="Số Tiền (VD: 50000)" required></div><div class="col-5"><button type="submit" class="btn w-100 fw-bold" style="background:#1877F2; color:white;">Nạp Tiền</button></div></form>
+    <div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>User (FB ID)</th><th>Số Dư</th><th>Reset</th></tr></thead><tbody>{users_html}</tbody></table></div></div>
     
     <div class="card p-3 mb-4"><h4 class="text-danger">🛡️ Block IP</h4><form action="/admin/ban-ip" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div>
     
