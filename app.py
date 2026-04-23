@@ -243,7 +243,7 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
 
 
 # ====================================================================
-# TÍCH HỢP TELEGRAM BOT (BẢN FIX ĐỊNH DẠNG HTML AN TOÀN TUYỆT ĐỐI)
+# TÍCH HỢP TELEGRAM BOT (BẢN FIX LƯU USERNAME & ĐỊNH DẠNG HTML AN TOÀN)
 # ====================================================================
 def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return
@@ -253,7 +253,7 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         payload["reply_markup"] = reply_markup
     try: 
         res = requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
-        print("BOT GỬI TIN NHẮN:", res.json()) # Log để dễ gỡ lỗi
+        print("BOT GỬI TIN NHẮN:", res.json())
     except Exception as e: 
         print("LỖI GỬI BOT:", e)
 
@@ -265,21 +265,24 @@ def telegram_webhook():
     data = request.json
     if not data: return "ok", 200
     
-    print("NHẬN ĐƯỢC DỮ LIỆU TỪ TELEGRAM:", data) # Chèn cảm biến báo cáo
+    print("NHẬN ĐƯỢC DỮ LIỆU TỪ TELEGRAM:", data)
     
     chat_id = None
     msg_text = ""
     payload_data = ""
     user_name = "Khách hàng"
+    tg_username = ""
     
     if "message" in data and "text" in data["message"]:
         chat_id = data["message"]["chat"]["id"]
         msg_text = data["message"]["text"].strip()
         user_name = data["message"]["from"].get("first_name", "Khách")
+        tg_username = data["message"]["from"].get("username", "")
     elif "callback_query" in data:
         chat_id = data["callback_query"]["message"]["chat"]["id"]
         payload_data = data["callback_query"]["data"]
         user_name = data["callback_query"]["from"].get("first_name", "Khách")
+        tg_username = data["callback_query"]["from"].get("username", "")
         requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": data["callback_query"]["id"]})
 
     if not chat_id: return "ok", 200
@@ -287,12 +290,18 @@ def telegram_webhook():
     db = load_db()
     sender_id = str(chat_id)
     
-    # Lọc các thẻ HTML có thể gây lỗi trong tên người dùng
+    # Lọc thẻ HTML và tạo username
     safe_name = user_name.replace("<", "").replace(">", "").replace("&", "")
+    formatted_username = f"@{tg_username}" if tg_username else ""
     
     if sender_id not in db["bot_users"]:
-        db["bot_users"][sender_id] = {"name": safe_name, "balance": 0, "resets": 3, "state": "none"}
+        db["bot_users"][sender_id] = {"name": safe_name, "username": formatted_username, "balance": 0, "resets": 3, "state": "none"}
         save_db(db)
+    else:
+        # Cập nhật username nếu có thay đổi
+        if db["bot_users"][sender_id].get("username") != formatted_username:
+            db["bot_users"][sender_id]["username"] = formatted_username
+            save_db(db)
     
     user = db["bot_users"][sender_id]
 
@@ -319,7 +328,8 @@ def telegram_webhook():
     cmd = payload_data if payload_data else (msg_text.upper() if msg_text else "MENU_MAIN")
     
     if cmd in ["MENU_MAIN", "/START", "HI", "CHÀO"]:
-        txt = f"👋 Chào <b>{safe_name}</b>!\n🆔 ID của bạn: <code>{sender_id}</code>\n💰 Số dư: <b>{user['balance']}đ</b>\n🔄 Reset Key còn lại: <b>{user['resets']}/3</b>\n\nVui lòng chọn dịch vụ:"
+        uname_str = f" ({formatted_username})" if formatted_username else ""
+        txt = f"👋 Chào <b>{safe_name}</b>{uname_str}!\n🆔 ID của bạn: <code>{sender_id}</code>\n💰 Số dư: <b>{user['balance']}đ</b>\n🔄 Reset Key còn lại: <b>{user['resets']}/3</b>\n\nVui lòng chọn dịch vụ:"
         markup = {"inline_keyboard": [
             [{"text": "🔑 Mua Key", "callback_data": "MENU_BUY"}, {"text": "🔄 Reset Key", "callback_data": "MENU_RESET"}]
         ]}
@@ -358,7 +368,7 @@ def telegram_webhook():
                 send_telegram_message(chat_id, f"🎉 <b>MUA KEY THÀNH CÔNG!</b>\n\n🔑 Key của bạn: <code>{nk}</code>\n💰 Số dư còn lại: {user['balance']}đ\n\n<i>(Chạm vào Key để copy và dán vào Tool nhé!)</i>", markup)
             else:
                 markup = {"inline_keyboard": [[{"text": "🔙 Quay lại Menu", "callback_data": "MENU_MAIN"}]]}
-                send_telegram_message(chat_id, f"❌ <b>Số dư không đủ!</b>\nGói này giá {cost}đ nhưng bạn chỉ có {user['balance']}đ.\n\nVui lòng copy ID: <code>{sender_id}</code> gửi cho Admin để nạp tiền.", markup)
+                send_telegram_message(chat_id, f"❌ <b>Số dư không đủ!</b>\nGói này giá {cost}đ nhưng bạn chỉ có {user['balance']}đ.\n\nVui lòng gửi Username: <code>{formatted_username}</code> hoặc ID: <code>{sender_id}</code> cho Admin để nạp tiền.", markup)
     
     elif cmd == "MENU_RESET":
         if user["resets"] <= 0:
@@ -514,15 +524,38 @@ def extend_key():
         save_db(db)
     return redirect('/')
 
+# --- BẢN CẬP NHẬT: NẠP BẰNG TÊN NGƯỜI DÙNG HOẶC ID ---
 @app.route('/admin/add_balance', methods=['POST'])
 def add_balance():
-    tid = request.form.get('tid').strip()
+    target_user = request.form.get('target_user', '').strip()
     amount = int(request.form.get('amount', 0))
+    resets = int(request.form.get('resets', 0))
+    
+    if not target_user: return redirect('/')
+    
     db = load_db()
-    if tid in db["bot_users"]:
-        db["bot_users"][tid]["balance"] += amount
+    target_id = None
+    
+    # Tìm theo @username hoặc Chat ID
+    if target_user.startswith('@'):
+        for uid, info in db["bot_users"].items():
+            if info.get("username", "").lower() == target_user.lower():
+                target_id = uid
+                break
+    else:
+        target_id = target_user
+
+    if target_id and target_id in db["bot_users"]:
+        db["bot_users"][target_id]["balance"] += amount
+        db["bot_users"][target_id]["resets"] += resets
         save_db(db)
-        send_telegram_message(tid, f"🎉 <b>Chúc mừng! Admin vừa cộng thêm {amount}đ vào tài khoản của bạn.</b>\n💰 Số dư mới: {db['bot_users'][tid]['balance']}đ", {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
+        
+        msg = f"🎉 <b>Admin vừa cập nhật tài khoản của bạn!</b>\n"
+        if amount > 0: msg += f"💰 Nạp tiền: <b>+{amount}đ</b>\n"
+        if resets > 0: msg += f"🔄 Lượt Reset: <b>+{resets} lượt</b>\n"
+        msg += f"\n📊 Số dư mới: {db['bot_users'][target_id]['balance']}đ\n🔄 Reset hiện tại: {db['bot_users'][target_id]['resets']}"
+        
+        send_telegram_message(target_id, msg, {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
     return redirect('/')
 
 @app.route('/admin/online')
@@ -585,7 +618,9 @@ def dashboard():
 
     users_html = ''
     for uid, udata in db.get("bot_users", {}).items():
-        users_html += f'<tr><td><strong class="text-info">{udata["name"]}</strong><br><small class="text-muted">{uid}</small></td><td><span class="badge bg-success">{udata["balance"]}đ</span></td><td>{udata["resets"]} lần</td></tr>'
+        uname = udata.get("username", "")
+        uname_html = f'<span class="text-warning">{uname}</span>' if uname else ''
+        users_html += f'<tr><td><strong class="text-info">{udata["name"]}</strong> {uname_html}<br><small class="text-muted">{uid}</small></td><td><span class="badge bg-success">{udata["balance"]}đ</span></td><td>{udata["resets"]} lần</td></tr>'
 
     current_notice = db.get("global_notice", {}).get("msg", "")
 
@@ -597,8 +632,13 @@ def dashboard():
     <div class="card p-3 mb-4" style="border-color: #ff3366;"><h4><i class="fas fa-crosshairs"></i> Tạo Key OLM</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="olm"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: OLM)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch2"><label class="form-check-label text-warning" for="vipSwitch2">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #ff3366, #ff9900); color:white;">TẠO KEY OLM</button></div></form></div>
     
     <div class="card p-3 mb-4" style="border-color: #2AABEE;"><h4><i class="fab fa-telegram"></i> Quản Lý User Bot Telegram</h4>
-    <form action="/admin/add_balance" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="tid" class="form-control bg-dark text-light" placeholder="Nhập Telegram Chat ID của khách..." required></div><div class="col-7"><input type="number" name="amount" class="form-control bg-dark text-light" placeholder="Số Tiền (VD: 50000)" required></div><div class="col-5"><button type="submit" class="btn w-100 fw-bold" style="background:#2AABEE; color:white;">Nạp Tiền</button></div></form>
-    <div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên (Chat ID)</th><th>Số Dư</th><th>Reset</th></tr></thead><tbody>{users_html}</tbody></table></div></div>
+    <form action="/admin/add_balance" method="POST" class="row g-2 mb-3">
+        <div class="col-12"><input type="text" name="target_user" class="form-control bg-dark text-light" placeholder="Nhập @username hoặc ID khách..." required></div>
+        <div class="col-5"><input type="number" name="amount" class="form-control bg-dark text-light" placeholder="Tiền (VD: 50k)" value="0" required></div>
+        <div class="col-4"><input type="number" name="resets" class="form-control bg-dark text-light" placeholder="+ Lượt Reset" value="0" required></div>
+        <div class="col-3"><button type="submit" class="btn w-100 fw-bold" style="background:#2AABEE; color:white;">Nạp</button></div>
+    </form>
+    <div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên (Username/ID)</th><th>Số Dư</th><th>Reset</th></tr></thead><tbody>{users_html}</tbody></table></div></div>
     
     <div class="card p-3 mb-4"><h4 class="text-danger">🛡️ Block IP</h4><form action="/admin/ban-ip" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div>
     
