@@ -246,7 +246,7 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
 
 
 # ====================================================================
-# TÍCH HỢP TELEGRAM BOT & ADMIN PANEL COMMANDS
+# TÍCH HỢP TELEGRAM BOT & ADMIN PANEL COMMANDS (THÊM LOGS HISTORY)
 # ====================================================================
 def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return
@@ -305,13 +305,14 @@ def telegram_webhook():
             send_telegram_message(chat_id, "⚠️ <b>Hệ thống:</b> Key Admin của bạn đã hết hạn hoặc bị khóa. Quyền Admin đã bị tước!")
 
     # ================== KHU VỰC LỆNH ADMIN ==================
-    if msg_text.upper() == "/ADMIN":
+    if msg_text.upper() == "/ADMIN" or (payload_data == "ADM_MAIN_MENU" and user.get("is_admin")):
         if user.get("is_admin"):
             user["state"] = "none"; save_db(db)
             markup = {"inline_keyboard": [
                 [{"text": "➕ Tạo Key Nhanh", "callback_data": "ADM_CREATE"}, {"text": "💰 Nạp Tiền/Reset", "callback_data": "ADM_BAL"}],
                 [{"text": "🔒 Khóa OLM", "callback_data": "ADM_LOCKOLM"}, {"text": "🚫 Ban IP", "callback_data": "ADM_BANIP"}],
                 [{"text": "📢 Phát Thông Báo", "callback_data": "ADM_NOTICE"}, {"text": "🛠 Quản Lý Key", "callback_data": "ADM_MANAGE"}],
+                [{"text": "📜 Xem Lịch Sử Logs & OLM Bị Khóa", "callback_data": "ADM_LOGS"}],
                 [{"text": "❌ Đăng Xuất Admin", "callback_data": "ADM_LOGOUT"}]
             ]}
             send_telegram_message(chat_id, "👑 <b>BẢNG ĐIỀU KHIỂN SERVER (ADMIN)</b>\nBạn đang nắm toàn quyền kiểm soát hệ thống:", markup)
@@ -360,6 +361,26 @@ def telegram_webhook():
             user["state"] = "adm_w_manage"; save_db(db)
             send_telegram_message(chat_id, "🛠 <b>QUẢN LÝ KEY</b>\nNhắn theo các cú pháp sau:\n1. <code>XOA Key</code> (Xóa vĩnh viễn)\n2. <code>RESET Key</code> (Gỡ mọi thiết bị/IP)\n3. <code>VIP Key</code> (Bật/Tắt VIP)\n4. <code>GIAHAN Key Ngày</code> (Cộng ngày)\n(Nhắn /cancel để hủy)")
             return "ok", 200
+        elif payload_data == "ADM_LOGS":
+            # --- CHỨC NĂNG XEM LOGS MỚI ---
+            user["state"] = "none"; save_db(db)
+            logs = db.get("logs", [])[:10] # Lấy 10 log mới nhất cho gọn
+            log_msg = "📜 <b>LỊCH SỬ LOGS (10 mục gần nhất):</b>\n\n"
+            for log in logs:
+                t = time.strftime("%H:%M %d/%m", time.localtime(log["time"]))
+                log_msg += f"🔹 <b>{t}</b> | {log['action']}\nKey: <code>{log['key']}</code> | IP: <code>{log['ip']}</code>\nTB: {log.get('device','N/A')} | OLM: {log.get('olm_name','N/A')}\n\n"
+            if not logs: log_msg += "<i>Chưa có dữ liệu.</i>\n\n"
+            
+            olms = db.get("locked_olm", {})
+            log_msg += "🔒 <b>TÊN OLM ĐANG BỊ KHÓA:</b>\n"
+            if olms:
+                for u in olms: log_msg += f"- <code>{u}</code>\n"
+            else: log_msg += "- <i>Chưa có tài khoản nào bị khóa.</i>\n"
+            
+            markup = {"inline_keyboard": [[{"text": "🔙 Về Bảng Điều Khiển Admin", "callback_data": "ADM_MAIN_MENU"}]]}
+            send_telegram_message(chat_id, log_msg, markup)
+            return "ok", 200
+            
         elif payload_data == "ADM_LOGOUT":
             user["is_admin"] = False; user["admin_key"] = ""; user["state"] = "none"; save_db(db)
             send_telegram_message(chat_id, "✅ Đã đăng xuất Admin an toàn.")
