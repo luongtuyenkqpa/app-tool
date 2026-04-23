@@ -105,7 +105,12 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         if olm_exp == 'permanent' or current_time < olm_exp:
             add_log(db, "OLM BỊ KHÓA", key or "N/A", real_ip, f"{device_name} ({deviceId})", olm_name)
             save_db(db)
-            return False, {"status": "error", "message": f"Tài khoản OLM '{olm_name}' đang bị khóa truy cập!"}
+            return False, {
+                "status": "error", 
+                "message": f"Tài khoản OLM '{olm_name}' đang bị khóa hệ thống!",
+                "is_locked_olm": True, 
+                "lock_exp": olm_exp
+            }
         else:
             del db["locked_olm"][olm_name]
 
@@ -149,7 +154,6 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
     known_ips = keyData.setdefault('known_ips', [])
     if real_ip not in known_ips:
         if len(known_ips) >= keyData.get('maxDevices', 1):
-            # Phát hiện chia sẻ key khác IP
             strikes = db.setdefault("ip_strikes", {})
             strike_info = strikes.get(real_ip, {"count": 0, "banned_until": 0})
             
@@ -161,13 +165,13 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
                 strikes[real_ip] = strike_info; save_db(db)
                 return False, {"status": "error", "message": msg}
             elif c == 4:
-                strike_info["banned_until"] = current_time + 3600000 # 1 tiếng
+                strike_info["banned_until"] = current_time + 3600000 
                 db["banned_ips"][real_ip] = strike_info["banned_until"]
             elif c == 5:
-                strike_info["banned_until"] = current_time + 86400000 # 1 ngày
+                strike_info["banned_until"] = current_time + 86400000 
                 db["banned_ips"][real_ip] = strike_info["banned_until"]
             elif c == 6:
-                strike_info["banned_until"] = current_time + 604800000 # 1 tuần
+                strike_info["banned_until"] = current_time + 604800000 
                 db["banned_ips"][real_ip] = strike_info["banned_until"]
             else:
                 strike_info["banned_until"] = 'permanent'
@@ -178,7 +182,7 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         else:
             known_ips.append(real_ip)
 
-    # CHECK DEVICE ID (Bình thường)
+    # CHECK DEVICE ID
     if deviceId not in keyData.get('devices', []):
         if len(keyData.get('devices', [])) >= keyData.get('maxDevices', 1):
             add_log(db, "QUÁ GIỚI HẠN TB", key, real_ip, f"{device_name} ({deviceId})", olm_name)
@@ -296,6 +300,12 @@ def lock_olm():
     db.setdefault("locked_olm", {})[user] = "permanent" if t == 'permanent' else int(time.time() * 1000) + int(dur) * multipliers.get(t, 86400000)
     save_db(db); return redirect('/')
 
+@app.route('/admin/unlock_olm/<user>')
+def unlock_olm(user):
+    db = load_db()
+    if user in db.get("locked_olm", {}): del db["locked_olm"][user]
+    save_db(db); return redirect('/')
+
 @app.route('/admin/notice', methods=['POST'])
 def set_notice():
     msg = request.form.get('message', '').strip()
@@ -375,7 +385,7 @@ def dashboard():
     olm_html = ''
     for u, exp in db.get("locked_olm", {}).items():
         exp_txt = "Vĩnh viễn" if exp == 'permanent' else time.strftime('%d/%m/%Y %H:%M', time.localtime(exp / 1000))
-        olm_html += f'<tr><td class="text-warning">{u}</td><td>{exp_txt}</td></tr>'
+        olm_html += f'<tr><td class="text-warning">{u}</td><td>{exp_txt}</td><td><a href="/admin/unlock_olm/{u}" class="btn btn-sm btn-success">Mở Khóa</a></td></tr>'
 
     logs_html = ''
     for log in db.get("logs", []):
@@ -393,7 +403,7 @@ def dashboard():
     
     <div class="card p-3 mb-4"><h4 class="text-danger">🛡️ Block IP</h4><form action="/admin/ban-ip" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div>
     
-    <div class="card p-3"><h4 class="text-warning">🔒 Khóa Tên OLM</h4><form action="/admin/lock_olm" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="user" class="form-control bg-dark text-light" placeholder="Nhập Tên OLM (VD: hp_luongvantuyen)" required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-warning w-100 text-dark fw-bold">Khóa Tài Khoản OLM</button></div></form><div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên OLM</th><th>Hạn</th></tr></thead><tbody>{olm_html}</tbody></table></div></div>
+    <div class="card p-3"><h4 class="text-warning">🔒 Khóa Tên OLM</h4><form action="/admin/lock_olm" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="user" class="form-control bg-dark text-light" placeholder="Nhập Tên OLM (VD: hp_luongvantuyen)" required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-warning w-100 text-dark fw-bold">Khóa Tài Khoản OLM</button></div></form><div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên OLM</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{olm_html}</tbody></table></div></div>
     
     </div><div class="col-lg-8">
     
