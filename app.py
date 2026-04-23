@@ -1,256 +1,773 @@
 import os
-import json
 import time
+import requests
+import uuid
+import sys
+import select
+import termios
+import tty
+import shutil
+import zipfile
+import subprocess
+import re
 import random
-import secrets
-from flask import Flask, request, jsonify, redirect, make_response
+from datetime import datetime
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.table import Table
+from rich.progress import track
 
-app = Flask(__name__)
-DB_FILE = './database.json'
-ADMIN_PASSWORD = 'admin' 
+# =========================================================================
+# LINK SERVER MẶC ĐỊNH
+SERVER_URL = "https://app-tool-trlp.onrender.com"  
+# =========================================================================
 
-remote_unlocks = {}
-logout_pins = set()
+console = Console()
 
-@app.after_request
-def add_cors_headers(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
+def auto_grant_storage():
+    if not os.path.exists(os.path.expanduser('~/storage')):
+        os.system('termux-setup-storage')
+        time.sleep(2)
 
-def load_db():
-    if not os.path.exists(DB_FILE): return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": []}
-    with open(DB_FILE, 'r', encoding='utf-8') as f:
-        try:
-            data = json.load(f)
-            if "keys" not in data: data["keys"] = {}
-            if "logs" not in data: data["logs"] = []
-            if "banned_ips" not in data: data["banned_ips"] = {}
-            if "logout_pins" not in data: data["logout_pins"] = []
-            return data
-        except: return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": []}
+def get_device_id():
+    mac = uuid.getnode()
+    return f"TERMUX-{mac}"
 
-def save_db(db):
-    with open(DB_FILE, 'w', encoding='utf-8') as f: json.dump(db, f, indent=2, ensure_ascii=False)
+DEVICE_ID = get_device_id()
 
-def add_log(db, action, key, ip, device):
-    db.setdefault("logs", []).insert(0, {"time": int(time.time()), "action": action, "key": key, "ip": ip, "device": device})
-    db["logs"] = db["logs"][:200]
+def clear_screen():
+    os.system('clear')
 
-def get_real_ip():
-    return request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip() if request.headers.getlist("X-Forwarded-For") else request.remote_addr
+def show_banner(is_vip=False):
+    if is_vip:
+        banner = """
+[bold yellow blink]╔════════════════════════════════════════════════════════════╗
+║                   [bold red]👑 LVT INJECTOR VIP PRO 👑[/bold red]                 ║
+║           [italic gold1]Hệ thống quản lý Key & Inject File APK[/italic gold1]           ║
+╚════════════════════════════════════════════════════════════╝[/]
+        """
+    else:
+        banner = """
+[bold cyan]╔════════════════════════════════════════════════════════════╗
+║                   [bold yellow]LVT INJECTOR PRO TERMUX[/bold yellow]                  ║
+║           [italic white]Hệ thống quản lý Key & Inject File APK[/italic white]           ║
+╚════════════════════════════════════════════════════════════╝[/]
+        """
+    console.print(banner, justify="center")
 
-@app.before_request
-def check_auth():
-    if request.path in ['/login', '/api/check', '/api/remote_unlock', '/api/poll_unlock', '/api/trigger_logout'] or request.path.startswith('/static'): return
-    if request.method == 'OPTIONS': return 
-    if request.cookies.get('admin_auth') != 'true': return redirect('/login')
+def check_key_api_silently(key):
+    try:
+        payload = {"key": key, "deviceId": DEVICE_ID, "target_app": "tool"}
+        res = requests.post(f"{SERVER_URL}/api/check", json=payload, timeout=5)
+        return res.json()
+    except:
+        return {"status": "error", "message": "Mất kết nối!"}
 
-def process_key_validation(key, deviceId, real_ip, target_app, expected_type):
-    db = load_db()
-    if real_ip in db.get("banned_ips", {}):
-        ban_exp = db["banned_ips"][real_ip]
-        if ban_exp == 'permanent' or int(time.time() * 1000) < ban_exp:
-            add_log(db, "BỊ CHẶN IP", key or "N/A", real_ip, deviceId); save_db(db)
-            return False, {"status": "error", "message": "IP của bạn đã bị khóa!"}
-        else: del db["banned_ips"][real_ip]
+def display_message(status, message):
+    color = "green" if status == "success" else "red"
+    title = "THÀNH CÔNG" if status == "success" else "THẤT BẠI"
+    console.print(Panel(f"[bold {color}]{message}[/]", title=f"[{color}]{title}[/]", border_style=color, width=60))
+    time.sleep(2)
 
-    if not key or key not in db["keys"]:
-        add_log(db, "SAI KEY", key or "Trống", real_ip, deviceId); save_db(db)
-        return False, {"status": "error", "message": "Key không tồn tại!"}
+def check_dependencies():
+    try:
+        subprocess.run(["apktool", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["java", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    except FileNotFoundError:
+        return False
 
-    keyData = db["keys"][key]
-    
-    # 1. CHECK CHÉO HỆ THỐNG (TOOL VS OLM)
-    actual_target = keyData.get('target', 'tool')
-    if actual_target != target_app:
-        add_log(db, "SAI HỆ THỐNG", key, real_ip, deviceId); save_db(db)
-        sys_name = "LVT Tool" if actual_target == "tool" else "OLM"
-        return False, {"status": "error", "message": f"LỖI: Key này là của hệ thống {sys_name}. Hãy chọn đúng Công Tắc Hệ Thống!"}
-
-    # 2. CHECK CHÉO CÔNG TẮC VIP/THƯỜNG CỦA NGƯỜI DÙNG
-    is_key_vip = keyData.get('vip', False)
-    is_expect_vip = (expected_type == 'vip')
-    if is_expect_vip and not is_key_vip:
-        return False, {"status": "error", "message": "Key của bạn là Key THƯỜNG. Hãy gạt công tắc sang 'Key Thường'!"}
-    if not is_expect_vip and is_key_vip:
-        return False, {"status": "error", "message": "Key của bạn là Key VIP. Hãy gạt công tắc sang 'Key VIP'!"}
-
-    if keyData.get('status') == 'banned':
-        add_log(db, "KEY BỊ BANNED", key, real_ip, deviceId); save_db(db)
-        return False, {"status": "error", "message": "Key này đã bị khóa (Banned)!"}
-
-    if keyData.get('exp') == 'pending': keyData['exp'] = int(time.time() * 1000) + keyData.get('durationMs', 0)
-    if keyData.get('exp') != 'permanent' and int(time.time() * 1000) > keyData.get('exp', 0):
-        add_log(db, "KEY HẾT HẠN", key, real_ip, deviceId); save_db(db)
-        return False, {"status": "error", "message": "Key đã hết hạn!"}
-
-    if deviceId not in keyData.get('devices', []):
-        if len(keyData.get('devices', [])) >= keyData.get('maxDevices', 1):
-            add_log(db, "QUÁ GIỚI HẠN TB", key, real_ip, deviceId); save_db(db)
-            return False, {"status": "error", "message": "Key đã đầy thiết bị!"}
-        keyData.setdefault('devices', []).append(deviceId)
-
-    add_log(db, "THÀNH CÔNG", key, real_ip, deviceId); save_db(db)
-    return True, {"status": "success", "message": "Xác thực thành công!", "exp": keyData.get('exp'), "vip": is_key_vip, "devices": f"{len(keyData.get('devices', []))}/{keyData.get('maxDevices', 1)}"}
-
-@app.route('/api/check', methods=['POST', 'OPTIONS'])
-def check_key():
-    if request.method == 'OPTIONS': return jsonify({}), 200
-    data = request.get_json() or {}
-    pin = data.get('pin')
-    if pin:
-        db = load_db()
-        if pin in db.get("logout_pins", []):
-            db["logout_pins"].remove(pin); save_db(db)
-            return jsonify({"status": "error", "message": "Đã bị đăng xuất từ xa!"})
-    success, response = process_key_validation(data.get('key'), data.get('deviceId', 'Unknown'), get_real_ip(), data.get('target_app', 'tool'), data.get('expected_type', 'normal'))
-    return jsonify(response)
-
-@app.route('/api/remote_unlock', methods=['POST', 'OPTIONS'])
-def remote_unlock():
-    if request.method == 'OPTIONS': return jsonify({}), 200 
-    data = request.get_json() or {}
-    key, pin, deviceId, target_app, expected_type = data.get('key'), data.get('pin'), data.get('deviceId', 'Unknown'), data.get('target_app', 'tool'), data.get('expected_type', 'normal')
-    if not pin: return jsonify({"status": "error", "message": "Thiếu mã PIN!"})
-    
-    success, response = process_key_validation(key, deviceId, get_real_ip(), target_app, expected_type)
-    if success:
-        remote_unlocks[pin] = key 
-        response['message'] = f"ĐÃ KÍCH HOẠT VÀO HỆ THỐNG {target_app.upper()}!"
-    return jsonify(response)
-
-@app.route('/api/poll_unlock', methods=['POST'])
-def poll_unlock():
-    pin = request.json.get('pin')
-    if pin in remote_unlocks: return jsonify({"status": "success", "key": remote_unlocks.pop(pin)}) 
-    return jsonify({"status": "pending"})
-
-@app.route('/api/trigger_logout', methods=['POST', 'OPTIONS'])
-def trigger_logout():
-    if request.method == 'OPTIONS': return jsonify({}), 200
-    pin = (request.get_json() or {}).get('pin')
-    if pin: 
-        db = load_db()
-        if pin not in db.setdefault("logout_pins", []): db["logout_pins"].append(pin)
-        save_db(db)
-    return jsonify({"status": "success"})
-
-# ====================== QUẢN TRỊ ADMIN (CẬP NHẬT 2 FORM) ======================
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        if request.form.get('password') == ADMIN_PASSWORD:
-            resp = make_response(redirect('/'))
-            resp.set_cookie('admin_auth', 'true', max_age=86400 * 30)
-            return resp
-        return f"<html><script>alert('Sai mật khẩu!');window.location.href='/login';</script></html>"
-    return render_login_html()
-
-@app.route('/logout')
-def logout():
-    resp = make_response(redirect('/login'))
-    resp.set_cookie('admin_auth', '', max_age=0)
-    return resp
-
-multipliers = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
-@app.route('/admin/create', methods=['POST'])
-def create_key():
-    target_app = request.form.get('target_app', 'tool')
-    dur, t, md, qty, vip, pfx = request.form.get('duration'), request.form.get('type'), int(request.form.get('maxDevices', 1)), int(request.form.get('quantity', 1)), request.form.get('is_vip')=='on', request.form.get('prefix', '').strip()
-    
-    if not pfx: pfx = "LVT" if target_app == "tool" else "OLM"
-    db = load_db()
-    for _ in range(qty):
-        nk = f"{pfx}-{random.randint(1000000, 9999999)}"
-        db["keys"][nk] = {"exp": "permanent" if t == 'permanent' else "pending", "maxDevices": md, "devices": [], "status": "active", "vip": vip, "target": target_app}
-        if t != 'permanent': db["keys"][nk]["durationMs"] = int(dur) * multipliers.get(t, 86400000)
-    save_db(db); return redirect('/')
-
-@app.route('/admin/ban-ip', methods=['POST'])
-def ban_ip():
-    ip, dur, t = request.form.get('ip').strip(), request.form.get('duration'), request.form.get('type')
-    db = load_db()
-    db.setdefault("banned_ips", {})[ip] = "permanent" if t == 'permanent' else int(time.time() * 1000) + int(dur) * multipliers.get(t, 86400000)
-    save_db(db); return redirect('/')
-
-@app.route('/admin/unban-ip/<ip>')
-def unban_ip(ip):
-    db = load_db()
-    if ip in db.get("banned_ips", {}): del db["banned_ips"][ip]; save_db(db)
-    return redirect('/')
-
-@app.route('/admin/extend', methods=['POST'])
-def extend_key():
-    key, dur, t = request.form.get('key'), request.form.get('duration'), request.form.get('type')
-    db = load_db()
-    if key in db["keys"] and db["keys"][key].get('exp') not in ['permanent', 'pending']:
-        db["keys"][key]['exp'] = (db["keys"][key]['exp'] if db["keys"][key]['exp'] > int(time.time() * 1000) else int(time.time() * 1000)) + int(dur) * multipliers.get(t, 86400000)
-        save_db(db)
-    return redirect('/')
-
-@app.route('/admin/action/<action>/<key>')
-def key_actions(action, key):
-    db = load_db()
-    if key in db["keys"]:
-        if action == 'add-dev': db["keys"][key]['maxDevices'] += 1
-        elif action == 'sub-dev' and db["keys"][key].get('maxDevices', 1) > 1: db["keys"][key]['maxDevices'] -= 1
-        elif action == 'ban': db["keys"][key]['status'] = 'banned'
-        elif action == 'unban': db["keys"][key]['status'] = 'active'
-        elif action == 'delete': del db["keys"][key]
-        elif action == 'reset-dev': db["keys"][key]['devices'] = []
-        save_db(db)
-    return redirect('/')
-
-@app.route('/')
-def dashboard():
-    db = load_db()
-    keys_html = ''
-    for k, data in db["keys"].items():
-        is_banned, is_vip, sys_target = data.get('status') == 'banned', data.get('vip', False), data.get('target', 'tool')
+class AuthService:
+    pin = ""
+    @staticmethod
+    def parseAndSave(data, pin):
+        info = data.get('data', data.get('info', data))
         
-        status_badge = '<span class="badge bg-danger">BANNED</span>' if is_banned else ('<span class="badge bg-warning text-dark">VIP</span>' if is_vip else '<span class="badge bg-success">THƯỜNG</span>')
-        sys_badge = '<span class="badge bg-info">LVT Tool</span>' if sys_target == 'tool' else '<span class="badge bg-danger">OLM</span>'
+        raw_vip = info.get('vip', info.get('type', ''))
+        is_vip = str(raw_vip).lower() in ['true', '1', 'vip', 'yes']
+        
+        exp = info.get('expire_time') or info.get('exp') or 'Vĩnh viễn'
+        devs = info.get('devices') or info.get('max_devices') or '1/1'
+        
+        clean_data = {'key': data.get('key'), 'vip': is_vip, 'expire_time': exp, 'devices': devs}
+        os.environ['LVT_VIP'] = str(is_vip)
+        return clean_data
+        
+    @staticmethod
+    def isVIP():
+        return os.environ.get('LVT_VIP') == 'True'
 
-        current_time, is_expired = int(time.time() * 1000), False
-        if data.get('exp') == 'pending': exp_text = '<span class="text-info">Chờ kích hoạt</span>'
-        elif data.get('exp') == 'permanent': exp_text = '<span class="text-success fw-bold">Vĩnh viễn</span>'
+def tool_le_2_decoder(target_apk, out_dir, temp_dir):
+    console.print("[bold magenta][TOOL LẺ 2][/] Đang bung nén và quét cấu trúc lõi Bypass...")
+    if os.path.exists(out_dir): shutil.rmtree(out_dir)
+    os.system(f"apktool d -r -f '{target_apk}' -o '{out_dir}' > /dev/null 2>&1")
+    return True
+
+def tool_le_1_injector(out_dir):
+    console.print("[bold cyan][TOOL LẺ 1][/] Kích hoạt Omni-Inject (Tiêm Toàn Diện) đè bẹp Engine Game...")
+    random_id = str(uuid.uuid4()).replace("-", "")[:8].upper()
+    obfuscated_class = f"Lcom/lvt/Auth_{random_id};"
+    client_dir = os.path.join(out_dir, "smali", "com", "lvt")
+    os.makedirs(client_dir, exist_ok=True)
+    
+    client_smali = f"""
+.class public {obfuscated_class}
+.super Landroid/webkit/WebViewClient;
+
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {{p0}}, Landroid/webkit/WebViewClient;-><init>()V
+    return-void
+.end method
+
+.method public shouldOverrideUrlLoading(Landroid/webkit/WebView;Ljava/lang/String;)Z
+    .locals 2
+    const-string v0, "lvt://close"
+    invoke-virtual {{p2, v0}}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
+    move-result v0
+    if-eqz v0, :cond_0
+    new-instance v0, Landroid/widget/FrameLayout$LayoutParams;
+    const/4 v1, -0x2
+    invoke-direct {{v0, v1, v1}}, Landroid/widget/FrameLayout$LayoutParams;-><init>(II)V
+    const/16 v1, 0x35
+    iput v1, v0, Landroid/widget/FrameLayout$LayoutParams;->gravity:I
+    invoke-virtual {{p1, v0}}, Landroid/webkit/WebView;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
+    const/4 v1, 0x0
+    invoke-virtual {{p1, v1}}, Landroid/webkit/WebView;->setBackgroundColor(I)V
+    const/4 v0, 0x1
+    return v0
+    :cond_0
+    const-string v0, "lvt://open"
+    invoke-virtual {{p2, v0}}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
+    move-result v0
+    if-eqz v0, :cond_1
+    new-instance v0, Landroid/widget/FrameLayout$LayoutParams;
+    const/4 v1, -0x1
+    invoke-direct {{v0, v1, v1}}, Landroid/widget/FrameLayout$LayoutParams;-><init>(II)V
+    invoke-virtual {{p1, v0}}, Landroid/webkit/WebView;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
+    const/4 v1, 0x0
+    invoke-virtual {{p1, v1}}, Landroid/webkit/WebView;->setBackgroundColor(I)V
+    const/4 v0, 0x1
+    return v0
+    :cond_1
+    const/4 v0, 0x0
+    return v0
+.end method
+
+.method public static init(Landroid/app/Activity;)V
+    .locals 4
+    :try_start_lvt
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-direct {{v0, p0}}, Landroid/webkit/WebView;-><init>(Landroid/content/Context;)V
+
+    new-instance v1, {obfuscated_class}
+    invoke-direct {{v1}}, {obfuscated_class}-><init>()V
+    invoke-virtual {{v0, v1}}, Landroid/webkit/WebView;->setWebViewClient(Landroid/webkit/WebViewClient;)V
+
+    invoke-virtual {{v0}}, Landroid/webkit/WebView;->getSettings()Landroid/webkit/WebSettings;
+    move-result-object v1
+    const/4 v2, 0x1
+    invoke-virtual {{v1, v2}}, Landroid/webkit/WebSettings;->setJavaScriptEnabled(Z)V
+    invoke-virtual {{v1, v2}}, Landroid/webkit/WebSettings;->setDomStorageEnabled(Z)V
+
+    const/4 v2, 0x0
+    invoke-virtual {{v0, v2}}, Landroid/webkit/WebView;->setBackgroundColor(I)V
+
+    const-string v1, "file:///android_asset/GIAO_DIEN_LOGIN_LVT.html"
+    invoke-virtual {{v0, v1}}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+
+    invoke-virtual {{p0}}, Landroid/app/Activity;->getWindow()Landroid/view/Window;
+    move-result-object v1
+    invoke-virtual {{v1}}, Landroid/view/Window;->getDecorView()Landroid/view/View;
+    move-result-object v1
+    check-cast v1, Landroid/view/ViewGroup;
+
+    new-instance v2, Landroid/widget/FrameLayout$LayoutParams;
+    const/4 v3, -0x1
+    invoke-direct {{v2, v3, v3}}, Landroid/widget/FrameLayout$LayoutParams;-><init>(II)V
+    invoke-virtual {{v1, v0, v2}}, Landroid/view/ViewGroup;->addView(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V
+    :try_end_lvt
+    .catch Ljava/lang/Exception; {{:try_start_lvt .. :try_end_lvt}} :catch_lvt
+    :catch_lvt
+    return-void
+.end method
+"""
+    with open(os.path.join(client_dir, f"Auth_{random_id}.smali"), "w", encoding="utf-8") as f:
+        f.write(client_smali.strip())
+
+    injected_count = 0
+    for root, _, files in os.walk(out_dir):
+        if "smali" not in root: continue
+        for f in files:
+            if f.endswith(".smali"):
+                pth = os.path.join(root, f)
+                try:
+                    with open(pth, 'r', encoding='utf-8') as fp: lines = fp.readlines()
+                    is_activity = False
+                    for line in lines:
+                        if line.startswith(".super ") and ("Activity;" in line or "AppCompatActivity;" in line):
+                            is_activity = True; break
+                    if is_activity:
+                        new_lines = []
+                        in_oncreate = False
+                        injected = False
+                        has_oncreate = any(".method" in l and "onCreate(" in l for l in lines)
+                        for line in lines:
+                            if ".method" in line and "onCreate(" in line: in_oncreate = True
+                            if in_oncreate and line.strip() == "return-void":
+                                new_lines.append(f"    invoke-static {{p0}}, {obfuscated_class}->init(Landroid/app/Activity;)V\n")
+                                injected = True
+                            if in_oncreate and ".end method" in line: in_oncreate = False
+                            new_lines.append(line)
+                        if not has_oncreate:
+                            super_c = next((l.split()[1] for l in lines if l.startswith(".super ")), "Landroid/app/Activity;")
+                            new_lines.append(f"\n.method protected onCreate(Landroid/os/Bundle;)V\n    .locals 0\n    invoke-super {{p0, p1}}, {super_c}->onCreate(Landroid/os/Bundle;)V\n    invoke-static {{p0}}, {obfuscated_class}->init(Landroid/app/Activity;)V\n    return-void\n.end method\n")
+                            injected = True
+                        if injected:
+                            with open(pth, 'w', encoding='utf-8') as fp: fp.writelines(new_lines)
+                            injected_count += 1
+                except: pass
+    console.print(f"[bold green]✓ Đã gài Menu Tàng hình vào {injected_count} tọa độ chốt chặn! (Chống lẩn tránh)[/]")
+    return injected_count > 0
+
+# ==========================================
+# GIAO DIỆN HTML APK LOADER + MINI TAB BÊN PHẢI
+# ==========================================
+def get_html_payload(custom_server=SERVER_URL):
+    return f"""<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; user-select: none; }}
+        html, body {{ width: 100%; height: 100%; overflow: hidden; background: #000; margin: 0; padding: 0; }}
+        body {{ display: flex; justify-content: center; align-items: center; font-family: monospace; color: white; font-size: 14px; transition: background 0.3s; }}
+        .panel {{ width: 90%; max-width: 600px; padding: 20px; background: #000; border: 1px solid #ff3333; border-radius: 5px; text-align: center; }}
+        .ascii {{ color: #ff3333; font-weight: bold; white-space: pre; line-height: 1.2; margin-bottom: 20px; font-size: 10px; }}
+        @media (min-width: 400px) {{ .ascii {{ font-size: 14px; }} }}
+        
+        select, input {{ width: 100%; background: #000; border: 1px solid #ff3333; border-radius: 5px; padding: 12px; margin-bottom: 15px; color: #00ff00; text-align: center; outline: none; font-family: monospace; font-size: 16px; font-weight: bold; }}
+        select {{ cursor: pointer; color: #a855f7; border-color: #a855f7; }}
+        input::placeholder {{ color: #666; }}
+        
+        button {{ width: 100%; background: #ff3333; border: none; border-radius: 5px; padding: 12px; color: #fff; font-weight: bold; cursor: pointer; font-family: monospace; font-size: 16px; text-transform: uppercase; transition: 0.2s; }}
+        button:active {{ background: #cc0000; }}
+        
+        .toast {{ position: fixed; top: -60px; left: 50%; transform: translateX(-50%); padding: 12px 25px; border-radius: 5px; font-weight: bold; font-family: monospace; transition: top 0.4s; z-index: 1000; border: 1px solid; width: max-content; max-width: 90%; text-align: center; }}
+        .toast.show {{ top: 20px; }}
+        
+        .mini-tab {{ display: none; position: relative; margin: 15px; background: rgba(0,0,0,0.85); border: 1px solid #ff3333; padding: 12px; min-width: 150px; z-index: 9999; font-family: monospace; border-radius: 8px; box-shadow: 0 0 10px rgba(255,51,51,0.5); }}
+        .m-title {{ font-size: 12px; font-weight: bold; color: #ff3333; text-align: center; border-bottom: 1px dashed #ff3333; padding-bottom: 5px; margin-bottom: 5px; }}
+        .m-item {{ font-size: 11px; color: #fff; display: flex; justify-content: space-between; margin: 6px 0; align-items: center; gap: 15px; }}
+        .m-val {{ color: #00ff00; font-weight: bold; text-align: right; }}
+    </style>
+</head>
+<body>
+    <div id="toast" class="toast"></div>
+    <div id="login-panel" class="panel">
+        <div class="ascii">
+╔════════════════════════════════════╗
+║         🔒 HỆ THỐNG ĐÃ KHÓA 🔒     ║
+║ Tool đang đóng băng! Nhập Key mở!  ║
+╚════════════════════════════════════╝
+        </div>
+        <div style="margin-bottom: 15px; font-weight: bold; color: white;">VUI LÒNG CHỌN CÔNG TẮC VÀ NHẬP KEY</div>
+        
+        <select id="keyType">
+            <option value="vip">👑 SỬ DỤNG KEY VIP</option>
+            <option value="thuong">👤 SỬ DỤNG KEY THƯỜNG</option>
+        </select>
+        
+        <input type="text" id="keyInput" placeholder="Dán Key vào đây..." autocomplete="off">
+        <button type="button" id="loginBtn" onclick="verifyKey()">🔓 XÁC THỰC MỞ KHÓA</button>
+        <div style="margin-top:15px;font-size:12px;color:yellow">Mã Máy: <span id="hwid-val"></span></div>
+    </div>
+    
+    <div id="mini-tab" class="mini-tab">
+        <div class="m-title">≡ TRẠNG THÁI KEY ≡</div>
+        <div class="m-item"><span>Gói:</span><span id="m-type" class="m-val"></span></div>
+        <div class="m-item"><span>Key:</span><span id="m-key" class="m-val" style="color: #a855f7;"></span></div>
+        <div class="m-item"><span>TB:</span><span id="m-dev" class="m-val" style="color: #38bdf8;"></span></div>
+        <div class="m-item"><span>Hạn:</span><span id="m-time" class="m-val" style="color: yellow;"></span></div>
+    </div>
+
+    <script>
+        const SERVER_URL = '{custom_server}/api/check';
+        let deviceId = localStorage.getItem('lvt_app_hwid') || 'APK-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+        localStorage.setItem('lvt_app_hwid', deviceId);
+        document.getElementById('hwid-val').innerText = deviceId;
+        
+        const savedKey = localStorage.getItem('lvt_saved_key');
+        const savedType = localStorage.getItem('lvt_key_type');
+        if (savedType) document.getElementById('keyType').value = savedType;
+        if (savedKey) {{ document.getElementById('keyInput').value = savedKey; verifyKey(true); }}
+        
+        function showToast(msg, bg = '#000', borderColor = '#ff3333', color='#ff3333') {{ 
+            const t = document.getElementById('toast'); 
+            t.innerText = msg; t.style.background = bg; t.style.borderColor = borderColor; t.style.color = color;
+            t.className = 'toast show'; setTimeout(() => t.className = 'toast', 3000); 
+        }}
+        
+        // HÀM CHỐT HẠ ĐIỀU KHIỂN SMALI QUA LOCATION (Mượt như vuốt iPhone)
+        function triggerClose() {{
+            /* [LVT_SCHEME_CLOSE] */ window.location.replace("lvt://close");
+        }}
+        function triggerOpen() {{
+            /* [LVT_SCHEME_OPEN] */ window.location.replace("lvt://open");
+        }}
+
+        async function verifyKey(isAuto = false) {{
+            const key = document.getElementById('keyInput').value.trim();
+            const keyType = document.getElementById('keyType').value;
+            
+            if (!key) return showToast('Vui lòng nhập Key!');
+            if (!isAuto) document.getElementById('loginBtn').innerText = 'ĐANG QUÉT...';
+            
+            try {{
+                const payload = {{ key: key, deviceId: deviceId, target_app: "tool", expected_type: keyType, type: keyType }};
+                const res = await fetch(SERVER_URL, {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify(payload) }});
+                
+                if (!res.ok) throw new Error("Mất kết nối Server!");
+                const data = await res.json();
+                
+                if (data.status === 'success') {{
+                    if (!isAuto) showToast('Xác thực thành công!', '#000', '#00ff00', '#00ff00');
+                    localStorage.setItem('lvt_saved_key', key);
+                    localStorage.setItem('lvt_key_type', keyType);
+                    
+                    // THAY ĐỔI CSS ĐỂ SMALI CO NHỎ WEBVIEW LẠI, HIỆN BẢNG EXP LÊN
+                    document.documentElement.style.cssText = 'width: fit-content; height: fit-content; background: transparent;';
+                    document.body.style.cssText = 'width: fit-content; height: fit-content; background: transparent; display: block; overflow: visible; margin: 0; padding: 0;';
+                    document.getElementById('login-panel').style.display = 'none';
+                    
+                    let mt = document.getElementById('mini-tab');
+                    mt.style.display = 'block';
+                    
+                    let isVipStr = String(data.vip || data.type || keyType).toLowerCase();
+                    let isVipBool = ['true', '1', 'vip', 'yes'].includes(isVipStr);
+                    document.getElementById('m-type').innerText = isVipBool ? '👑 VIP' : '👤 THƯỜNG';
+                    document.getElementById('m-type').style.color = isVipBool ? '#00ff00' : '#94a3b8';
+                    
+                    document.getElementById('m-key').innerText = key;
+                    document.getElementById('m-dev').innerText = data.devices || data.max_devices || '1/1';
+                    
+                    startCountdown(data.expire_time || (data.data && data.data.exp));
+                    startBackgroundCheck(key, keyType);
+                    
+                    // Delay 300ms báo Smali co nhỏ khung hình lại
+                    setTimeout(() => {{ triggerClose(); }}, 300);
+                }} else {{
+                    localStorage.removeItem('lvt_saved_key');
+                    showToast(data.message || 'Key sai hoặc đã hết hạn!');
+                    setTimeout(() => {{ triggerOpen(); }}, 300);
+                }}
+            }} catch (e) {{ 
+                showToast('Lỗi: ' + e.message); 
+                if (!isAuto) document.getElementById('loginBtn').innerText = '🔓 XÁC THỰC MỞ KHÓA';
+            }}
+        }}
+        
+        const tab = document.getElementById('mini-tab');
+        let isDragging = false, startX, startY, initX, initY;
+        tab.addEventListener('touchstart', e => {{ 
+            isDragging = true; startX = e.touches[0].clientX; startY = e.touches[0].clientY; 
+            const rect = tab.getBoundingClientRect();
+            initX = rect.left; initY = rect.top;
+            tab.style.right = 'auto'; 
+            tab.style.left = initX + 'px';
+        }});
+        tab.addEventListener('touchmove', e => {{ 
+            if(!isDragging) return; 
+            tab.style.left = (initX + e.touches[0].clientX - startX) + 'px'; 
+            tab.style.top = (initY + e.touches[0].clientY - startY) + 'px'; 
+            e.preventDefault(); 
+        }}, {{passive: false}});
+        tab.addEventListener('touchend', () => isDragging = false);
+        
+        let timerInt, checkInt;
+        function startCountdown(exp) {{
+            let el = document.getElementById('m-time');
+            if(timerInt) clearInterval(timerInt);
+            if(!exp || exp === 'Vĩnh viễn' || exp === 'permanent') {{ el.innerText = 'VĨNH VIỄN'; return; }}
+            
+            let expNum = parseInt(exp);
+            if(isNaN(expNum)) {{ el.innerText = 'N/A'; return; }}
+            
+            timerInt = setInterval(() => {{
+                let diff = expNum - new Date().getTime();
+                if (diff <= 0) {{ el.innerText = 'HẾT HẠN'; el.style.color = '#ff3333'; return; }}
+                let d = Math.floor(diff / 86400000), h = Math.floor((diff % 86400000) / 3600000), m = Math.floor((diff % 3600000) / 60000);
+                el.innerText = `${{d}}N ${{h}}G ${{m}}P`;
+            }}, 1000);
+        }}
+        
+        function startBackgroundCheck(key, keyType) {{
+            if(checkInt) clearInterval(checkInt);
+            checkInt = setInterval(async () => {{
+                try {{
+                    const payload = {{key: key, deviceId: deviceId, target_app: "tool", expected_type: keyType, type: keyType}};
+                    const res = await fetch(SERVER_URL, {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify(payload) }});
+                    const data = await res.json();
+                    if(data.status !== 'success') {{
+                        clearInterval(checkInt); if(timerInt) clearInterval(timerInt);
+                        document.getElementById('mini-tab').style.display = 'none';
+                        document.getElementById('login-panel').style.display = 'block';
+                        document.documentElement.style.cssText = 'width: 100%; height: 100%; background: #000;';
+                        document.body.style.cssText = 'width: 100%; height: 100%; background: #000; display: flex; overflow: hidden; justify-content: center; align-items: center;';
+                        setTimeout(() => {{ triggerOpen(); }}, 300);
+                        showToast(data.message || 'Key bị khoá hoặc Hết hạn!');
+                    }} else {{
+                        document.getElementById('m-dev').innerText = data.devices || data.max_devices || '1/1';
+                        startCountdown(data.expire_time || (data.data && data.data.exp));
+                    }}
+                }}catch(e){{}}
+            }}, 15000);
+        }}
+    </script>
+</body>
+</html>"""
+
+def app_gen_html_payload(target_url, custom_server):
+    base_html = get_html_payload(custom_server)
+    base_html = base_html.replace('<body>', f'<body>\n    <iframe id="target-frame" src=""></iframe>')
+    base_html = base_html.replace('/* [LVT_SCHEME_CLOSE] */ window.location.replace("lvt://close");', f'let frame = document.getElementById("target-frame"); frame.src = "{target_url}"; frame.style.display = "block";')
+    base_html = base_html.replace('/* [LVT_SCHEME_OPEN] */ window.location.replace("lvt://open");', f'let frame = document.getElementById("target-frame"); if(frame){{frame.style.display="none"; frame.src="";}}')
+    style_inject = '#target-frame { display: none; width: 100vw; height: 100vh; border: none; position: absolute; top: 0; left: 0; z-index: 1; background: #fff; }'
+    base_html = base_html.replace('</style>', f'    {style_inject}\n    </style>')
+    return base_html
+
+def tool_le_2_framework(build_dir):
+    console.print("[bold magenta][TOOL LẺ 2][/] Đang xây dựng lõi ứng dụng (Framework) từ con số 0...")
+    os.makedirs(build_dir, exist_ok=True)
+    manifest_code = """<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.lvt.vipapp" android:compileSdkVersion="33" android:compileSdkVersionCodename="13">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <application android:label="LVT VIP APP" android:usesCleartextTraffic="true">
+        <activity android:name="com.lvt.vipapp.MainActivity" android:exported="true" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>"""
+    with open(os.path.join(build_dir, "AndroidManifest.xml"), "w", encoding="utf-8") as f: f.write(manifest_code)
+
+    apktool_yml = """version: 2.9.3
+apkFileName: app.apk
+isFrameworkApk: false
+usesFramework:
+  ids:
+  - 1
+sdkInfo:
+  minSdkVersion: '21'
+  targetSdkVersion: '33'"""
+    with open(os.path.join(build_dir, "apktool.yml"), "w", encoding="utf-8") as f: f.write(apktool_yml)
+
+    smali_dir = os.path.join(build_dir, "smali", "com", "lvt", "vipapp")
+    os.makedirs(smali_dir, exist_ok=True)
+    main_activity_smali = """.class public Lcom/lvt/vipapp/MainActivity;
+.super Landroid/app/Activity;
+
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Landroid/app/Activity;-><init>()V
+    return-void
+.end method
+
+.method protected onCreate(Landroid/os/Bundle;)V
+    .locals 3
+    invoke-super {p0, p1}, Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V
+    
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-direct {v0, p0}, Landroid/webkit/WebView;-><init>(Landroid/content/Context;)V
+    
+    invoke-virtual {v0}, Landroid/webkit/WebView;->getSettings()Landroid/webkit/WebSettings;
+    move-result-object v1
+    const/4 v2, 0x1
+    invoke-virtual {v1, v2}, Landroid/webkit/WebSettings;->setJavaScriptEnabled(Z)V
+    invoke-virtual {v1, v2}, Landroid/webkit/WebSettings;->setDomStorageEnabled(Z)V
+    
+    const-string v1, "file:///android_asset/index.html"
+    invoke-virtual {v0, v1}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    
+    invoke-virtual {p0, v0}, Landroid/app/Activity;->setContentView(Landroid/view/View;)V
+    return-void
+.end method"""
+    with open(os.path.join(smali_dir, "MainActivity.smali"), "w", encoding="utf-8") as f: f.write(main_activity_smali)
+
+def tool_le_1_ui_generator(build_dir, custom_server, target_url):
+    console.print("[bold cyan][TOOL LẺ 1][/] Phù Thủy Đồ Họa đang nạp Menu Cyberpunk và Đường dẫn ảo Iframe...")
+    assets_dir = os.path.join(build_dir, "assets")
+    os.makedirs(assets_dir, exist_ok=True)
+    with open(os.path.join(assets_dir, "index.html"), "w", encoding="utf-8") as f:
+        f.write(app_gen_html_payload(target_url, custom_server))
+
+def tool_le_3_supervisor(custom_server, target_url):
+    console.print(Panel("[bold green][TOOL 3 - SUPERVISOR][/] Đang tiến hành điều phối tạo App VIP từ số 0...", border_style="green"))
+    search_dir = "/storage/emulated/0/Download"
+    build_dir = os.path.join(search_dir, "LVT_GENERATED_APP")
+    final_apk = os.path.join(search_dir, f"LVT_App_{uuid.uuid4().hex[:6].upper()}.apk")
+    
+    if os.path.exists(build_dir): shutil.rmtree(build_dir)
+    
+    tool_le_2_framework(build_dir)
+    tool_le_1_ui_generator(build_dir, custom_server, target_url)
+    
+    console.print("[bold green][TOOL 3][/] Các Tool lẻ đã hoàn tất. Đang ra lệnh Đóng gói APK...")
+    os.system(f"apktool b '{build_dir}' -o '{final_apk}' > /dev/null 2>&1")
+    
+    if os.path.exists(final_apk):
+        shutil.rmtree(build_dir, ignore_errors=True)
+        display_message("success", f"TẠO APP VIP THÀNH CÔNG!\nFile của bạn: {os.path.basename(final_apk)}\n-> Ứng dụng này đã chứa link của bạn và được bảo vệ bằng LVT Key!")
+    else:
+        display_message("error", "Tiến trình đóng gói gặp lỗi hệ thống Termux (Apktool).")
+
+def auto_create_app_feature():
+    clear_screen()
+    show_banner(False)
+    console.print(Panel("[bold yellow blink]🚀 HỆ THỐNG TẠO APP VIP TỪ CON SỐ 0 🚀[/]", border_style="yellow"))
+    
+    custom_server = Prompt.ask("[bold yellow]1. Nhập URL Server Key[/] [dim](Bỏ trống để dùng Server mặc định)[/]").strip()
+    if not custom_server: custom_server = SERVER_URL
+    
+    target_url = Prompt.ask("[bold yellow]2. Nhập Đường Link App sẽ trỏ đến (VD: https://google.com)[/]").strip()
+    if not target_url:
+        display_message("error", "Đường Link không được để trống!")
+        time.sleep(2); return
+        
+    tool_le_3_supervisor(custom_server, target_url)
+    Prompt.ask("\nNhấn Enter để quay lại")
+
+
+# ==========================================
+# CHỨC NĂNG 1 & 2: QUẢN LÝ BƠM APK 
+# ==========================================
+def inject_apk_feature(is_vip=False):
+    auto_grant_storage(); clear_screen(); show_banner(is_vip)
+    panel_title = "[bold yellow blink]👑 HỆ THỐNG AUTO BƠM HTML VIP 👑[/]" if is_vip else "[bold cyan]HỆ THỐNG AUTO SCAN & INJECT GIAO DIỆN HTML[/]"
+    console.print(Panel(panel_title, border_style="yellow" if is_vip else "cyan"))
+    
+    custom_server = Prompt.ask("\n[bold yellow]Nhập URL Server Key[/] [dim](Bỏ trống để dùng Server mặc định)[/]").strip()
+    if not custom_server: custom_server = SERVER_URL
+
+    search_dirs = ["/storage/emulated/0/Download", os.path.expanduser("~/storage/downloads")]
+    apk_files, found_dirs = [], []
+    for s_dir in search_dirs:
+        if os.path.exists(s_dir):
+            for file in os.listdir(s_dir):
+                if file.lower().endswith('.apk') and not file.startswith('LVT_VIP_') and not file.startswith('HOOKED_'):
+                    apk_files.append(file); found_dirs.append(s_dir)
+    if not apk_files:
+        display_message("error", "Không tìm thấy file .apk gốc nào trong Download!")
+        Prompt.ask("\nNhấn Enter để quay lại"); return
+        
+    table = Table(show_header=True); table.add_column("STT", style="cyan"); table.add_column("Tên File APK Gốc", style="white")
+    for idx, apk in enumerate(apk_files): table.add_row(f"[{idx + 1}]", apk)
+    console.print(table)
+    
+    try:
+        choice_idx = int(Prompt.ask(f"\n[bold yellow]Nhập STT file để nạp hoặc 0 để hủy[/]"))
+        if choice_idx == 0: return
+        filename = apk_files[choice_idx - 1]; filepath = os.path.join(found_dirs[choice_idx - 1], filename)
+    except: return
+    out_path = f"/sdcard/Download/LVT_VIP_{filename}"
+    console.print(f"\n[bold green]✓ Đã chọn file:[/bold green] {filename}")
+    for task in ["Đang tạo UI chuẩn Form...", "Bơm Javascript Di chuyển..."]:
+        for step in track(range(50), description=f"[bold cyan]{task}[/]"): time.sleep(0.01) 
+    try:
+        shutil.copy(filepath, out_path)
+        with zipfile.ZipFile(out_path, 'a', zipfile.ZIP_DEFLATED) as apk_zip:
+            apk_zip.writestr('assets/GIAO_DIEN_LOGIN_LVT.html', get_html_payload(custom_server))
+        display_message("success", f"Bơm Giao Diện hoàn tất!\nFile: LVT_VIP_{filename}\n-> Hãy chạy [2] để Auto Hook file này!")
+    except Exception as e: display_message("error", f"Lỗi hệ thống ghi file: {e}")
+    Prompt.ask("\nNhấn Enter để quay lại")
+
+def auto_hook_feature(is_vip=False):
+    clear_screen()
+    show_banner(is_vip)
+    panel_title = "[bold yellow blink]👑 HỆ THỐNG AUTO HOOKER VIP PRO 👑[/]" if is_vip else "[bold cyan]HỆ THỐNG AUTO SMALI HOOKER PRO[/]"
+    console.print(Panel(panel_title, border_style="yellow" if is_vip else "cyan"))
+    
+    custom_server = Prompt.ask("\n[bold yellow]Nhập URL Server Key[/] [dim](Bỏ trống để dùng Server mặc định)[/]").strip()
+    if not custom_server: custom_server = SERVER_URL
+
+    if not check_dependencies():
+        display_message("error", "LỖI: Máy chưa cài đủ Java và Apktool!\nChạy lệnh sau:\npkg install openjdk-17 apktool -y")
+        Prompt.ask("\nNhấn Enter để quay lại"); return
+    
+    search_dir = "/storage/emulated/0/Download"
+    apk_files = [f for f in os.listdir(search_dir) if f.endswith(".apk") and not f.startswith("HOOKED_")] if os.path.exists(search_dir) else []
+    
+    if not apk_files:
+        display_message("error", "Không tìm thấy file .apk nào để Hook!")
+        Prompt.ask("\nNhấn Enter để quay lại"); return
+        
+    table = Table(show_header=True, header_style="bold yellow" if is_vip else "bold magenta")
+    table.add_column("STT", style="cyan", width=5); table.add_column("File APK Cần Hook Giao Diện", style="white")
+    for idx, apk in enumerate(apk_files): table.add_row(f"[{idx + 1}]", apk)
+    console.print(table)
+    
+    try:
+        idx = int(Prompt.ask("\n[bold yellow]Nhập STT file để Auto Hook hoặc 0 để hủy[/]"))
+        if idx == 0: return
+        target_apk = os.path.join(search_dir, apk_files[idx - 1])
+    except: return
+
+    out_dir = os.path.join(search_dir, "LVT_DECOMPILED")
+    temp_dir = os.path.join(search_dir, "LVT_TEMP_MANIFEST") 
+    console.print(Panel(f"[bold green]BẮT ĐẦU AUTO HOOK ĐA TẦNG VÀO: {apk_files[idx-1]}[/]", border_style="green"))
+    tool_le_2_decoder(target_apk, out_dir, temp_dir)
+    
+    if not tool_le_1_injector(out_dir):
+        display_message("error", "Tool Lẻ 1 báo cáo: App không có cấu trúc Activity hợp lệ!")
+        Prompt.ask("\nNhấn Enter để quay lại"); return
+        
+    console.print("[cyan][*] Đang tự động tiêm mã HTML Giao diện vào tệp...[/]")
+    assets_dir = os.path.join(out_dir, "assets")
+    os.makedirs(assets_dir, exist_ok=True)
+    with open(os.path.join(assets_dir, "GIAO_DIEN_LOGIN_LVT.html"), "w", encoding="utf-8") as f: 
+        f.write(get_html_payload(custom_server))
+
+    console.print("[cyan][*] Đang Đổi Tên và Chiếm đoạt Logo gốc (Icon Hijacker)...[/]")
+    try:
+        manifest_path = os.path.join(out_dir, "AndroidManifest.xml")
+        icon_name = "ic_launcher"
+        if os.path.exists(manifest_path):
+            with open(manifest_path, 'r', encoding='utf-8') as f: manifest_data = f.read()
+            manifest_data = re.sub(r'(<application[^>]*?)android:label="[^"]+"', r'\1android:label="LVT"', manifest_data)
+            match = re.search(r'<application[^>]*?android:icon="@(?:mipmap|drawable)/([^"]+)"', manifest_data)
+            if match: icon_name = match.group(1)
+            with open(manifest_path, 'w', encoding='utf-8') as f: f.write(manifest_data)
+        logo_url = "https://ui-avatars.com/api/?name=LVT&background=0a0f14&color=00f2fe&size=256&bold=true&format=png"
+        res_logo = requests.get(logo_url, timeout=10)
+        if res_logo.status_code == 200:
+            res_dir = os.path.join(out_dir, "res")
+            if os.path.exists(res_dir):
+                for root, _, files in os.walk(res_dir):
+                    for f in files:
+                        if f.startswith(icon_name) and f.endswith(".png"):
+                            with open(os.path.join(root, f), "wb") as img_f: img_f.write(res_logo.content)
+        console.print("[bold green]✓ Đã Đổi Tên thành LVT và Ghi đè Logo gốc![/]")
+    except Exception as e: console.print(f"[bold yellow]⚠ Bỏ qua Logo: {e}[/]")
+
+    final_apk = os.path.join(search_dir, f"HOOKED_{apk_files[idx-1]}")
+    console.print("[cyan][*] Đang đóng gói và hoàn thiện APK...[/]")
+    os.system(f"apktool b '{out_dir}' -o '{final_apk}'")
+    if os.path.exists(final_apk):
+        shutil.rmtree(out_dir, ignore_errors=True)
+        display_message("success", f"HOÀN TẤT AUTO HOOK!\nFile APK của bạn: HOOKED_{apk_files[idx-1]}")
+    else: display_message("error", "Đóng gói APK thất bại! Vui lòng đọc lỗi Apktool in ra.")
+    Prompt.ask("\nNhấn Enter để quay lại")
+
+
+# ==========================================
+# KHU VỰC MÀN HÌNH KHÓA TERMUX (GIỮ NGUYÊN)
+# ==========================================
+def lock_screen():
+    pin = str(random.randint(100000, 999999))
+    lock_banner = f"""
+[bold red]╔════════════════════════════════════════════════════════════╗
+║                     🔒 HỆ THỐNG ĐÃ KHÓA 🔒                 ║
+║        [white]Tool đang đóng băng! Chỉ nhận lệnh mở khóa từ Web[/white]       ║
+╚════════════════════════════════════════════════════════════╝[/]
+    """
+    clear_screen()
+    console.print(lock_banner, justify="center")
+    box_content = f"""
+[bold white]VUI LÒNG VÀO TRANG WEB LOADER KEY ĐỂ AUTO MỞ KHÓA TOOL[/]
+
+[bold yellow]👉 Truy cập Website hoặc file HTML Web Loader của bạn.[/]
+
+Sau khi dán Key vào Website, hãy nhập mã PIN dưới đây:
+[bold yellow]Mã PIN của bạn là:[/] [bold green blink]{pin}[/]
+    """
+    console.print(Panel(box_content, border_style="red"))
+    
+    with console.status("[bold magenta blink]Đang quét chờ tín hiệu mở khóa từ Web Loader...[/]", spinner="bouncingBar"):
+        while True:
+            try:
+                payload = {"pin": pin, "deviceId": DEVICE_ID, "target_app": "tool"}
+                response = requests.post(f"{SERVER_URL}/api/poll_unlock", json=payload).json()
+                if response.get("status") == "success":
+                    received_key = response.get("key")
+                    AuthService.parseAndSave(response, pin)
+                    return received_key 
+            except: pass
+            time.sleep(3)
+
+
+# ==========================================
+# KHU VỰC DASHBOARD MENU (GIỮ NGUYÊN)
+# ==========================================
+def show_dashboard(initial_key):
+    last_sync = 0
+    while True:
+        current_time = time.time()
+        if current_time - last_sync > 15:
+            res = check_key_api_silently(initial_key)
+            if res.get('status') != 'success':
+                clear_screen()
+                is_vip = AuthService.isVIP()
+                show_banner(is_vip)
+                display_message("error", f"CẢNH BÁO: MẤT KẾT NỐI!\nLý do: {res.get('message', 'Key không còn hiệu lực!')}")
+                time.sleep(3)
+                return 
+            AuthService.parseAndSave(res, AuthService.pin)
+            last_sync = current_time
+
+        is_vip = AuthService.isVIP()
+        sys.stdout.write("\033[H\033[J"); sys.stdout.flush()
+        show_banner(is_vip)
+        vip_text = "[bold green]VIP[/]" if is_vip else "[bold cyan]THƯỜNG[/]"
+        console.print(Panel(f"[bold green]✅ ĐÃ KẾT NỐI {vip_text} THÀNH CÔNG TỪ WEB LOADER[/]", border_style="green"))
+        
+        console.print("\n[bold cyan][1][/] Bơm Giao Diện Login VIP (Vào file tải sẵn)")
+        console.print("[bold cyan][2][/] Auto Hook Đa Tầng (Có Tool Lẻ)")
+        
+        if is_vip:
+            console.print("[bold magenta blink][3][/] Auto Tạo App.apk (Đóng gói Link/Web)")
         else:
-            is_expired = current_time > data.get('exp', 0)
-            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-light"}">{time.strftime("%d/%m/%Y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
-        if is_expired: status_badge = '<span class="badge bg-secondary">HẾT HẠN</span>'
-        
-        keys_html += f'''
-        <tr class="key-row" data-status="{ "banned" if is_banned else ("expired" if is_expired else "active") }">
-            <td><div class="d-flex align-items-center"><strong class="me-2 text-info">{k}</strong><button class="btn btn-sm btn-outline-light copy-btn" onclick="copyText('{k}')" title="Sao chép">📋</button></div><div class="mt-1">{status_badge} {sys_badge}</div></td>
-            <td>{exp_text}</td><td><span class="badge bg-primary">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
-            <td><div class="btn-group btn-group-sm"><button class="btn btn-info" onclick="openExtendModal('{k}')">⏳</button><a href="/admin/action/add-dev/{k}" class="btn btn-success">+</a><a href="/admin/action/sub-dev/{k}" class="btn btn-warning">-</a><a href="/admin/action/reset-dev/{k}" class="btn btn-secondary">🔄</a><a href="/admin/action/{"unban" if is_banned else "ban"}/{k}" class="btn btn-{"light" if is_banned else "danger"}">{"Mở" if is_banned else "Khóa"}</a><a href="/admin/action/delete/{k}" class="btn btn-dark" onclick="return confirm('Xóa?')">🗑️</a></div></td>
-        </tr>'''
+            console.print("[bold black][3] Auto Tạo App.apk (Khóa - Yêu cầu Key VIP)[/]")
+            
+        console.print("[bold red][0][/] Đăng xuất")
+        console.print("\n[bold yellow]Chọn chức năng: [/]", end="")
+        sys.stdout.flush()
 
-    ips_html = ''
-    for ip, exp in db.get("banned_ips", {}).items():
-        exp_txt = "Vĩnh viễn" if exp == 'permanent' else time.strftime('%d/%m/%Y %H:%M', time.localtime(exp / 1000))
-        ips_html += f'<tr><td>{ip}</td><td>{exp_txt}</td><td><a href="/admin/unban-ip/{ip}" class="btn btn-sm btn-success">Gỡ Ban</a></td></tr>'
+        fd = sys.stdin.fileno(); old_settings = termios.tcgetattr(fd)
+        choice = None
+        try:
+            tty.setcbreak(fd); ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+            if ready: choice = sys.stdin.read(1)
+        finally: termios.tcsetattr(fd, termios.TCSAFLUSH, old_settings)
 
-    logs_html = ''
-    for log in db.get("logs", []):
-        color = "success" if log['action'] == "THÀNH CÔNG" else ("danger" if "BANNED" in log['action'] or "BỊ CHẶN" in log['action'] or "SAI" in log['action'] else "warning")
-        logs_html += f'<tr><td><small class="text-muted">{time.strftime("%H:%M:%S %d/%m", time.localtime(log["time"]))}</small></td><td><span class="badge bg-{color}">{log["action"]}</span></td><td class="text-info">{log["key"]}</td><td><span class="badge bg-secondary">{log["ip"]}</span></td></tr>'
+        if choice == '1': inject_apk_feature(is_vip); last_sync = 0
+        elif choice == '2': auto_hook_feature(is_vip); last_sync = 0
+        elif choice == '3': 
+            if is_vip: auto_create_app_feature()
+            else: display_message("error", "Chức năng này bị khóa! Cần Key VIP để sử dụng.")
+            last_sync = 0
+        elif choice == '0':
+            console.print("\n[bold green]Đang đăng xuất an toàn...[/]")
+            time.sleep(1)
+            return
 
-    return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4">
-    
-    <div class="card p-3 mb-4" style="border-color: #00ffcc;"><h4><i class="fas fa-wrench"></i> Tạo Key LVT Tool</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="tool"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: LVT)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch1"><label class="form-check-label text-warning" for="vipSwitch1">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #00ffcc, #0066ff); color:black;">TẠO KEY LVT</button></div></form></div>
-    
-    <div class="card p-3 mb-4" style="border-color: #ff3366;"><h4><i class="fas fa-crosshairs"></i> Tạo Key OLM</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="olm"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: OLM)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch2"><label class="form-check-label text-warning" for="vipSwitch2">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #ff3366, #ff9900); color:white;">TẠO KEY OLM</button></div></form></div>
-    
-    <div class="card p-3"><h4 class="text-danger">🛡️ Block IP</h4><form action="/admin/ban-ip" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container" style="max-height:200px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div></div><div class="col-lg-8"><div class="card p-3 mb-4"><div class="d-flex justify-content-between align-items-center mb-3"><h4>📋 Quản Lý Key</h4><div class="d-flex gap-2"><select id="statusFilter" class="form-select form-select-sm bg-dark text-light" onchange="filterTable()"><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="expired">Hết hạn</option><option value="banned">Bị khóa</option></select><input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light" placeholder="Tìm Key..." onkeyup="filterTable()"></div></div><div class="table-container"><table class="table table-dark table-hover mb-0 align-middle"><thead><tr><th>Key</th><th>Hạn</th><th>Thiết bị</th><th>Điều Khiển</th></tr></thead><tbody id="keyTableBody">{keys_html}</tbody></table></div></div><div class="card p-3"><h4>📡 Lịch sử Logs</h4><div class="table-container" style="max-height:400px;"><table class="table table-dark table-sm table-striped mb-0"><thead><tr><th>Time</th><th>Trạng thái</th><th>Key</th><th>IP</th></tr></thead><tbody>{logs_html}</tbody></table></div></div></div></div></div><div class="modal fade" id="extendModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card);"><div class="modal-header"><h5 class="modal-title">⏳ Gia hạn Key</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form action="/admin/extend" method="POST"><div class="modal-body"><input type="hidden" name="key" id="extendKeyInput"><p>Key: <strong id="extendKeyDisplay" class="text-info"></strong></p><div class="row g-2"><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option></select></div></div></div><div class="modal-footer"><button type="submit" class="btn btn-primary w-100">Gia hạn</button></div></form></div></div></div><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script><script>function copyText(text) {{ navigator.clipboard.writeText(text); alert("Đã copy: " + text); }} function filterTable() {{ let s = document.getElementById('searchInput').value.toLowerCase(), f = document.getElementById('statusFilter').value; document.querySelectorAll('.key-row').forEach(r => {{ r.style.display = (r.innerText.toLowerCase().includes(s) && (f==='all' || r.dataset.status===f)) ? '' : 'none'; }}); }} function openExtendModal(key) {{ document.getElementById('extendKeyInput').value = key; document.getElementById('extendKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('extendModal')).show(); }}</script></body></html>
-    '''
-
-def render_login_html():
-    return '''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Login - LVT PRO</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>body { background: #0a0a12; display: flex; justify-content: center; align-items: center; height: 100vh; } .login-box { background: #151525; padding: 40px; border-radius: 15px; border: 1px solid #00ffcc; text-align: center; } h2 { color: #00ffcc; margin-bottom: 30px; } input { background: #0a0a12 !important; color: white !important; border: 1px solid #333 !important; } .btn-login { background: linear-gradient(45deg, #00ffcc, #bd00ff); width: 100%; margin-top: 20px; font-weight:bold;}</style></head><body><div class="login-box"><h2>LVT SYSTEM</h2><form method="POST"><input type="password" name="password" class="form-control mb-3" placeholder="Nhập mật khẩu Admin..." required><button type="submit" class="btn btn-login text-white">XÁC NHẬN</button></form></div></body></html>'''
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+if __name__ == "__main__":
+    try:
+        auto_grant_storage()
+        while True:
+            valid_key = lock_screen()
+            clear_screen()
+            is_vip = AuthService.isVIP()
+            show_banner(is_vip)
+            display_message("success", f"✅ XÁC THỰC {'VIP' if is_vip else 'THƯỜNG'} THÀNH CÔNG!\nĐã nhận Lệnh mở khóa từ Web Loader!")
+            time.sleep(1)
+            show_dashboard(valid_key)
+            
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Đã thoát Tool LVT![/]")
+    except Exception as e:
+        console.print(f"\n[bold red]Lỗi hệ thống: {e}[/]")
