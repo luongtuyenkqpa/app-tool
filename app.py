@@ -33,10 +33,10 @@ DB_FILE = './database.json'
 ADMIN_PASSWORD = 'admin120510'
 
 # ========================================================
-# CẤU HÌNH BOT FACEBOOK MESSENGER
+# CẤU HÌNH BOT TELEGRAM
 # ========================================================
-FB_PAGE_TOKEN = "ĐIỀN_PAGE_ACCESS_TOKEN_CỦA_BẠN_VÀO_ĐÂY"
-FB_VERIFY_TOKEN = "LVT_BOT_VIP_123" # Mã này dùng để xác minh trên Facebook Developer
+TELEGRAM_BOT_TOKEN = "8621133442:AAEimlzP2LKIfWOLE18iQGoUUHS7pyXmDuw"
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 # ========================================================
 
 remote_unlocks = {}
@@ -241,119 +241,133 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         "notice_exp": notice_exp 
     }
 
+
 # ====================================================================
-# TÍCH HỢP FACEBOOK MESSENGER BOT
+# TÍCH HỢP TELEGRAM BOT
 # ====================================================================
-def send_fb_message(sender_id, text, quick_replies=None):
-    if not FB_PAGE_TOKEN or FB_PAGE_TOKEN == "ĐIỀN_PAGE_ACCESS_TOKEN_CỦA_BẠN_VÀO_ĐÂY": return
-    payload = {"recipient": {"id": sender_id}, "message": {"text": text}}
-    if quick_replies:
-        payload["message"]["quick_replies"] = [{"content_type": "text", "title": qr[0], "payload": qr[1]} for qr in quick_replies]
-    try: requests.post(f"https://graph.facebook.com/v18.0/me/messages?access_token={FB_PAGE_TOKEN}", json=payload)
+def send_telegram_message(chat_id, text, reply_markup=None):
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "ĐIỀN_TOKEN_BOT_TELEGRAM_VÀO_ĐÂY": return
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try: requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
     except: pass
 
-def get_fb_name(sender_id):
-    if not FB_PAGE_TOKEN or FB_PAGE_TOKEN == "ĐIỀN_PAGE_ACCESS_TOKEN_CỦA_BẠN_VÀO_ĐÂY": return "Khách hàng"
-    try:
-        res = requests.get(f"https://graph.facebook.com/{sender_id}?fields=first_name,last_name&access_token={FB_PAGE_TOKEN}").json()
-        return f"{res.get('last_name', '')} {res.get('first_name', '')}".strip() or "Khách hàng"
-    except: return "Khách hàng"
+@app.route('/webhook', methods=['POST'])
+def telegram_webhook():
+    data = request.json
+    if not data: return "ok", 200
+    
+    chat_id = None
+    msg_text = ""
+    payload_data = ""
+    user_name = "Khách hàng"
+    
+    if "message" in data and "text" in data["message"]:
+        chat_id = data["message"]["chat"]["id"]
+        msg_text = data["message"]["text"].strip()
+        user_name = data["message"]["from"].get("first_name", "Khách")
+    elif "callback_query" in data:
+        chat_id = data["callback_query"]["message"]["chat"]["id"]
+        payload_data = data["callback_query"]["data"]
+        user_name = data["callback_query"]["from"].get("first_name", "Khách")
+        # Gửi tín hiệu đã nhận bấm nút cho Tele
+        requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": data["callback_query"]["id"]})
 
-@app.route('/webhook', methods=['GET', 'POST'])
-def fb_webhook():
-    if request.method == 'GET':
-        if request.args.get("hub.verify_token") == FB_VERIFY_TOKEN:
-            return request.args.get("hub.challenge")
-        return "Invalid verify token", 403
+    if not chat_id: return "ok", 200
 
-    if request.method == 'POST':
-        data = request.json
-        for entry in data.get('entry', []):
-            for messaging_event in entry.get('messaging', []):
-                sender_id = messaging_event['sender']['id']
-                db = load_db()
-                
-                # Tạo user mới nếu chưa có
-                if sender_id not in db["bot_users"]:
-                    db["bot_users"][sender_id] = {"name": get_fb_name(sender_id), "balance": 0, "resets": 3, "state": "none"}
-                    save_db(db)
-                
-                user = db["bot_users"][sender_id]
-                
-                # Bắt Payload từ Quick Reply hoặc chữ gõ vào
-                msg_text = ""
-                payload = ""
-                if messaging_event.get('message'):
-                    msg_text = messaging_event['message'].get('text', '').strip()
-                    if 'quick_reply' in messaging_event['message']:
-                        payload = messaging_event['message']['quick_reply']['payload']
-                elif messaging_event.get('postback'):
-                    payload = messaging_event['postback']['payload']
+    db = load_db()
+    sender_id = str(chat_id)
+    
+    if sender_id not in db["bot_users"]:
+        db["bot_users"][sender_id] = {"name": user_name, "balance": 0, "resets": 3, "state": "none"}
+        save_db(db)
+    
+    user = db["bot_users"][sender_id]
 
-                # --- XỬ LÝ NHẬP KEY ĐỂ RESET ---
-                if user["state"] == "waiting_for_reset_key":
-                    if payload: # Nếu họ bấm nút Hủy
-                        user["state"] = "none"; save_db(db)
-                    else:
-                        key_to_reset = msg_text
-                        if key_to_reset in db["keys"]:
-                            db["keys"][key_to_reset]["devices"] = []
-                            db["keys"][key_to_reset]["known_ips"] = []
-                            user["resets"] -= 1
-                            user["state"] = "none"
-                            save_db(db)
-                            send_fb_message(sender_id, f"✅ Reset thành công Key: {key_to_reset}\nTất cả thiết bị và IP đã được xóa sạch!", [["🔙 Quay lại", "MENU_MAIN"]])
-                        else:
-                            send_fb_message(sender_id, "❌ Key không tồn tại! Vui lòng kiểm tra lại hoặc gõ lại:", [["Hủy Reset", "MENU_MAIN"]])
-                        continue
+    # --- XỬ LÝ NHẬP KEY ĐỂ RESET ---
+    if user["state"] == "waiting_for_reset_key":
+        if payload_data == "MENU_MAIN" or msg_text.upper() == "/CANCEL":
+            user["state"] = "none"; save_db(db)
+            cmd = "MENU_MAIN" # Chuyển về menu chính
+        elif msg_text:
+            key_to_reset = msg_text
+            if key_to_reset in db["keys"]:
+                db["keys"][key_to_reset]["devices"] = []
+                db["keys"][key_to_reset]["known_ips"] = []
+                user["resets"] -= 1
+                user["state"] = "none"
+                save_db(db)
+                markup = {"inline_keyboard": [[{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]]}
+                send_telegram_message(chat_id, f"✅ *Reset thành công Key:*\n`{key_to_reset}`\n\nTất cả thiết bị và IP đã được xóa sạch!", markup)
+            else:
+                markup = {"inline_keyboard": [[{"text": "🔙 Hủy Reset", "callback_data": "MENU_MAIN"}]]}
+                send_telegram_message(chat_id, "❌ Key không tồn tại! Vui lòng kiểm tra lại hoặc bấm Hủy.", markup)
+            return "ok", 200
 
-                # --- XỬ LÝ LỆNH BÌNH THƯỜNG ---
-                cmd = payload if payload else (msg_text.upper() if msg_text else "MENU_MAIN")
-                
-                if cmd == "MENU_MAIN" or "CHÀO" in cmd or "HI" in cmd:
-                    txt = f"👋 Chào {user['name']}!\n🆔 ID của bạn: {sender_id}\n💰 Số dư: {user['balance']}đ\n🔄 Lần Reset Key còn lại: {user['resets']}/3\n\nVui lòng chọn dịch vụ dưới đây:"
-                    send_fb_message(sender_id, txt, [["🔑 Mua Key", "MENU_BUY"], ["🔄 Reset Key", "MENU_RESET"]])
-                
-                elif cmd == "MENU_BUY":
-                    send_fb_message(sender_id, "Bạn muốn mua loại Key nào?", [["👑 Key VIP", "BUY_VIP"], ["👤 Key Thường", "BUY_NORMAL"], ["🔙 Quay lại", "MENU_MAIN"]])
-                
-                elif cmd == "BUY_NORMAL":
-                    send_fb_message(sender_id, "🛠 Tính năng Mua Key Thường hiện đang bảo trì. Vui lòng quay lại sau hoặc mua Key VIP nhé!", [["🔙 Menu Chính", "MENU_MAIN"]])
-                
-                elif cmd == "BUY_VIP":
-                    txt = "🛒 BẢNG GIÁ KEY VIP OLM:\n- 1 Giờ: 7,000đ\n- 7 Ngày: 30,000đ\n- 30 Ngày: 85,000đ\n- 1 Năm: 200,000đ\n\nChọn gói muốn mua:"
-                    send_fb_message(sender_id, txt, [["🕒 1 Giờ (7k)", "VIP_1H"], ["📅 7 Ngày (30k)", "VIP_7D"], ["📆 30 Ngày (85k)", "VIP_30D"], ["🏆 1 Năm (200k)", "VIP_1Y"]])
-                
-                elif cmd.startswith("VIP_"):
-                    prices = {"VIP_1H": (7000, 3600000), "VIP_7D": (30000, 604800000), "VIP_30D": (85000, 2592000000), "VIP_1Y": (200000, 31536000000)}
-                    if cmd in prices:
-                        cost, duration_ms = prices[cmd]
-                        if user["balance"] >= cost:
-                            # Thanh toán và tạo Key
-                            user["balance"] -= cost
-                            nk = f"OLMVIP-{random.randint(1000000, 9999999)}"
-                            db["keys"][nk] = {"exp": int(time.time()*1000) + duration_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm"}
-                            save_db(db)
-                            send_fb_message(sender_id, f"🎉 MUA KEY THÀNH CÔNG!\n\n🔑 Key của bạn: {nk}\n💰 Số dư còn lại: {user['balance']}đ\n\nHãy copy Key và dán vào Tool nhé!", [["🔙 Quay lại", "MENU_MAIN"]])
-                        else:
-                            send_fb_message(sender_id, f"❌ Số dư không đủ! Gói này giá {cost}đ nhưng bạn chỉ có {user['balance']}đ.\n\nVui lòng copy ID: {sender_id} gửi cho Admin để nạp tiền.", [["🔙 Quay lại", "MENU_MAIN"]])
-                
-                elif cmd == "MENU_RESET":
-                    if user["resets"] <= 0:
-                        send_fb_message(sender_id, "❌ Bạn đã hết lượt Reset miễn phí (0/3).", [["🔙 Quay lại", "MENU_MAIN"]])
-                    else:
-                        send_fb_message(sender_id, f"Bạn đang còn {user['resets']} lượt Reset. Bạn muốn reset loại Key nào?", [["Reset Key VIP", "RESET_ACTION"], ["Reset Key Thường", "RESET_ACTION"], ["🔙 Quay lại", "MENU_MAIN"]])
-                        
-                elif cmd == "RESET_ACTION":
-                    user["state"] = "waiting_for_reset_key"
-                    save_db(db)
-                    send_fb_message(sender_id, "📝 Vui lòng gõ (nhập) chính xác Key bạn muốn Reset và gửi cho Bot:", [["Hủy bỏ", "MENU_MAIN"]])
-                    
-                else:
-                    # Gõ bậy bạ
-                    send_fb_message(sender_id, "🤖 Bot không hiểu lệnh này. Vui lòng sử dụng các nút chức năng bên dưới.", [["Hiển thị Menu", "MENU_MAIN"]])
+    cmd = payload_data if payload_data else (msg_text.upper() if msg_text else "MENU_MAIN")
+    
+    if cmd in ["MENU_MAIN", "/START", "HI", "CHÀO"]:
+        txt = f"👋 Chào *{user['name']}*!\n🆔 ID của bạn: `{sender_id}`\n💰 Số dư: *{user['balance']}đ*\n🔄 Reset Key còn lại: *{user['resets']}/3*\n\nVui lòng chọn dịch vụ:"
+        markup = {"inline_keyboard": [
+            [{"text": "🔑 Mua Key", "callback_data": "MENU_BUY"}, {"text": "🔄 Reset Key", "callback_data": "MENU_RESET"}]
+        ]}
+        send_telegram_message(chat_id, txt, markup)
+    
+    elif cmd == "MENU_BUY":
+        markup = {"inline_keyboard": [
+            [{"text": "👑 Key VIP", "callback_data": "BUY_VIP"}, {"text": "👤 Key Thường", "callback_data": "BUY_NORMAL"}],
+            [{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]
+        ]}
+        send_telegram_message(chat_id, "Bạn muốn mua loại Key nào?", markup)
+    
+    elif cmd == "BUY_NORMAL":
+        markup = {"inline_keyboard": [[{"text": "🔙 Menu Chính", "callback_data": "MENU_MAIN"}]]}
+        send_telegram_message(chat_id, "🛠 *Tính năng Mua Key Thường hiện đang bảo trì.*\n\nVui lòng quay lại sau hoặc dùng Key VIP nhé!", markup)
+    
+    elif cmd == "BUY_VIP":
+        txt = "🛒 *BẢNG GIÁ KEY VIP OLM:*\n- 1 Giờ: 7,000đ\n- 7 Ngày: 30,000đ\n- 30 Ngày: 85,000đ\n- 1 Năm: 200,000đ\n\n_Chọn gói muốn mua:_"
+        markup = {"inline_keyboard": [
+            [{"text": "🕒 1 Giờ (7k)", "callback_data": "VIP_1H"}, {"text": "📅 7 Ngày (30k)", "callback_data": "VIP_7D"}],
+            [{"text": "📆 30 Ngày (85k)", "callback_data": "VIP_30D"}, {"text": "🏆 1 Năm (200k)", "callback_data": "VIP_1Y"}],
+            [{"text": "🔙 Quay lại", "callback_data": "MENU_BUY"}]
+        ]}
+        send_telegram_message(chat_id, txt, markup)
+        
+    elif cmd.startswith("VIP_"):
+        prices = {"VIP_1H": (7000, 3600000), "VIP_7D": (30000, 604800000), "VIP_30D": (85000, 2592000000), "VIP_1Y": (200000, 31536000000)}
+        if cmd in prices:
+            cost, duration_ms = prices[cmd]
+            if user["balance"] >= cost:
+                user["balance"] -= cost
+                nk = f"OLMVIP-{random.randint(1000000, 9999999)}"
+                db["keys"][nk] = {"exp": int(time.time()*1000) + duration_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm"}
+                save_db(db)
+                markup = {"inline_keyboard": [[{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]]}
+                send_telegram_message(chat_id, f"🎉 *MUA KEY THÀNH CÔNG!*\n\n🔑 Key của bạn: `{nk}`\n💰 Số dư còn lại: {user['balance']}đ\n\n_(Chạm vào Key để copy và dán vào Tool nhé!)_", markup)
+            else:
+                markup = {"inline_keyboard": [[{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]]}
+                send_telegram_message(chat_id, f"❌ *Số dư không đủ!*\nGói này giá {cost}đ nhưng bạn chỉ có {user['balance']}đ.\n\nVui lòng copy ID: `{sender_id}` gửi cho Admin để nạp tiền.", markup)
+    
+    elif cmd == "MENU_RESET":
+        if user["resets"] <= 0:
+            markup = {"inline_keyboard": [[{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]]}
+            send_telegram_message(chat_id, "❌ Bạn đã hết lượt Reset miễn phí (0/3).", markup)
+        else:
+            markup = {"inline_keyboard": [
+                [{"text": "Reset Key VIP", "callback_data": "RESET_ACTION"}, {"text": "Reset Key Thường", "callback_data": "RESET_ACTION"}],
+                [{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]
+            ]}
+            send_telegram_message(chat_id, f"Bạn đang còn *{user['resets']} lượt Reset*. Bạn muốn reset loại Key nào?", markup)
+            
+    elif cmd == "RESET_ACTION":
+        user["state"] = "waiting_for_reset_key"
+        save_db(db)
+        markup = {"inline_keyboard": [[{"text": "🔙 Hủy bỏ", "callback_data": "MENU_MAIN"}]]}
+        send_telegram_message(chat_id, "📝 Vui lòng nhắn chính xác *Key* bạn muốn Reset vào khung chat:", markup)
 
-        return "ok", 200
+    return "ok", 200
+
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_key():
@@ -508,13 +522,13 @@ def key_actions(action, key):
 
 @app.route('/admin/add_balance', methods=['POST'])
 def add_balance():
-    fbid = request.form.get('fbid').strip()
+    tid = request.form.get('tid').strip()
     amount = int(request.form.get('amount', 0))
     db = load_db()
-    if fbid in db["bot_users"]:
-        db["bot_users"][fbid]["balance"] += amount
+    if tid in db["bot_users"]:
+        db["bot_users"][tid]["balance"] += amount
         save_db(db)
-        send_fb_message(fbid, f"🎉 Chúc mừng! Admin vừa cộng thêm {amount}đ vào tài khoản của bạn.\n💰 Số dư mới: {db['bot_users'][fbid]['balance']}đ", [["Cảm ơn Admin", "MENU_MAIN"]])
+        send_telegram_message(tid, f"🎉 *Chúc mừng! Admin vừa cộng thêm {amount}đ vào tài khoản của bạn.*\n💰 Số dư mới: {db['bot_users'][tid]['balance']}đ", {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
     return redirect('/')
 
 @app.route('/admin/online')
@@ -588,9 +602,9 @@ def dashboard():
     
     <div class="card p-3 mb-4" style="border-color: #ff3366;"><h4><i class="fas fa-crosshairs"></i> Tạo Key OLM</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="olm"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: OLM)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch2"><label class="form-check-label text-warning" for="vipSwitch2">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #ff3366, #ff9900); color:white;">TẠO KEY OLM</button></div></form></div>
     
-    <div class="card p-3 mb-4" style="border-color: #1877F2;"><h4><i class="fab fa-facebook-messenger"></i> Quản Lý User Bot</h4>
-    <form action="/admin/add_balance" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="fbid" class="form-control bg-dark text-light" placeholder="Nhập Facebook ID của khách..." required></div><div class="col-7"><input type="number" name="amount" class="form-control bg-dark text-light" placeholder="Số Tiền (VD: 50000)" required></div><div class="col-5"><button type="submit" class="btn w-100 fw-bold" style="background:#1877F2; color:white;">Nạp Tiền</button></div></form>
-    <div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>User (FB ID)</th><th>Số Dư</th><th>Reset</th></tr></thead><tbody>{users_html}</tbody></table></div></div>
+    <div class="card p-3 mb-4" style="border-color: #2AABEE;"><h4><i class="fab fa-telegram"></i> Quản Lý User Bot Telegram</h4>
+    <form action="/admin/add_balance" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="tid" class="form-control bg-dark text-light" placeholder="Nhập Telegram Chat ID của khách..." required></div><div class="col-7"><input type="number" name="amount" class="form-control bg-dark text-light" placeholder="Số Tiền (VD: 50000)" required></div><div class="col-5"><button type="submit" class="btn w-100 fw-bold" style="background:#2AABEE; color:white;">Nạp Tiền</button></div></form>
+    <div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên (Chat ID)</th><th>Số Dư</th><th>Reset</th></tr></thead><tbody>{users_html}</tbody></table></div></div>
     
     <div class="card p-3 mb-4"><h4 class="text-danger">🛡️ Block IP</h4><form action="/admin/ban-ip" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div>
     
@@ -607,7 +621,6 @@ def dashboard():
         function filterTable() {{ let s = document.getElementById('searchInput').value.toLowerCase(), f = document.getElementById('statusFilter').value; document.querySelectorAll('.key-row').forEach(r => {{ r.style.display = (r.innerText.toLowerCase().includes(s) && (f==='all' || r.dataset.status===f)) ? '' : 'none'; }}); }} 
         function openExtendModal(key) {{ document.getElementById('extendKeyInput').value = key; document.getElementById('extendKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('extendModal')).show(); }}
         
-        /* AUTO RELOAD MỖI 15s (Tự dừng khi đang gõ phím) */
         let reloadTimer = setTimeout(() => location.reload(), 15000);
         document.querySelectorAll('input, select').forEach(el => {{
             el.addEventListener('focus', () => clearTimeout(reloadTimer));
