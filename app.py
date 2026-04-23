@@ -147,14 +147,14 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
     if actual_target != target_app:
         add_log(db, "SAI HỆ THỐNG", key, real_ip, f"{device_name} ({deviceId})", olm_name)
         save_db(db)
-        sys_name = "LVT Tool" if actual_target == "tool" else "OLM"
+        sys_name = "LVT Tool" if actual_target == "tool" else ("OLM" if actual_target == "olm" else "Admin Bot")
         return False, {"status": "error", "message": f"LỖI: Key này là của hệ thống {sys_name}!"}
 
     is_key_vip = keyData.get('vip', False)
     is_expect_vip = (expected_type == 'vip')
     if is_expect_vip and not is_key_vip:
         return False, {"status": "error", "message": "Bạn đang dùng Key THƯỜNG. Hãy gạt công tắc sang 'Key Thường'!"}
-    if not is_expect_vip and is_key_vip:
+    if not is_expect_vip and is_key_vip and expected_type != 'any':
         return False, {"status": "error", "message": "Bạn đang dùng Key VIP. Hãy gạt công tắc sang 'Key VIP'!"}
 
     if keyData.get('status') == 'banned':
@@ -171,7 +171,7 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         return False, {"status": "error", "message": "Key đã hết hạn!"}
 
     known_ips = keyData.setdefault('known_ips', [])
-    if real_ip not in known_ips:
+    if real_ip not in known_ips and target_app != "admin_bot": # Admin bot bypasses strict IP ban
         if len(known_ips) >= keyData.get('maxDevices', 1):
             strikes = db.setdefault("ip_strikes", {})
             strike_info = strikes.get(real_ip, {"count": 0, "banned_until": 0})
@@ -215,6 +215,9 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
         active_sessions[deviceId] = {
             "ip": real_ip, "olm_name": olm_name, "key": key, "last_seen": time.time()
         }
+    elif target_app == "admin_bot":
+        add_log(db, "ADMIN BOT ĐĂNG NHẬP", key, real_ip, f"Telegram ({deviceId})", "N/A")
+        save_db(db)
     else:
         add_log(db, "THÀNH CÔNG", key, real_ip, f"{device_name} ({deviceId})", olm_name)
         save_db(db)
@@ -243,35 +246,23 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
 
 
 # ====================================================================
-# TÍCH HỢP TELEGRAM BOT (BẢN FIX LƯU USERNAME & ĐỊNH DẠNG HTML AN TOÀN)
+# TÍCH HỢP TELEGRAM BOT & ADMIN PANEL COMMANDS
 # ====================================================================
 def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return
-    
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    try: 
-        res = requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
-        print("BOT GỬI TIN NHẮN:", res.json())
-    except Exception as e: 
-        print("LỖI GỬI BOT:", e)
+    if reply_markup: payload["reply_markup"] = reply_markup
+    try: requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
+    except: pass
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def telegram_webhook():
-    if request.method == 'GET':
-        return "Webhook Telegram đang hoạt động bình thường!", 200
+    if request.method == 'GET': return "Webhook OK", 200
 
     data = request.json
     if not data: return "ok", 200
     
-    print("NHẬN ĐƯỢC DỮ LIỆU TỪ TELEGRAM:", data)
-    
-    chat_id = None
-    msg_text = ""
-    payload_data = ""
-    user_name = "Khách hàng"
-    tg_username = ""
+    chat_id = None; msg_text = ""; payload_data = ""; user_name = "Khách hàng"; tg_username = ""
     
     if "message" in data and "text" in data["message"]:
         chat_id = data["message"]["chat"]["id"]
@@ -289,23 +280,169 @@ def telegram_webhook():
 
     db = load_db()
     sender_id = str(chat_id)
-    
-    # Lọc thẻ HTML và tạo username
     safe_name = user_name.replace("<", "").replace(">", "").replace("&", "")
     formatted_username = f"@{tg_username}" if tg_username else ""
     
     if sender_id not in db["bot_users"]:
-        db["bot_users"][sender_id] = {"name": safe_name, "username": formatted_username, "balance": 0, "resets": 3, "state": "none"}
+        db["bot_users"][sender_id] = {"name": safe_name, "username": formatted_username, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "admin_key": ""}
         save_db(db)
     else:
-        # Cập nhật username nếu có thay đổi
         if db["bot_users"][sender_id].get("username") != formatted_username:
             db["bot_users"][sender_id]["username"] = formatted_username
             save_db(db)
     
     user = db["bot_users"][sender_id]
+    
+    # BẢO VỆ PHÂN QUYỀN ADMIN - Kiểm tra Key Admin ngầm
+    if user.get("is_admin"):
+        adm_key = user.get("admin_key", "")
+        success, _ = process_key_validation(adm_key, sender_id, "TELEGRAM", "admin_bot", "any")
+        if not success:
+            user["is_admin"] = False
+            user["admin_key"] = ""
+            user["state"] = "none"
+            save_db(db)
+            send_telegram_message(chat_id, "⚠️ <b>Hệ thống:</b> Key Admin của bạn đã hết hạn hoặc bị khóa. Quyền Admin đã bị tước!")
 
-    # --- XỬ LÝ NHẬP KEY ĐỂ RESET ---
+    # ================== KHU VỰC LỆNH ADMIN ==================
+    if msg_text.upper() == "/ADMIN":
+        if user.get("is_admin"):
+            user["state"] = "none"; save_db(db)
+            markup = {"inline_keyboard": [
+                [{"text": "➕ Tạo Key Nhanh", "callback_data": "ADM_CREATE"}, {"text": "💰 Nạp Tiền/Reset", "callback_data": "ADM_BAL"}],
+                [{"text": "🔒 Khóa OLM", "callback_data": "ADM_LOCKOLM"}, {"text": "🚫 Ban IP", "callback_data": "ADM_BANIP"}],
+                [{"text": "📢 Phát Thông Báo", "callback_data": "ADM_NOTICE"}, {"text": "🛠 Quản Lý Key", "callback_data": "ADM_MANAGE"}],
+                [{"text": "❌ Đăng Xuất Admin", "callback_data": "ADM_LOGOUT"}]
+            ]}
+            send_telegram_message(chat_id, "👑 <b>BẢNG ĐIỀU KHIỂN SERVER (ADMIN)</b>\nBạn đang nắm toàn quyền kiểm soát hệ thống:", markup)
+        else:
+            user["state"] = "waiting_admin_key"; save_db(db)
+            send_telegram_message(chat_id, "🔐 <b>Xác Thực Admin:</b>\nVui lòng nhập <code>Key Admin</code> để tiếp tục:")
+        return "ok", 200
+
+    if user["state"] == "waiting_admin_key":
+        if msg_text:
+            success, res = process_key_validation(msg_text, sender_id, "TELEGRAM", "admin_bot", "any")
+            if success:
+                user["is_admin"] = True
+                user["admin_key"] = msg_text
+                user["state"] = "none"
+                save_db(db)
+                send_telegram_message(chat_id, "✅ <b>ĐĂNG NHẬP ADMIN THÀNH CÔNG!</b>\nGõ lại /admin để mở Bảng Điều Khiển.")
+            else:
+                user["state"] = "none"; save_db(db)
+                send_telegram_message(chat_id, f"❌ <b>Từ chối truy cập:</b> {res['message']}")
+        return "ok", 200
+
+    # Các nút bấm Admin Panel
+    if user.get("is_admin"):
+        if payload_data == "ADM_CREATE":
+            user["state"] = "adm_w_create"; save_db(db)
+            send_telegram_message(chat_id, "➕ <b>TẠO KEY NHANH</b>\nNhắn theo cú pháp:\n<code>Loại Ngày MaxTB</code>\n(Loại: OLM hoặc LVT)\n\n<i>Ví dụ tạo key OLM 30 ngày cho 1 máy:</i>\n<code>OLM 30 1</code>\n(Nhắn /cancel để hủy)")
+            return "ok", 200
+        elif payload_data == "ADM_BAL":
+            user["state"] = "adm_w_bal"; save_db(db)
+            send_telegram_message(chat_id, "💰 <b>NẠP TIỀN / LƯỢT RESET</b>\nNhắn theo cú pháp:\n<code>@user Tiền Lượt_Reset</code>\n\n<i>Ví dụ nạp 50k và 2 reset cho @lvt_vip:</i>\n<code>@lvt_vip 50000 2</code>\n(Nhắn /cancel để hủy)")
+            return "ok", 200
+        elif payload_data == "ADM_LOCKOLM":
+            user["state"] = "adm_w_lockolm"; save_db(db)
+            send_telegram_message(chat_id, "🔒 <b>KHÓA TÊN OLM</b>\nNhắn chính xác tên OLM cần khóa vĩnh viễn.\n<i>Ví dụ:</i> <code>hp_luongvantuyen</code>\n(Nhắn /cancel để hủy)")
+            return "ok", 200
+        elif payload_data == "ADM_BANIP":
+            user["state"] = "adm_w_banip"; save_db(db)
+            send_telegram_message(chat_id, "🚫 <b>BAN IP</b>\nNhắn chính xác IP cần chặn vĩnh viễn.\n<i>Ví dụ:</i> <code>1.1.1.1</code>\n(Nhắn /cancel để hủy)")
+            return "ok", 200
+        elif payload_data == "ADM_NOTICE":
+            user["state"] = "adm_w_notice"; save_db(db)
+            send_telegram_message(chat_id, "📢 <b>PHÁT LOA (10 PHÚT)</b>\nNhập nội dung muốn thông báo lên màn hình người dùng:\n(Nhắn /cancel để hủy)")
+            return "ok", 200
+        elif payload_data == "ADM_MANAGE":
+            user["state"] = "adm_w_manage"; save_db(db)
+            send_telegram_message(chat_id, "🛠 <b>QUẢN LÝ KEY</b>\nNhắn theo các cú pháp sau:\n1. <code>XOA Key</code> (Xóa vĩnh viễn)\n2. <code>RESET Key</code> (Gỡ mọi thiết bị/IP)\n3. <code>VIP Key</code> (Bật/Tắt VIP)\n4. <code>GIAHAN Key Ngày</code> (Cộng ngày)\n(Nhắn /cancel để hủy)")
+            return "ok", 200
+        elif payload_data == "ADM_LOGOUT":
+            user["is_admin"] = False; user["admin_key"] = ""; user["state"] = "none"; save_db(db)
+            send_telegram_message(chat_id, "✅ Đã đăng xuất Admin an toàn.")
+            return "ok", 200
+
+    # Xử lý text nhập vào khi ở trạng thái Admin
+    if user.get("is_admin") and user["state"].startswith("adm_w_"):
+        if msg_text.upper() == "/CANCEL":
+            user["state"] = "none"; save_db(db)
+            send_telegram_message(chat_id, "Đã hủy thao tác. Gõ /admin để mở Menu.")
+            return "ok", 200
+            
+        try:
+            if user["state"] == "adm_w_create":
+                parts = msg_text.split()
+                if len(parts) == 3:
+                    sys_type, days, devs = parts[0].upper(), int(parts[1]), int(parts[2])
+                    nk = f"{sys_type}-{random.randint(1000000, 9999999)}"
+                    db["keys"][nk] = {"exp": "pending", "maxDevices": devs, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": sys_type.lower(), "durationMs": days * 86400000}
+                    save_db(db)
+                    send_telegram_message(chat_id, f"✅ Đã tạo thành công:\n<code>{nk}</code>\nHệ: {sys_type} VIP | {days} Ngày | {devs} Thiết bị")
+                else: send_telegram_message(chat_id, "❌ Sai cú pháp!")
+            
+            elif user["state"] == "adm_w_bal":
+                parts = msg_text.split()
+                if len(parts) == 3:
+                    t_user, amt, rst = parts[0], int(parts[1]), int(parts[2])
+                    t_id = None
+                    if t_user.startswith('@'):
+                        for uid, info in db["bot_users"].items():
+                            if info.get("username", "").lower() == t_user.lower(): t_id = uid; break
+                    else: t_id = t_user
+
+                    if t_id and t_id in db["bot_users"]:
+                        db["bot_users"][t_id]["balance"] += amt
+                        db["bot_users"][t_id]["resets"] += rst
+                        save_db(db)
+                        send_telegram_message(chat_id, f"✅ Đã cộng {amt}đ và {rst} reset cho {t_user}.")
+                        send_telegram_message(t_id, f"🎉 <b>Admin vừa nạp tiền!</b>\n💰 +{amt}đ | 🔄 +{rst} reset.\nSố dư mới: {db['bot_users'][t_id]['balance']}đ")
+                    else: send_telegram_message(chat_id, "❌ Không tìm thấy user này trong Bot!")
+                else: send_telegram_message(chat_id, "❌ Sai cú pháp!")
+
+            elif user["state"] == "adm_w_lockolm":
+                db.setdefault("locked_olm", {})[msg_text] = "permanent"
+                save_db(db); send_telegram_message(chat_id, f"✅ Đã KHÓA vĩnh viễn OLM: {msg_text}")
+
+            elif user["state"] == "adm_w_banip":
+                db.setdefault("banned_ips", {})[msg_text] = "permanent"
+                save_db(db); send_telegram_message(chat_id, f"✅ Đã BAN IP: {msg_text}")
+
+            elif user["state"] == "adm_w_notice":
+                db["global_notice"] = {"msg": msg_text, "exp": int(time.time() * 1000) + 600000} # 10 phút
+                save_db(db); send_telegram_message(chat_id, f"✅ Đã phát loa (10 phút):\n{msg_text}")
+
+            elif user["state"] == "adm_w_manage":
+                parts = msg_text.split()
+                action = parts[0].upper()
+                k = parts[1] if len(parts) > 1 else ""
+                if k in db["keys"]:
+                    if action == "XOA":
+                        del db["keys"][k]; send_telegram_message(chat_id, f"✅ Đã xóa Key: {k}")
+                    elif action == "RESET":
+                        db["keys"][k]["devices"] = []; db["keys"][k]["known_ips"] = []
+                        send_telegram_message(chat_id, f"✅ Đã gỡ mọi thiết bị/IP của Key: {k}")
+                    elif action == "VIP":
+                        db["keys"][k]["vip"] = not db["keys"][k].get("vip", False)
+                        send_telegram_message(chat_id, f"✅ Chế độ VIP của Key {k} hiện tại là: {db['keys'][k]['vip']}")
+                    elif action == "GIAHAN" and len(parts) == 3:
+                        days = int(parts[2])
+                        if db["keys"][k]['exp'] not in ['permanent', 'pending']:
+                            db["keys"][k]['exp'] = max(db["keys"][k]['exp'], int(time.time()*1000)) + (days * 86400000)
+                            send_telegram_message(chat_id, f"✅ Đã cộng thêm {days} ngày cho Key {k}")
+                    save_db(db)
+                else: send_telegram_message(chat_id, "❌ Không tìm thấy Key!")
+        except:
+            send_telegram_message(chat_id, "❌ Lỗi cú pháp! Gõ /admin để mở lại Menu.")
+        
+        user["state"] = "none"; save_db(db)
+        return "ok", 200
+    # ================== KẾT THÚC KHU VỰC ADMIN ==================
+
+
+    # --- XỬ LÝ NHẬP KEY ĐỂ RESET CHO KHÁCH BÌNH THƯỜNG ---
     if user["state"] == "waiting_for_reset_key":
         if payload_data == "MENU_MAIN" or msg_text.upper() == "/CANCEL":
             user["state"] = "none"; save_db(db)
@@ -465,7 +602,7 @@ def create_key():
     dur, t, md, qty = request.form.get('duration'), request.form.get('type'), int(request.form.get('maxDevices', 1)), int(request.form.get('quantity', 1))
     vip, pfx = request.form.get('is_vip')=='on', request.form.get('prefix', '').strip()
     
-    if not pfx: pfx = "LVT" if target_app == "tool" else "OLM"
+    if not pfx: pfx = "LVT" if target_app == "tool" else ("OLM" if target_app == "olm" else "ADMIN")
     db = load_db()
     for _ in range(qty):
         nk = f"{pfx}-{random.randint(1000000, 9999999)}"
@@ -524,37 +661,28 @@ def extend_key():
         save_db(db)
     return redirect('/')
 
-# --- BẢN CẬP NHẬT: NẠP BẰNG TÊN NGƯỜI DÙNG HOẶC ID ---
 @app.route('/admin/add_balance', methods=['POST'])
 def add_balance():
     target_user = request.form.get('target_user', '').strip()
     amount = int(request.form.get('amount', 0))
     resets = int(request.form.get('resets', 0))
-    
     if not target_user: return redirect('/')
     
     db = load_db()
     target_id = None
-    
-    # Tìm theo @username hoặc Chat ID
     if target_user.startswith('@'):
         for uid, info in db["bot_users"].items():
-            if info.get("username", "").lower() == target_user.lower():
-                target_id = uid
-                break
-    else:
-        target_id = target_user
+            if info.get("username", "").lower() == target_user.lower(): target_id = uid; break
+    else: target_id = target_user
 
     if target_id and target_id in db["bot_users"]:
         db["bot_users"][target_id]["balance"] += amount
         db["bot_users"][target_id]["resets"] += resets
         save_db(db)
-        
         msg = f"🎉 <b>Admin vừa cập nhật tài khoản của bạn!</b>\n"
         if amount > 0: msg += f"💰 Nạp tiền: <b>+{amount}đ</b>\n"
         if resets > 0: msg += f"🔄 Lượt Reset: <b>+{resets} lượt</b>\n"
         msg += f"\n📊 Số dư mới: {db['bot_users'][target_id]['balance']}đ\n🔄 Reset hiện tại: {db['bot_users'][target_id]['resets']}"
-        
         send_telegram_message(target_id, msg, {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
     return redirect('/')
 
@@ -564,13 +692,7 @@ def online_ips():
     for did, info in active_sessions.items():
         onl_time = time.strftime('%H:%M:%S', time.localtime(info["last_seen"]))
         html_rows += f"<tr><td>{info['ip']}</td><td class='text-warning'>{info['olm_name']}</td><td class='text-info'>{info['key']}</td><td>{did}</td><td>{onl_time}</td><td><a href='/admin/action/ban/{info['key']}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
-    
-    return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Giám Sát Online - LVT</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>body{{background:#0a0a12;color:white;}}</style></head><body class="p-4">
-    <div class="container"><div class="d-flex justify-content-between mb-4"><h2>📡 RADAR GIÁM SÁT OLM ONLINE</h2><a href="/" class="btn btn-secondary">Quay lại Dashboard</a></div>
-    <div class="card bg-dark p-3"><table class="table table-dark table-hover"><thead><tr><th>IP Máy</th><th>Tên OLM</th><th>Key Đang Dùng</th><th>Mã TB</th><th>Tín Hiệu Cuối</th><th>Thao Tác</th></tr></thead><tbody>{html_rows if html_rows else "<tr><td colspan='6' class='text-center text-muted'>Hiện không có ai đang làm OLM.</td></tr>"}</tbody></table></div></div>
-    <script>setInterval(() => location.reload(), 10000);</script></body></html>
-    '''
+    return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Giám Sát Online - LVT</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>body{{background:#0a0a12;color:white;}}</style></head><body class="p-4"><div class="container"><div class="d-flex justify-content-between mb-4"><h2>📡 RADAR GIÁM SÁT OLM ONLINE</h2><a href="/" class="btn btn-secondary">Quay lại Dashboard</a></div><div class="card bg-dark p-3"><table class="table table-dark table-hover"><thead><tr><th>IP Máy</th><th>Tên OLM</th><th>Key Đang Dùng</th><th>Mã TB</th><th>Tín Hiệu Cuối</th><th>Thao Tác</th></tr></thead><tbody>{html_rows if html_rows else "<tr><td colspan='6' class='text-center text-muted'>Hiện không có ai đang làm OLM.</td></tr>"}</tbody></table></div></div><script>setInterval(() => location.reload(), 10000);</script></body></html>'''
 
 @app.route('/')
 def dashboard():
@@ -579,7 +701,11 @@ def dashboard():
     for k, data in db["keys"].items():
         is_banned, is_vip, sys_target = data.get('status') == 'banned', data.get('vip', False), data.get('target', 'tool')
         status_badge = '<span class="badge bg-danger">BANNED</span>' if is_banned else ('<span class="badge bg-warning text-dark">VIP</span>' if is_vip else '<span class="badge bg-success">THƯỜNG</span>')
-        sys_badge = '<span class="badge bg-info">LVT Tool</span>' if sys_target == 'tool' else '<span class="badge bg-danger">OLM</span>'
+        
+        # Nhãn hiệu hệ thống
+        if sys_target == 'tool': sys_badge = '<span class="badge bg-info">LVT Tool</span>'
+        elif sys_target == 'admin_bot': sys_badge = '<span class="badge bg-dark border border-light">🤖 ADMIN BOT</span>'
+        else: sys_badge = '<span class="badge bg-danger">OLM</span>'
 
         current_time, is_expired = int(time.time() * 1000), False
         if data.get('exp') == 'pending': exp_text = '<span class="text-info">Chờ kích hoạt</span>'
@@ -611,6 +737,7 @@ def dashboard():
         if "THOÁT OLM" in log['action']: color = "secondary"
         elif "TRUY CẬP OLM" in log['action']: color = "info"
         elif "THÀNH CÔNG" in log['action']: color = "success"
+        elif "ADMIN BOT" in log['action']: color = "dark border border-light"
         elif "BANNED" in log['action'] or "BỊ CHẶN" in log['action'] or "SAI" in log['action'] or "GIỚI HẠN" in log['action']: color = "danger"
         else: color = "warning"
         
@@ -631,6 +758,8 @@ def dashboard():
     
     <div class="card p-3 mb-4" style="border-color: #ff3366;"><h4><i class="fas fa-crosshairs"></i> Tạo Key OLM</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="olm"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: OLM)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch2"><label class="form-check-label text-warning" for="vipSwitch2">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #ff3366, #ff9900); color:white;">TẠO KEY OLM</button></div></form></div>
     
+    <div class="card p-3 mb-4" style="border-color: #fff;"><h4><i class="fas fa-robot"></i> Tạo Key Admin Telegram</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="admin_bot"><input type="hidden" name="is_vip" value="on"><input type="hidden" name="quantity" value="1"><div class="col-12"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Tên Key (VD: ADMIN)"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Giới hạn số Telegram dùng chung" value="1"></div><div class="col-12 mt-2"><button type="submit" class="btn btn-light w-100 fw-bold text-dark">TẠO KEY ADMIN</button></div></form></div>
+    
     <div class="card p-3 mb-4" style="border-color: #2AABEE;"><h4><i class="fab fa-telegram"></i> Quản Lý User Bot Telegram</h4>
     <form action="/admin/add_balance" method="POST" class="row g-2 mb-3">
         <div class="col-12"><input type="text" name="target_user" class="form-control bg-dark text-light" placeholder="Nhập @username hoặc ID khách..." required></div>
@@ -640,11 +769,9 @@ def dashboard():
     </form>
     <div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên (Username/ID)</th><th>Số Dư</th><th>Reset</th></tr></thead><tbody>{users_html}</tbody></table></div></div>
     
-    <div class="card p-3 mb-4"><h4 class="text-danger">🛡️ Block IP</h4><form action="/admin/ban-ip" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div>
-    
-    <div class="card p-3"><h4 class="text-warning">🔒 Khóa Tên OLM</h4><form action="/admin/lock_olm" method="POST" class="row g-2 mb-3"><div class="col-12"><input type="text" name="user" class="form-control bg-dark text-light" placeholder="Nhập Tên OLM (VD: hp_luongvantuyen)" required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-warning w-100 text-dark fw-bold">Khóa Tài Khoản OLM</button></div></form><div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên OLM</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{olm_html}</tbody></table></div></div>
-    
     </div><div class="col-lg-8">
+    
+    <div class="card p-3 mb-4"><h4 class="text-danger">🛡️ Block IP & Khóa Tên OLM</h4><div class="row g-3"><div class="col-md-6"><form action="/admin/ban-ip" method="POST" class="row g-2"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container mt-2" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div><div class="col-md-6"><form action="/admin/lock_olm" method="POST" class="row g-2"><div class="col-12"><input type="text" name="user" class="form-control bg-dark text-light" placeholder="Nhập Tên OLM (VD: hp_abc)" required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-warning w-100 text-dark fw-bold">Khóa Tên OLM</button></div></form><div class="table-container mt-2" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên OLM</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{olm_html}</tbody></table></div></div></div></div>
     
     <div class="card p-3 mb-4" style="border-color: #bd00ff;"><h4>📢 Thông Báo Toàn Cầu (Gửi đến Script/Tool)</h4><form action="/admin/notice" method="POST" class="row g-2"><div class="col-12"><input type="text" name="message" class="form-control bg-dark text-light" placeholder="Nhập thông báo hiện lên màn hình người dùng..." value="{current_notice}"></div><div class="col-4"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required value="10"></div><div class="col-5"><select name="type" class="form-select bg-dark text-light"><option value="sec">Giây</option><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="year">Năm</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-3"><button type="submit" class="btn btn-info w-100 fw-bold">Phát Loa</button></div></form></div>
     
