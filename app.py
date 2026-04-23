@@ -70,7 +70,6 @@ threading.Thread(target=session_monitor, daemon=True).start()
 
 # --- AUTO RECOVER & ANTI-SLEEP (CHỐNG MẤT DỮ LIỆU) ---
 def keep_alive_and_backup():
-    # Tự động setup Menu lệnh cho Telegram khi Server khởi động
     try: requests.post(f"{TELEGRAM_API_URL}/setMyCommands", json={"commands": [{"command": "start", "description": "🏠 Menu Khách Hàng"}, {"command": "loaderkey", "description": "🔗 Kích Hoạt Tool Từ Xa"}, {"command": "admin", "description": "👑 Bảng Điều Khiển Server"}]})
     except: pass
 
@@ -102,12 +101,14 @@ def load_db():
         try:
             data = json.load(f)
             data.setdefault("bot_users", {}); data.setdefault("locked_olm", {}); data.setdefault("banned_ips", {}); data.setdefault("keys", {}); data.setdefault("logs", [])
+            data.setdefault("logout_pins", [])
             if not isinstance(data.get("global_notice"), dict): data["global_notice"] = {"msg": "", "exp": "permanent"}
             for uid in data["bot_users"]:
                 data["bot_users"][uid].setdefault("purchases", [])
                 data["bot_users"][uid].setdefault("notices", [])
                 data["bot_users"][uid].setdefault("loader_active", False)
                 data["bot_users"][uid].setdefault("loader_key", "")
+                data["bot_users"][uid].setdefault("loader_pin", "")
             return data
         except: return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}, "bot_users": {}}
 
@@ -172,7 +173,7 @@ def process_key_validation(db, key, deviceId, real_ip, target_app, expected_type
     return True, {"status": "success", "exp": kData.get('exp'), "vip": kData.get('vip'), "notice": notice_msg}
 
 # ====================================================================
-# TELEGRAM BOT ENGINE (TỐI THƯỢNG)
+# TELEGRAM BOT ENGINE
 # ====================================================================
 def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN: return
@@ -224,7 +225,12 @@ def telegram_loader_monitor():
                         valid, reason = False, "Key đã hết hạn sử dụng."
                 
                 if not valid:
-                    u["loader_active"] = False; u["loader_key"] = ""
+                    # GỬI LỆNH ĐÁ VĂNG CHO TOOL WEB THÔNG QUA MÃ PIN
+                    pin = u.get("loader_pin", "")
+                    if pin and pin not in db.setdefault("logout_pins", []):
+                        db["logout_pins"].append(pin)
+
+                    u["loader_active"] = False; u["loader_key"] = ""; u["loader_pin"] = ""
                     changed = True
                     send_telegram_message(uid, f"⚠️ <b>KẾT NỐI BỊ NGẮT ÉP BUỘC!</b>\n\nLý do: {reason}\n\n👉 Bạn đã bị văng khỏi Tool. Vui lòng sử dụng lại lệnh /loaderkey để kết nối bằng Key mới.", {"inline_keyboard": [[{"text": "🔗 Kích Hoạt Lại", "callback_data": "LOADER_MENU"}]]})
         if changed: save_db(db)
@@ -265,7 +271,7 @@ def telegram_webhook():
         is_new_user = False
         if sid not in db["bot_users"]:
             is_new_user = True
-            db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": ""}
+            db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": "", "loader_pin": ""}
         else: db["bot_users"][sid]["username"] = f_uname
         
         user = db["bot_users"][sid]
@@ -276,7 +282,6 @@ def telegram_webhook():
                 if uinfo.get("is_admin"):
                     send_telegram_message(uid, f"🚨 <b>CÓ KHÁCH HÀNG MỚI!</b>\n👤 Tên: {safe_name} {f_uname}\n🆔 ID: <code>{sid}</code>\nVừa sử dụng Bot lần đầu tiên.")
 
-        # Nếu gõ lệnh Menu, lập tức DỌN DẸP TRẠNG THÁI để chống kẹt
         if msg_text.startswith("/"):
             user["state"] = "none"; save_db(db)
 
@@ -323,8 +328,13 @@ def telegram_webhook():
             return "ok", 200
             
         elif payload == "LOADER_DISCONNECT":
-            user["loader_active"] = False; user["loader_key"] = ""; save_db(db)
-            edit_telegram_message(chat_id, message_id, "✅ <b>ĐÃ NGẮT KẾT NỐI BẢO MẬT.</b>\nBạn đã rời khỏi phiên giám sát Tool.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+            # ĐẨY LỆNH ĐÁ VĂNG TOOL WEB BẰNG CÁCH NẠP MÃ PIN VÀO DANH SÁCH ĐEN
+            pin = user.get("loader_pin", "")
+            if pin and pin not in db.setdefault("logout_pins", []):
+                db["logout_pins"].append(pin)
+
+            user["loader_active"] = False; user["loader_key"] = ""; user["loader_pin"] = ""; save_db(db)
+            edit_telegram_message(chat_id, message_id, "✅ <b>ĐÃ NGẮT KẾT NỐI BẢO MẬT.</b>\nLệnh xóa Key đã được gửi đi. Bạn đã rời khỏi phiên giám sát Tool.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
             return "ok", 200
 
         elif msg_text.upper() == "/ADMIN" or payload == "ADM_MENU":
@@ -332,10 +342,11 @@ def telegram_webhook():
                 adm_key = user.get("admin_key", "")
                 success, _ = process_key_validation(db, adm_key, sid, "TELEGRAM", "admin_bot", "any")
                 if not success:
-                    user["is_admin"] = False; user["admin_key"] = ""; save_db(db)
+                    user["is_admin"] = False; user["admin_key"] = ""; user["state"] = "none"; save_db(db)
                     send_telegram_message(chat_id, "⚠️ <b>Key Admin của bạn đã bị khóa hoặc hết hạn.</b> Hệ thống đã tự động tước quyền Admin!")
                     return "ok", 200
 
+                user["state"] = "none"; save_db(db)
                 exp_ms = db["keys"][adm_key]["exp"]
                 time_left = format_time_left(exp_ms, now_ms)
                 markup = {"inline_keyboard": [
@@ -446,7 +457,12 @@ def telegram_webhook():
 
         # ======= XỬ LÝ NHẬP VĂN BẢN (TEXT) =======
         if msg_text:
-            # --- LOADER KEY ---
+            # --- LOADER KEY LOGIC (TRỰC TIẾP GIÁM SÁT) ---
+            if user["state"] == "loader_connected":
+                if not msg_text.startswith("/"):
+                    send_telegram_message(chat_id, "🟢 Bạn đang trong phiên giám sát Tool. Vui lòng ấn các nút trên Menu để thao tác.")
+                return "ok", 200
+
             if user["state"] == "wait_loader_pin":
                 user["temp_pin"] = msg_text
                 user["state"] = "wait_loader_key"; save_db(db)
@@ -459,7 +475,7 @@ def telegram_webhook():
                 success, _ = process_key_validation(db, key, "Telegram_Loader", get_real_ip(), "telegram_loader", "any")
                 if key in db["keys"] and success:
                     remote_unlocks[pin] = key
-                    user["loader_active"] = True; user["loader_key"] = key; user["state"] = "none"; save_db(db)
+                    user["loader_active"] = True; user["loader_key"] = key; user["loader_pin"] = pin; user["state"] = "none"; save_db(db)
                     
                     kData = db["keys"][key]
                     t_left = format_time_left(kData["exp"], now_ms)
@@ -645,6 +661,13 @@ def check_key():
     if request.method == 'OPTIONS': return jsonify({}), 200
     data = request.get_json() or {}
     db = load_db()
+    pin = data.get('pin')
+    
+    # KHI PHÁT HIỆN TOOL CÓ MÃ PIN NẰM TRONG DANH SÁCH BỊ ĐÁ VĂNG (LOGOUT_PINS)
+    if pin and pin in db.get("logout_pins", []):
+        db["logout_pins"].remove(pin); save_db(db)
+        return jsonify({"status": "error", "message": "Phiên làm việc của bạn đã bị Ngắt Kết Nối ép buộc từ Bot Telegram!"})
+
     success, res = process_key_validation(db, data.get('key'), data.get('deviceId'), get_real_ip(), data.get('target_app', 'tool'), data.get('expected_type', 'normal'), data.get('device_name'), data.get('olm_name'))
     return jsonify(res)
 
@@ -905,3 +928,4 @@ def dashboard():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
+
