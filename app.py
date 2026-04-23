@@ -243,20 +243,29 @@ def process_key_validation(key, deviceId, real_ip, target_app, expected_type, de
 
 
 # ====================================================================
-# TÍCH HỢP TELEGRAM BOT
+# TÍCH HỢP TELEGRAM BOT (BẢN FIX ĐỊNH DẠNG HTML AN TOÀN TUYỆT ĐỐI)
 # ====================================================================
 def send_telegram_message(chat_id, text, reply_markup=None):
-    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "ĐIỀN_TOKEN_BOT_TELEGRAM_VÀO_ĐÂY": return
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    if not TELEGRAM_BOT_TOKEN: return
+    
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    try: requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
-    except: pass
+    try: 
+        res = requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
+        print("BOT GỬI TIN NHẮN:", res.json()) # Log để dễ gỡ lỗi
+    except Exception as e: 
+        print("LỖI GỬI BOT:", e)
 
-@app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['GET', 'POST'])
 def telegram_webhook():
+    if request.method == 'GET':
+        return "Webhook Telegram đang hoạt động bình thường!", 200
+
     data = request.json
     if not data: return "ok", 200
+    
+    print("NHẬN ĐƯỢC DỮ LIỆU TỪ TELEGRAM:", data) # Chèn cảm biến báo cáo
     
     chat_id = None
     msg_text = ""
@@ -271,7 +280,6 @@ def telegram_webhook():
         chat_id = data["callback_query"]["message"]["chat"]["id"]
         payload_data = data["callback_query"]["data"]
         user_name = data["callback_query"]["from"].get("first_name", "Khách")
-        # Gửi tín hiệu đã nhận bấm nút cho Tele
         requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": data["callback_query"]["id"]})
 
     if not chat_id: return "ok", 200
@@ -279,8 +287,11 @@ def telegram_webhook():
     db = load_db()
     sender_id = str(chat_id)
     
+    # Lọc các thẻ HTML có thể gây lỗi trong tên người dùng
+    safe_name = user_name.replace("<", "").replace(">", "").replace("&", "")
+    
     if sender_id not in db["bot_users"]:
-        db["bot_users"][sender_id] = {"name": user_name, "balance": 0, "resets": 3, "state": "none"}
+        db["bot_users"][sender_id] = {"name": safe_name, "balance": 0, "resets": 3, "state": "none"}
         save_db(db)
     
     user = db["bot_users"][sender_id]
@@ -289,7 +300,7 @@ def telegram_webhook():
     if user["state"] == "waiting_for_reset_key":
         if payload_data == "MENU_MAIN" or msg_text.upper() == "/CANCEL":
             user["state"] = "none"; save_db(db)
-            cmd = "MENU_MAIN" # Chuyển về menu chính
+            cmd = "MENU_MAIN"
         elif msg_text:
             key_to_reset = msg_text
             if key_to_reset in db["keys"]:
@@ -298,8 +309,8 @@ def telegram_webhook():
                 user["resets"] -= 1
                 user["state"] = "none"
                 save_db(db)
-                markup = {"inline_keyboard": [[{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]]}
-                send_telegram_message(chat_id, f"✅ *Reset thành công Key:*\n`{key_to_reset}`\n\nTất cả thiết bị và IP đã được xóa sạch!", markup)
+                markup = {"inline_keyboard": [[{"text": "🔙 Quay lại Menu", "callback_data": "MENU_MAIN"}]]}
+                send_telegram_message(chat_id, f"✅ <b>Reset thành công Key:</b>\n<code>{key_to_reset}</code>\n\nTất cả thiết bị và IP đã được xóa sạch!", markup)
             else:
                 markup = {"inline_keyboard": [[{"text": "🔙 Hủy Reset", "callback_data": "MENU_MAIN"}]]}
                 send_telegram_message(chat_id, "❌ Key không tồn tại! Vui lòng kiểm tra lại hoặc bấm Hủy.", markup)
@@ -308,7 +319,7 @@ def telegram_webhook():
     cmd = payload_data if payload_data else (msg_text.upper() if msg_text else "MENU_MAIN")
     
     if cmd in ["MENU_MAIN", "/START", "HI", "CHÀO"]:
-        txt = f"👋 Chào *{user['name']}*!\n🆔 ID của bạn: `{sender_id}`\n💰 Số dư: *{user['balance']}đ*\n🔄 Reset Key còn lại: *{user['resets']}/3*\n\nVui lòng chọn dịch vụ:"
+        txt = f"👋 Chào <b>{safe_name}</b>!\n🆔 ID của bạn: <code>{sender_id}</code>\n💰 Số dư: <b>{user['balance']}đ</b>\n🔄 Reset Key còn lại: <b>{user['resets']}/3</b>\n\nVui lòng chọn dịch vụ:"
         markup = {"inline_keyboard": [
             [{"text": "🔑 Mua Key", "callback_data": "MENU_BUY"}, {"text": "🔄 Reset Key", "callback_data": "MENU_RESET"}]
         ]}
@@ -323,10 +334,10 @@ def telegram_webhook():
     
     elif cmd == "BUY_NORMAL":
         markup = {"inline_keyboard": [[{"text": "🔙 Menu Chính", "callback_data": "MENU_MAIN"}]]}
-        send_telegram_message(chat_id, "🛠 *Tính năng Mua Key Thường hiện đang bảo trì.*\n\nVui lòng quay lại sau hoặc dùng Key VIP nhé!", markup)
+        send_telegram_message(chat_id, "🛠 <b>Tính năng Mua Key Thường hiện đang bảo trì.</b>\n\nVui lòng quay lại sau hoặc dùng Key VIP nhé!", markup)
     
     elif cmd == "BUY_VIP":
-        txt = "🛒 *BẢNG GIÁ KEY VIP OLM:*\n- 1 Giờ: 7,000đ\n- 7 Ngày: 30,000đ\n- 30 Ngày: 85,000đ\n- 1 Năm: 200,000đ\n\n_Chọn gói muốn mua:_"
+        txt = "🛒 <b>BẢNG GIÁ KEY VIP OLM:</b>\n- 1 Giờ: 7,000đ\n- 7 Ngày: 30,000đ\n- 30 Ngày: 85,000đ\n- 1 Năm: 200,000đ\n\n<i>Chọn gói muốn mua:</i>"
         markup = {"inline_keyboard": [
             [{"text": "🕒 1 Giờ (7k)", "callback_data": "VIP_1H"}, {"text": "📅 7 Ngày (30k)", "callback_data": "VIP_7D"}],
             [{"text": "📆 30 Ngày (85k)", "callback_data": "VIP_30D"}, {"text": "🏆 1 Năm (200k)", "callback_data": "VIP_1Y"}],
@@ -344,27 +355,27 @@ def telegram_webhook():
                 db["keys"][nk] = {"exp": int(time.time()*1000) + duration_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm"}
                 save_db(db)
                 markup = {"inline_keyboard": [[{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]]}
-                send_telegram_message(chat_id, f"🎉 *MUA KEY THÀNH CÔNG!*\n\n🔑 Key của bạn: `{nk}`\n💰 Số dư còn lại: {user['balance']}đ\n\n_(Chạm vào Key để copy và dán vào Tool nhé!)_", markup)
+                send_telegram_message(chat_id, f"🎉 <b>MUA KEY THÀNH CÔNG!</b>\n\n🔑 Key của bạn: <code>{nk}</code>\n💰 Số dư còn lại: {user['balance']}đ\n\n<i>(Chạm vào Key để copy và dán vào Tool nhé!)</i>", markup)
             else:
-                markup = {"inline_keyboard": [[{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]]}
-                send_telegram_message(chat_id, f"❌ *Số dư không đủ!*\nGói này giá {cost}đ nhưng bạn chỉ có {user['balance']}đ.\n\nVui lòng copy ID: `{sender_id}` gửi cho Admin để nạp tiền.", markup)
+                markup = {"inline_keyboard": [[{"text": "🔙 Quay lại Menu", "callback_data": "MENU_MAIN"}]]}
+                send_telegram_message(chat_id, f"❌ <b>Số dư không đủ!</b>\nGói này giá {cost}đ nhưng bạn chỉ có {user['balance']}đ.\n\nVui lòng copy ID: <code>{sender_id}</code> gửi cho Admin để nạp tiền.", markup)
     
     elif cmd == "MENU_RESET":
         if user["resets"] <= 0:
-            markup = {"inline_keyboard": [[{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]]}
+            markup = {"inline_keyboard": [[{"text": "🔙 Quay lại Menu", "callback_data": "MENU_MAIN"}]]}
             send_telegram_message(chat_id, "❌ Bạn đã hết lượt Reset miễn phí (0/3).", markup)
         else:
             markup = {"inline_keyboard": [
                 [{"text": "Reset Key VIP", "callback_data": "RESET_ACTION"}, {"text": "Reset Key Thường", "callback_data": "RESET_ACTION"}],
-                [{"text": "🔙 Quay lại", "callback_data": "MENU_MAIN"}]
+                [{"text": "🔙 Quay lại Menu", "callback_data": "MENU_MAIN"}]
             ]}
-            send_telegram_message(chat_id, f"Bạn đang còn *{user['resets']} lượt Reset*. Bạn muốn reset loại Key nào?", markup)
+            send_telegram_message(chat_id, f"Bạn đang còn <b>{user['resets']} lượt Reset</b>. Bạn muốn reset loại Key nào?", markup)
             
     elif cmd == "RESET_ACTION":
         user["state"] = "waiting_for_reset_key"
         save_db(db)
         markup = {"inline_keyboard": [[{"text": "🔙 Hủy bỏ", "callback_data": "MENU_MAIN"}]]}
-        send_telegram_message(chat_id, "📝 Vui lòng nhắn chính xác *Key* bạn muốn Reset vào khung chat:", markup)
+        send_telegram_message(chat_id, "📝 Vui lòng nhắn chính xác <b>Key</b> bạn muốn Reset vào khung chat:", markup)
 
     return "ok", 200
 
@@ -503,23 +514,6 @@ def extend_key():
         save_db(db)
     return redirect('/')
 
-@app.route('/admin/action/<action>/<key>')
-def key_actions(action, key):
-    db = load_db()
-    if key in db["keys"]:
-        if action == 'add-dev': db["keys"][key]['maxDevices'] += 1
-        elif action == 'sub-dev' and db["keys"][key].get('maxDevices', 1) > 1: db["keys"][key]['maxDevices'] -= 1
-        elif action == 'ban': db["keys"][key]['status'] = 'banned'
-        elif action == 'unban': db["keys"][key]['status'] = 'active'
-        elif action == 'delete': del db["keys"][key]
-        elif action == 'reset-dev': 
-            db["keys"][key]['devices'] = []
-            db["keys"][key]['known_ips'] = []
-        elif action == 'toggle_vip':
-            db["keys"][key]['vip'] = not db["keys"][key].get('vip', False)
-        save_db(db)
-    return redirect('/')
-
 @app.route('/admin/add_balance', methods=['POST'])
 def add_balance():
     tid = request.form.get('tid').strip()
@@ -528,7 +522,7 @@ def add_balance():
     if tid in db["bot_users"]:
         db["bot_users"][tid]["balance"] += amount
         save_db(db)
-        send_telegram_message(tid, f"🎉 *Chúc mừng! Admin vừa cộng thêm {amount}đ vào tài khoản của bạn.*\n💰 Số dư mới: {db['bot_users'][tid]['balance']}đ", {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
+        send_telegram_message(tid, f"🎉 <b>Chúc mừng! Admin vừa cộng thêm {amount}đ vào tài khoản của bạn.</b>\n💰 Số dư mới: {db['bot_users'][tid]['balance']}đ", {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
     return redirect('/')
 
 @app.route('/admin/online')
