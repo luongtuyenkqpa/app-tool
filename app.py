@@ -30,6 +30,14 @@ DB_FILE = './database.json'
 DB_BACKUP = './database.backup.json'
 ADMIN_PASSWORD = 'admin120510'
 
+# [FIX] CẤP QUYỀN CORS ĐỂ SCRIPT TỪ OLM.VN ĐƯỢC PHÉP CHECK KEY QUA API
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
 # ========================================================
 # CẤU HÌNH BOT TELEGRAM
 # ========================================================
@@ -140,7 +148,7 @@ def _core_validate(db, key, target_olm, real_ip="0.0.0.0"):
     return True, "Success"
 
 # ====================================================================
-# TELEGRAM BOT ENGINE (ĐÃ FIX HOÀN TOÀN LỖI PHÂN LUỒNG)
+# TELEGRAM BOT ENGINE
 # ====================================================================
 def tg_send(chat_id, text, markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
@@ -176,7 +184,6 @@ def format_time(exp_ms, now_ms):
     if h > 0: return f"{h} giờ {m} phút"
     return f"{m} phút {s} giây"
 
-# VÒNG LẶP CẬP NHẬT MENU LIVE
 def live_timer_updater():
     while True:
         time.sleep(10)
@@ -267,13 +274,12 @@ def telegram_webhook():
         if msg_text:
             requests.post(f"{TELEGRAM_API_URL}/deleteMessage", json={"chat_id": sid, "message_id": msg_id})
 
-        # XÓA TRẠNG THÁI NẾU BẤM COMMAND MỚI
         if msg_text.startswith("/"):
             user["state"] = "none"
             user["live_msg_type"] = None
             user["main_menu_id"] = None 
 
-        # ================= LỆNH CHÍNH =================
+        # ================= LỆNH CHÍNH (ĐÃ FIX LỖI /ADMIN ĐƠ) =================
         if msg_text.upper() == "/START" or payload == "MENU_MAIN":
             valid_notices = [n for n in user["notices"] if n["exp"] == 'permanent' or n["exp"] > now_ms]
             user["notices"] = valid_notices
@@ -300,13 +306,24 @@ def telegram_webhook():
             
         elif msg_text.upper() == "/ADMIN":
             if user.get("is_admin"):
-                payload = "ADM_MENU" # Ép nhảy vào khối xử lý ADM_MENU bên dưới
+                adm_key = user.get("admin_key", "")
+                if adm_key in db["keys"] and db["keys"][adm_key].get("target") == "admin_bot":
+                    user["state"] = "none"
+                    user["live_msg_type"] = "admin"
+                    t_left = format_time(db["keys"][adm_key]["exp"], now_ms)
+                    markup = {"inline_keyboard": [[{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}], [{"text": "🔒 Khóa Nick OLM", "callback_data": "ADM_W_LOCK"}, {"text": "🚫 Chặn IP Máy", "callback_data": "ADM_W_BAN"}], [{"text": "📢 TB Lên Tool", "callback_data": "ADM_W_NOTE"}, {"text": "💬 TB Vào Bot", "callback_data": "ADM_BOT_NOTE"}], [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}], [{"text": "📜 Theo Dõi Radar", "callback_data": "ADM_LOGS"}], [{"text": "❌ Hủy Quyền Admin", "callback_data": "ADM_LOGOUT"}]]}
+                    txt = f"👑 <b>BẢNG ĐIỀU KHIỂN SERVER (SaaS)</b>\n\n⏳ <i>Hạn Admin còn: {t_left}</i>"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
+                    user["live_msg_id"] = user["main_menu_id"]
+                else:
+                    user["is_admin"] = False
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "⚠️ <b>Key Admin bị khóa hoặc hết hạn.</b> Đã tước quyền!")
             else:
                 user["state"] = "wait_admin_key"
                 user["live_msg_type"] = None
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🔐 <b>BẢO MẬT SERVER</b>\nVui lòng nhập <code>Key Admin</code> để mở khóa:")
-                save_db(db)
-                return "ok", 200
+            save_db(db)
+            return "ok", 200
 
         # ================= XỬ LÝ NHẬP VĂN BẢN (TRẠNG THÁI) =================
         if msg_text and user["state"] != "none":
@@ -329,6 +346,10 @@ def telegram_webhook():
                     user["state"] = "wait_loader_key" 
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>{msg}</b>\n\n🚫 Bị từ chối! Vui lòng dán lại Key:")
                 else:
+                    # [FIX LỖI CHỈ ĐỊNH OLM]: Khóa cứng OLM vào database nếu chưa có
+                    if not db["keys"][k].get("bound_olm"):
+                        db["keys"][k]["bound_olm"] = olm_target
+
                     token = hashlib.md5(f"{k}{olm_target}{time.time()}".encode()).hexdigest()
                     db["active_scripts"][token] = {"key": k, "olm": olm_target, "ip": get_real_ip()}
                     user["state"] = "none"
@@ -632,10 +653,11 @@ def telegram_webhook():
     return "ok", 200
 
 # ====================================================================
-# [API] TẠO CODE JS ĐỘNG CHO VIOLENTMONKEY (ĐÃ CHUẨN HOÁ NGỤY TRANG)
+# [API] TẠO CODE JS ĐỘNG CHO VIOLENTMONKEY (ĐÃ FIX LỖI CORS & MÀN HÌNH KHÓA)
 # ====================================================================
-@app.route('/api/script_ping/<token>')
+@app.route('/api/script_ping/<token>', methods=['GET', 'OPTIONS'])
 def script_ping(token):
+    if request.method == 'OPTIONS': return make_response("ok", 200)
     db = load_db()
     if token in db.get("active_scripts", {}):
         session = db["active_scripts"][token]
@@ -643,16 +665,18 @@ def script_ping(token):
         return "ok", 200
     return "invalid", 403
 
-@app.route('/api/check', methods=['POST'])
+@app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_api():
+    if request.method == 'OPTIONS': return make_response("ok", 200)
     data = request.json
     db = load_db()
     valid, msg = _core_validate(db, data.get('key'), data.get('olm_name'), data.get('deviceId'))
     if not valid: return jsonify({"status": "error", "message": msg})
     return jsonify({"status": "success"})
 
-@app.route('/api/get_notice')
+@app.route('/api/get_notice', methods=['GET', 'OPTIONS'])
 def get_notice():
+    if request.method == 'OPTIONS': return make_response("ok", 200)
     db = load_db()
     notice = db.get("global_notice", {})
     now = int(time.time() * 1000)
@@ -830,13 +854,15 @@ def serve_dynamic_script(token):
 
             if (!hasWelcomed) {{
                 hasWelcomed = true;
-                showToast(`🎉 <b>XÁC THỰC THÀNH CÔNG!</b><br>Tài khoản: <span style="color:#00ffcc;">${{realUser}}</span><br>Đã bật Spoofer lừa hệ thống Hack!`);
+                showToast(`🎉 <b>XÁC THỰC THÀNH CÔNG!</b><br>Tài khoản: <span style="color:#00ffcc;">${{realUser}}</span><br>Đã bật ngụy trang VIP cho Script Hack!`);
             }}
 
             fetchGlobalNotice();
             fetch(SERVER_URL + '/api/script_ping/' + TOKEN).catch(e=>{{}});
 
-        }}).catch(e => {{}});
+        }}).catch(e => {{
+            updateLockScreen(true, "🔴 KHÔNG THỂ KẾT NỐI SERVER LVT!<br>Lỗi mạng hoặc Server đang bảo trì...<br><small>" + e.message + "</small>");
+        }});
     }}
 
     // Khởi tạo ngay một màn hình đen khóa giao diện trong vài mili-giây đầu để check Server
