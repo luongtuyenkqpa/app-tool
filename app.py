@@ -372,6 +372,7 @@ def telegram_webhook():
                     db["keys"][msg_text]["known_ips"] = []
                     user["resets"] -= 1
                     user["state"] = "none"
+                    save_db(db)
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
                 else: 
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
@@ -453,7 +454,8 @@ def telegram_webhook():
                             for l in db.get("logs", []):
                                 if l["key"] in user_keys:
                                     txt += f"• {time.strftime('%H:%M', time.localtime(l['time']))} | {l['action']} | {l['ip']} | OLM: {l.get('olm_name','')}\n"
-                                    c += 1; if c >= 10: break
+                                    c += 1
+                                    if c >= 10: break
                             user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                         else:
                             user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Khách không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
@@ -465,7 +467,9 @@ def telegram_webhook():
                                 user_keys = [p["key"] for p in db["bot_users"][t_id].get("purchases", [])]
                                 c = 0
                                 for uk in user_keys:
-                                    if uk in db["keys"]: del db["keys"][uk]; c += 1
+                                    if uk in db["keys"]:
+                                        del db["keys"][uk]
+                                        c += 1
                                 db["bot_users"][t_id]["purchases"] = []
                                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã xóa sạch <b>{c}</b> Key của {k}.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                             else:
