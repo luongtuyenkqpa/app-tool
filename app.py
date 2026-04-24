@@ -190,6 +190,9 @@ def get_real_ip():
         return request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
     return request.remote_addr
 
+# ========================================================
+# [ĐÃ FIX] CHẶT CHẼ HỆ THỐNG PHÂN QUYỀN KEY & ĐỘC QUYỀN OLM
+# ========================================================
 def process_key_validation(db, key, deviceId, real_ip, target_app, expected_type, device_name="Unknown", olm_name="N/A"):
     current_time = int(time.time() * 1000)
 
@@ -209,8 +212,18 @@ def process_key_validation(db, key, deviceId, real_ip, target_app, expected_type
         return False, {"status": "error", "message": "Key không tồn tại!"}
 
     kData = db["keys"][key]
-    if kData.get('target', 'tool') != target_app and target_app not in ["admin_bot", "telegram_loader"]:
-        return False, {"status": "error", "message": "Sai hệ thống!"}
+    key_target = kData.get('target', 'tool')
+    
+    # KIỂM TRA PHÂN QUYỀN BẢO MẬT
+    if target_app == "telegram_loader":
+        if key_target not in ["olm", "tool"]:
+            return False, {"status": "error", "message": "Key này không dùng được cho Loader!"}
+    elif target_app == "admin_bot":
+        if key_target != "admin_bot":
+            return False, {"status": "error", "message": "Phải là Key Admin mới được vào!"}
+    else:
+        if key_target != target_app:
+            return False, {"status": "error", "message": "Sai hệ thống!"}
 
     if kData.get('status') == 'banned':
         return False, {"status": "error", "message": "Key bị khóa!"}
@@ -225,7 +238,7 @@ def process_key_validation(db, key, deviceId, real_ip, target_app, expected_type
     if target_app in ["olm", "telegram_loader"] and olm_name != "N/A":
         bound = kData.get("bound_olm", "")
         if bound and bound.lower() != olm_name.lower():
-            return False, {"status": "error", "message": f"Cảnh báo: Key này ĐỘC QUYỀN chỉ hoạt động trên tài khoản OLM: {bound}"}
+            return False, {"status": "error", "message": f"Key này ĐỘC QUYỀN chỉ hoạt động trên tài khoản: {bound}"}
 
     if target_app != "telegram_loader" and deviceId not in kData.get('devices', []):
         if len(kData.get('devices', [])) >= kData.get('maxDevices', 1):
@@ -243,12 +256,16 @@ def process_key_validation(db, key, deviceId, real_ip, target_app, expected_type
         add_log(db, "THÀNH CÔNG", key, real_ip, f"{device_name} ({deviceId})", olm_name)
     
     save_db(db)
+    
+    # --- THÔNG BÁO HỆ THỐNG GỬI LÊN WEB ---
     notice_msg = ""
+    notice_exp = "permanent"
     notice = db.get("global_notice", {})
     if notice.get("exp") == "permanent" or current_time < notice.get("exp", 0):
         notice_msg = notice.get("msg", "")
+        notice_exp = notice.get("exp", "permanent")
         
-    return True, {"status": "success", "exp": kData.get('exp'), "vip": kData.get('vip'), "notice": notice_msg}
+    return True, {"status": "success", "exp": kData.get('exp'), "vip": kData.get('vip'), "notice": notice_msg, "notice_exp": notice_exp}
 
 # ====================================================================
 # TELEGRAM BOT ENGINE
@@ -383,8 +400,14 @@ def telegram_webhook():
             user["live_msg_type"] = None
             
             txt = "🎉 <b>Chào mừng bạn đến với autokey . admin @luongtuyen20</b>\n➖➖➖➖➖➖➖➖\n\n"
+            
+            # [ĐÃ FIX] HIỂN THỊ THÔNG BÁO HỆ THỐNG TRÊN BOT
+            sys_notice = db.get("global_notice", {})
+            if sys_notice.get("msg") and (sys_notice.get("exp") == "permanent" or sys_notice.get("exp", 0) > now_ms):
+                txt += f"📢 <b>THÔNG BÁO HỆ THỐNG:</b>\n🔸 {sys_notice['msg']}\n\n"
+                
             if active_notices:
-                txt += "🔔 <b>THÔNG BÁO:</b>\n" + "\n".join([f"🔸 {m}" for m in active_notices]) + "\n\n"
+                txt += "🔔 <b>THÔNG BÁO CÁ NHÂN:</b>\n" + "\n".join([f"🔸 {m}" for m in active_notices]) + "\n\n"
             
             txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN TÀI KHOẢN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Lượt Reset Key: <b>{user['resets']}/3</b>\n\n👇 <i>Vui lòng chọn dịch vụ:</i>"
             markup = {"inline_keyboard": [
@@ -646,9 +669,9 @@ def telegram_webhook():
                     edit_telegram_message(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
                 return "ok", 200
 
-            # --- NHẬP KEY ADMIN ---
+            # --- [ĐÃ FIX] NHẬP KEY ADMIN ---
             if user["state"] == "wait_admin_key":
-                success, _ = process_key_validation(db, msg_text, sid, "TELEGRAM", "admin_bot", "any")
+                success, res_data = process_key_validation(db, msg_text, sid, "TELEGRAM", "admin_bot", "any")
                 if success:
                     user["is_admin"] = True
                     user["admin_key"] = msg_text
@@ -656,7 +679,8 @@ def telegram_webhook():
                     save_db(db)
                     edit_telegram_message(sid, user["main_menu_id"], "✅ <b>XÁC THỰC THÀNH CÔNG!</b> Bấm nút dưới để vào Admin.", {"inline_keyboard": [[{"text": "👑 Vào Bảng Admin", "callback_data": "ADM_MENU"}]]})
                 else: 
-                    edit_telegram_message(sid, user["main_menu_id"], "❌ Key Admin sai hoặc đã hết hạn!", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
+                    msg_err = res_data.get("message", "Phải là Key Admin mới được vào!")
+                    edit_telegram_message(sid, user["main_menu_id"], f"❌ <b>TỪ CHỐI TRUY CẬP:</b>\n{msg_err}", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
                 return "ok", 200
 
             # --- ADMIN COMMANDS INPUT ---
