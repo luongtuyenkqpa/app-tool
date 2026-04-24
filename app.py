@@ -82,7 +82,6 @@ threading.Thread(target=session_monitor, daemon=True).start()
 threading.Thread(target=keep_alive_and_backup, daemon=True).start()
 
 # --- LUỒNG LIVE TIMER (TỰ ĐỘNG ĐẾM NGƯỢC TRÊN TELEGRAM) ---
-# Chạy ngầm 10 giây 1 lần để update các tin nhắn có chứa Live Timer
 def live_timer_updater():
     while True:
         time.sleep(10)
@@ -141,9 +140,9 @@ def load_db():
                 u.setdefault("purchases", []); u.setdefault("notices", []); u.setdefault("loader_active", False)
                 u.setdefault("loader_key", ""); u.setdefault("loader_pin", "")
                 u.setdefault("live_msg_id", None); u.setdefault("live_msg_type", None)
-                u.setdefault("main_menu_id", None) # Lưu tin nhắn Menu chính để sửa
+                u.setdefault("main_menu_id", None)
             for k in data["keys"]:
-                data["keys"][k].setdefault("bound_olm", "") # TÍNH NĂNG MỚI: Khóa Account
+                data["keys"][k].setdefault("bound_olm", "") 
             return data
         except: return {"keys": {}, "logs": [], "banned_ips": {}, "logout_pins": [], "global_notice": {}, "locked_olm": {}, "ip_strikes": {}, "bot_users": {}}
 
@@ -158,7 +157,6 @@ def get_real_ip():
     if request.headers.getlist("X-Forwarded-For"): return request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
     return request.remote_addr
 
-# KIỂM TRA ĐIỀU KIỆN KEY
 def process_key_validation(db, key, deviceId, real_ip, target_app, expected_type, device_name="Unknown", olm_name="N/A"):
     current_time = int(time.time() * 1000)
 
@@ -280,7 +278,6 @@ def telegram_webhook():
         
         user = db["bot_users"][sid]
 
-        # AUTO-CLEAN (XÓA TIN NHẮN INPUT CỦA USER NGAY LẬP TỨC ĐỂ DỌN RÁC)
         if msg_text:
             delete_telegram_message(sid, message_id)
 
@@ -289,7 +286,6 @@ def telegram_webhook():
                 if uinfo.get("is_admin"):
                     send_telegram_message(uid, f"🚨 <b>CÓ KHÁCH HÀNG MỚI!</b>\n👤 Tên: {safe_name} {f_uname}\n🆔 ID: <code>{sid}</code>\nVừa sử dụng Bot lần đầu tiên.")
 
-        # Lệnh Menu -> Đặt lại mọi trạng thái
         if msg_text.startswith("/"):
             user["state"] = "none"
             user["live_msg_type"] = None
@@ -373,7 +369,7 @@ def telegram_webhook():
 
         # ======= XỬ LÝ PAYLOADS (NÚT BẤM) =======
         if payload and user["main_menu_id"]:
-            user["live_msg_type"] = None # Tắt đếm ngược khi vào menu con
+            user["live_msg_type"] = None 
             if payload == "BUY":
                 markup = {"inline_keyboard": [[{"text": "👑 Mua Key VIP", "callback_data": "BUY_VIP"}, {"text": "👤 Mua Key Thường", "callback_data": "BUY_NOR"}],[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]}
                 edit_telegram_message(sid, user["main_menu_id"], "💳 <b>CHỌN LOẠI KEY MUỐN MUA:</b>", markup)
@@ -432,7 +428,6 @@ def telegram_webhook():
                     for l in db.get("logs", [])[:10]: txt += f"• {time.strftime('%H:%M', time.localtime(l['time']))} | <b>{l['action']}</b>\n  └ Key: <code>{l['key']}</code> | User: {l.get('olm_name','')}\n"
                     edit_telegram_message(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                 
-                # Nút Menu Quản lý 1 Key
                 elif payload.startswith("K_RST_"):
                     k = payload.replace("K_RST_", "")
                     if k in db["keys"]:
@@ -465,9 +460,8 @@ def telegram_webhook():
             save_db(db)
             return "ok", 200
 
-        # ======= XỬ LÝ NHẬP VĂN BẢN (TEXT INPUT AUTO CLEAN) =======
+        # ======= XỬ LÝ NHẬP VĂN BẢN =======
         if msg_text and user["main_menu_id"]:
-            # --- LOADER KEY ---
             if user["state"] == "wait_loader_pin":
                 user["temp_pin"] = msg_text; user["state"] = "wait_loader_key"
                 edit_telegram_message(sid, user["main_menu_id"], "🔑 <b>NHẬP KEY KÍCH HOẠT</b>\n\nDán Key VIP/Thường của bạn vào đây:")
@@ -491,7 +485,6 @@ def telegram_webhook():
                     edit_telegram_message(sid, user["main_menu_id"], f"❌ <b>LỖI KẾT NỐI!</b>\n{msg_err}", {"inline_keyboard": [[{"text": "🔗 Thử Lại", "callback_data": "LOADER_MENU"}]]})
                 return "ok", 200
 
-            # --- MUA KEY ---
             if user["state"].startswith("wait_qty_V_"):
                 pkg = user["state"].replace("wait_qty_", "")
                 if msg_text.isdigit() and int(msg_text) > 0:
@@ -516,7 +509,6 @@ def telegram_webhook():
                         edit_telegram_message(sid, user["main_menu_id"], f"❌ <b>SỐ DƯ KHÔNG ĐỦ!</b>\nCần {total_cost}đ. Bạn có {user['balance']}đ.", {"inline_keyboard": [[{"text": "🔙 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
                 return "ok", 200
 
-            # --- RESET KEY ---
             if user["state"] == "wait_reset_key":
                 if msg_text in db["keys"]:
                     db["keys"][msg_text]["devices"] = []; db["keys"][msg_text]["known_ips"] = []
@@ -526,7 +518,6 @@ def telegram_webhook():
                     edit_telegram_message(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
                 return "ok", 200
 
-            # --- NHẬP KEY ADMIN ---
             if user["state"] == "wait_admin_key":
                 success, _ = process_key_validation(db, msg_text, sid, "TELEGRAM", "admin_bot", "any")
                 if success:
@@ -536,7 +527,6 @@ def telegram_webhook():
                     edit_telegram_message(sid, user["main_menu_id"], "❌ Key Admin sai hoặc đã hết hạn!", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
                 return "ok", 200
 
-            # --- ADMIN COMMANDS INPUT ---
             if user.get("is_admin") and user["state"].startswith("adm_"):
                 try:
                     parts = msg_text.split()
@@ -548,7 +538,6 @@ def telegram_webhook():
                         edit_telegram_message(sid, user["main_menu_id"], f"✅ Đã tạo Key mới:\n<code>{nk}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     
                     elif user["state"] == "adm_bal":
-                        # Chỉnh sửa: Thay vì +k, bạn có thể nhập 50k, server sẽ tự hiểu là 50000
                         t_user, amt_str, rst = parts[0], parts[1], int(parts[2])
                         amt = int(amt_str.lower().replace("k", "000")) 
                         t_id = get_user_id_by_username(db, t_user) if t_user.startswith('@') else t_user
@@ -604,7 +593,8 @@ def telegram_webhook():
                             for l in db.get("logs", []):
                                 if l["key"] in user_keys:
                                     txt += f"• {time.strftime('%H:%M', time.localtime(l['time']))} | {l['action']} | {l['ip']} | OLM: {l.get('olm_name','')}\n"
-                                    c+=1; if c>=10: break
+                                    c += 1
+                                    if c >= 10: break
                             edit_telegram_message(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                         else: edit_telegram_message(sid, user["main_menu_id"], "❌ Khách không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
 
