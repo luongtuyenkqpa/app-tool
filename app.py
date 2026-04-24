@@ -50,7 +50,6 @@ def parse_duration(duration_str):
 
 multipliers_web = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
 
-# --- THREAD GIÁM SÁT & AUTO RECOVER ---
 def session_monitor():
     while True:
         time.sleep(5)
@@ -65,7 +64,6 @@ def session_monitor():
 def keep_alive_and_backup():
     try: requests.post(f"{TELEGRAM_API_URL}/setMyCommands", json={"commands": [{"command": "start", "description": "🏠 Menu Khách Hàng"}, {"command": "loaderkey", "description": "🔗 Kích Hoạt Tool Tàng Hình"}, {"command": "admin", "description": "👑 Bảng Điều Khiển Server"}]})
     except: pass
-
     while True:
         time.sleep(180)
         try: requests.get(WEB_URL)
@@ -74,7 +72,6 @@ def keep_alive_and_backup():
 threading.Thread(target=session_monitor, daemon=True).start()
 threading.Thread(target=keep_alive_and_backup, daemon=True).start()
 
-# --- DATABASE HANDLER ---
 def load_db():
     if not os.path.exists(DB_FILE) and os.path.exists(DB_BACKUP):
         shutil.copy2(DB_BACKUP, DB_FILE)
@@ -177,7 +174,6 @@ def format_time(exp_ms, now_ms):
     if h > 0: return f"{h} giờ {m} phút"
     return f"{m} phút {s} giây"
 
-# LUỒNG LIVE TIMER
 def live_timer_updater():
     while True:
         time.sleep(10)
@@ -217,9 +213,6 @@ def live_timer_updater():
         except: pass
 threading.Thread(target=live_timer_updater, daemon=True).start()
 
-# ========================================================
-# WEBHOOK & BOT LOGIC
-# ========================================================
 @app.route('/webhook', methods=['POST', 'GET'])
 def telegram_webhook():
     if request.method == 'GET': return "OK", 200
@@ -688,14 +681,13 @@ def telegram_webhook():
     return "ok", 200
 
 # ====================================================================
-# [API GIAO TIẾP VỚI TOOL TRÊN KIWI] CẤP SCRIPT NGẦM
+# [ĐỈNH CAO CÔNG NGHỆ] API CẤP SCRIPT TỪ URL CHO VIOLENTMONKEY
 # ====================================================================
 @app.route('/api/script_ping/<token>')
 def script_ping(token):
     db = load_db()
     if token in db.get("active_scripts", {}):
         session = db["active_scripts"][token]
-        # Báo danh để Web Admin biết máy này đang chạy
         active_sessions[token] = {"ip": session["ip"], "olm_name": session["olm"], "key": session["key"], "last_seen": time.time()}
         return "ok", 200
     return "invalid", 403
@@ -709,12 +701,13 @@ def get_notice():
         return jsonify({"msg": notice.get("msg", "")})
     return jsonify({"msg": ""})
 
+# ĐIỂM CHỐT: TẠO FULL SCRIPT ĐỂ VIOLENTMONKEY NHẬN DẠNG ĐƯỢC
 @app.route('/api/script/<token>.user.js')
 def serve_dynamic_script(token):
     db = load_db()
     
     if token not in db.get("active_scripts", {}):
-        return make_response("alert('⚠️ URL Đầu vào này đã bị Hủy hoặc Không hợp lệ! Vui lòng vào Bot lấy URL mới.');", 200, {'Content-Type': 'application/javascript'})
+        return make_response("// ==UserScript==\n// @name ERROR SCRIPT\n// ==/UserScript==\nalert('⚠️ URL Đầu vào này đã bị Hủy hoặc Không hợp lệ! Vui lòng vào Bot Telegram lấy URL mới.');", 200, {'Content-Type': 'application/javascript'})
         
     session = db["active_scripts"][token]
     key = session["key"]
@@ -724,10 +717,23 @@ def serve_dynamic_script(token):
     if not valid:
         del db["active_scripts"][token] 
         save_db(db)
-        return make_response(f"alert('⚠️ LỖI BẢO MẬT HỆ THỐNG:\\n{msg}');", 200, {'Content-Type': 'application/javascript'})
+        return make_response(f"// ==UserScript==\n// @name ERROR SCRIPT\n// ==/UserScript==\nalert('⚠️ LỖI BẢO MẬT HỆ THỐNG:\\n{msg}');", 200, {'Content-Type': 'application/javascript'})
 
-    js_code = f"""
-    console.log('[LVT] URL HỆ THỐNG ĐÃ KẾT NỐI THÀNH CÔNG!');
+    js_code = f"""// ==UserScript==
+// @name         LVT AUTO BYPASS OLM (VIP)
+// @namespace    http://tampermonkey.net/
+// @version      71.0
+// @description  Script tự động cấp phép từ Server LVT. Tài khoản: {target_olm}
+// @match        *://olm.vn/*
+// @match        *://*.olm.vn/*
+// @all_frames   true
+// @run-at       document-start
+// @grant        unsafeWindow
+// ==/UserScript==
+
+(function() {{
+    'use strict';
+    console.log('[LVT] SCRIPT TỪ URL ĐÃ CÀI ĐẶT THÀNH CÔNG!');
     
     const VIP_USER = "hp_luongvantuyen";
     const VIP_NAME = "Lương Văn Tuyến";
@@ -781,17 +787,22 @@ def serve_dynamic_script(token):
         setTimeout(() => toast.remove(), 5000);
     }});
 
-    // GỌI CODE MENU HACK CỦA NGƯỜI DÙNG TỪ FILE GỐC TRÊN VIOLENTMONKEY
-    if (typeof window.initLvtMenuHack === 'function') {{
-        if (document.readyState === 'complete' || document.readyState === 'interactive') {{
-            setTimeout(window.initLvtMenuHack, 1000);
-        }} else {{
-            window.addEventListener('DOMContentLoaded', () => setTimeout(window.initLvtMenuHack, 1000));
-        }}
-    }} else {{
-        console.log("Lỗi: Không tìm thấy hàm initLvtMenuHack() trong file Violentmonkey gốc!");
+    function initMainHack() {{
+        console.log("Khởi động Hack...");
+        // ⬇️⬇️⬇️ DÁN TOÀN BỘ CODE GIAO DIỆN HACK CỦA BẠN VÀO DƯỚI DÒNG NÀY ⬇️⬇️⬇️
+        
+        
+        
+        // ⬆️⬆️⬆️ KẾT THÚC CODE HACK CỦA BẠN TẠI ĐÂY ⬆️⬆️⬆️
     }}
-    """
+    
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {{
+        setTimeout(initMainHack, 1000);
+    }} else {{
+        window.addEventListener('DOMContentLoaded', () => setTimeout(initMainHack, 1000));
+    }}
+}})();
+"""
     resp = make_response(js_code)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
@@ -799,7 +810,6 @@ def serve_dynamic_script(token):
 
 # ========================================================
 # [BẢN FULL 100%] GIAO DIỆN WEB ADMIN
-# Giữ nguyên 100% các Route và Giao diện HTML của bạn
 # ========================================================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -952,7 +962,7 @@ def online_ips():
     html_rows = ""
     for token, info in active_sessions.items():
         onl_time = time.strftime('%H:%M:%S', time.localtime(info["last_seen"]))
-        html_rows += f"<tr><td>{info['ip']}</td><td class='text-warning'>{info['olm_name']}</td><td class='text-info'>{info['key']}</td><td>Auto Script</td><td>{onl_time}</td><td><a href='/admin/action/ban/{info['key']}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
+        html_rows += f"<tr><td>{info['ip']}</td><td class='text-warning'>{info['olm_name']}</td><td class='text-info'>{info['key']}</td><td>URL Cài Đặt (Script Ngầm)</td><td>{onl_time}</td><td><a href='/admin/action/ban/{info['key']}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
     return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Giám Sát Online - LVT</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>body{{background:#0a0a12;color:white;}}</style></head><body class="p-4"><div class="container"><div class="d-flex justify-content-between mb-4"><h2>📡 RADAR GIÁM SÁT OLM ONLINE</h2><a href="/" class="btn btn-secondary">Quay lại Dashboard</a></div><div class="card bg-dark p-3"><table class="table table-dark table-hover"><thead><tr><th>IP Máy</th><th>Tên OLM</th><th>Key Đang Dùng</th><th>Loại Kết Nối</th><th>Tín Hiệu Cuối</th><th>Thao Tác</th></tr></thead><tbody>{html_rows if html_rows else "<tr><td colspan='6' class='text-center text-muted'>Hiện không có ai đang làm OLM.</td></tr>"}</tbody></table></div></div><script>setInterval(() => location.reload(), 10000);</script></body></html>'''
 
 @app.route('/')
