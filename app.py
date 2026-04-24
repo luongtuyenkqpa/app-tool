@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify, redirect, make_response
 
 # ========================================================
 # [HỆ THỐNG ANTI-CRACK & BẢO VỆ DỮ LIỆU ĐA TẦNG]
-# Mã hóa ngầm, chống thay đổi code, lưu data bất tử
 # ========================================================
 try:
     with open(__file__, 'rb') as f:
@@ -14,14 +13,12 @@ except:
 def __hidden_bot_guardian__():
     while True:
         time.sleep(5)
-        # 1. Anti-Tamper: Bắt lỗi sửa code trái phép
         try:
             with open(__file__, 'rb') as f:
                 if hashlib.md5(f.read()).hexdigest() != __original_hash__ and __original_hash__ is not None:
-                    os._exit(1) # Sập hệ thống ngay lập tức nếu code bị sửa
+                    os._exit(1) 
         except: pass
         
-        # 2. Data Persistence: Ép lưu dữ liệu liên tục để Render không làm mất
         if os.path.exists('./database.json'):
             try: shutil.copy2('./database.json', './database.backup.json')
             except: pass
@@ -122,25 +119,23 @@ def _core_validate(db, key, target_olm, real_ip="0.0.0.0"):
     now = int(time.time() * 1000)
     
     if real_ip in db["banned_ips"]:
-        if db["banned_ips"][real_ip] == 'permanent' or now < db["banned_ips"][real_ip]:
-            return False, "❌ IP của bạn đã bị khóa!"
+        if db["banned_ips"][real_ip] == 'permanent' or now < db["banned_ips"][real_ip]: return False, "IP của bạn đã bị khóa!"
         else: del db["banned_ips"][real_ip]
 
     if target_olm != "N/A" and target_olm in db["locked_olm"]:
-        if db["locked_olm"][target_olm] == 'permanent' or now < db["locked_olm"][target_olm]:
-            return False, f"❌ Tài khoản OLM '{target_olm}' đang bị khóa hệ thống!"
+        if db["locked_olm"][target_olm] == 'permanent' or now < db["locked_olm"][target_olm]: return False, f"Tài khoản OLM '{target_olm}' đang bị khóa!"
         else: del db["locked_olm"][target_olm]
 
-    if key not in db["keys"]: return False, "❌ Key không tồn tại!"
+    if key not in db["keys"]: return False, "Key không tồn tại!"
     kd = db["keys"][key]
     
-    if kd.get('status') == 'banned': return False, "❌ Key đã bị Admin khóa!"
+    if kd.get('status') == 'banned': return False, "Key đã bị Admin khóa!"
     if kd.get('exp') == 'pending': kd['exp'] = now + kd.get('durationMs', 0)
-    if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): return False, "❌ Key đã hết hạn!"
+    if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): return False, "Key đã hết hạn!"
     
     bound = kd.get("bound_olm", "")
     if bound and bound.lower() != target_olm.lower(): 
-        return False, f"❌ Key này ĐỘC QUYỀN chỉ hoạt động trên tài khoản: {bound}"
+        return False, f"Key ĐỘC QUYỀN chỉ chạy trên: {bound}"
         
     return True, "Success"
 
@@ -192,7 +187,7 @@ def live_timer_updater():
                         
                         if token in db["active_scripts"] and k in db["keys"]:
                             t_left = format_time(db["keys"][k]["exp"], now_ms)
-                            txt = f"🟢 <b>ĐANG CHẠY SCRIPT NGẦM</b>\n➖➖➖➖➖➖➖➖➖➖\n🔑 Key: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_name}</b>\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái: Đang hoạt động trên OLM"
+                            txt = f"🟢 <b>ĐANG CHẠY SCRIPT NGẦM</b>\n➖➖➖➖➖➖➖➖➖➖\n🔑 Key: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_name}</b>\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái: Cắm URL trên OLM"
                             markup = {"inline_keyboard": [[{"text": "❌ Hủy URL Script", "callback_data": "LOADER_DISCONNECT"}]]}
                             tg_edit(uid, msg_id, txt, markup)
                     
@@ -256,6 +251,7 @@ def telegram_webhook():
         if msg_text.startswith("/"):
             user["state"] = "none"
             user["live_msg_type"] = None
+            user["main_menu_id"] = None
 
         if msg_text.upper() == "/START" or payload == "MENU_MAIN":
             active_notices = []
@@ -276,7 +272,7 @@ def telegram_webhook():
             txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Reset Key: <b>{user['resets']}/3</b>\n\n👇 Chọn dịch vụ:"
             markup = {"inline_keyboard": [
                 [{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}],
-                [{"text": "🔗 Khởi Tạo Link URL Script", "callback_data": "LOADER_MENU"}]
+                [{"text": "🔗 Cấp URL Script Ngầm", "callback_data": "LOADER_MENU"}]
             ]}
             if user.get("main_menu_id"): tg_edit(sid, user["main_menu_id"], txt, markup)
             else: user["main_menu_id"] = tg_send(sid, txt, markup)
@@ -339,6 +335,7 @@ def telegram_webhook():
             save_db(db)
             return "ok", 200
 
+        # ======= XỬ LÝ PAYLOADS (NÚT BẤM) =======
         if payload and user["main_menu_id"]:
             user["live_msg_type"] = None 
             if payload == "BUY":
@@ -437,11 +434,11 @@ def telegram_webhook():
         # ======= XỬ LÝ NHẬP VĂN BẢN =======
         if msg_text and user["main_menu_id"]:
             
-            # --- LUỒNG LOADER URL MỚI ---
+            # --- TẠO SCRIPT NGẦM ---
             if user["state"] == "wait_loader_key":
                 k = msg_text
                 valid, msg = _core_validate(db, k, "N/A", get_real_ip())
-                if "Key này ĐỘC QUYỀN" in msg or valid: 
+                if "Key ĐỘC QUYỀN" in msg or valid: 
                     user["temp_key"] = k
                     user["state"] = "wait_loader_olm"
                     tg_edit(sid, user["main_menu_id"], f"✅ Key Hợp Lệ!\n\n👤 Nhập <b>Tài khoản OLM</b> bạn muốn sử dụng (Ví dụ: <code>hp_luongvantuyen</code>):")
@@ -457,7 +454,7 @@ def telegram_webhook():
                 valid, msg = _core_validate(db, k, olm_target, get_real_ip())
                 if not valid:
                     user["state"] = "wait_loader_key" 
-                    tg_edit(sid, user["main_menu_id"], f"❌ <b>LỖI: {msg}</b>\n\n🚫 Bị từ chối! Vui lòng dán lại Key:")
+                    tg_edit(sid, user["main_menu_id"], f"❌ <b>{msg}</b>\n\n🚫 Bị từ chối! Vui lòng dán lại Key:")
                 else:
                     token = hashlib.md5(f"{k}{olm_target}{time.time()}".encode()).hexdigest()
                     db["active_scripts"][token] = {"key": k, "olm": olm_target, "ip": get_real_ip()}
@@ -471,7 +468,7 @@ def telegram_webhook():
                     
                     url_dau_vao = f"{WEB_URL}/api/script/{token}.user.js"
                     
-                    txt = f"🎉 <b>THIẾT LẬP THÀNH CÔNG!</b>\n\n👉 Bạn hãy copy dòng URL đầu vào dưới đây và dán vào tính năng <code>@require</code> của Violentmonkey:\n\n<code>{url_dau_vao}</code>\n\n<i>(Script sẽ tự động chạy ngầm trên OLM và lừa hệ thống!)</i>"
+                    txt = f"🎉 <b>THIẾT LẬP THÀNH CÔNG!</b>\n\n👉 Hãy copy URL dưới đây, dán vào <code>Cài đặt từ URL</code> của Violentmonkey:\n\n<code>{url_dau_vao}</code>\n\n<i>(Code sẽ chạy tàng hình khi đúng tài khoản!)</i>"
                     tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "❌ Hủy Link", "callback_data": "LOADER_DISCONNECT"}]]})
                     add_log(db, "TẠO URL SCRIPT", k, "Telegram", "URL Loader", olm_target)
                 save_db(db)
@@ -681,7 +678,7 @@ def telegram_webhook():
     return "ok", 200
 
 # ====================================================================
-# [ĐỈNH CAO CÔNG NGHỆ] API CẤP SCRIPT TỪ URL CHO VIOLENTMONKEY
+# [API] TẠO CODE JS ĐỘNG CHO VIOLENTMONKEY
 # ====================================================================
 @app.route('/api/script_ping/<token>')
 def script_ping(token):
@@ -692,6 +689,14 @@ def script_ping(token):
         return "ok", 200
     return "invalid", 403
 
+@app.route('/api/check', methods=['POST'])
+def check_api():
+    data = request.json
+    db = load_db()
+    valid, msg = _core_validate(db, data.get('key'), data.get('olm_name'), data.get('deviceId'))
+    if not valid: return jsonify({"status": "error", "message": msg})
+    return jsonify({"status": "success"})
+
 @app.route('/api/get_notice')
 def get_notice():
     db = load_db()
@@ -701,13 +706,13 @@ def get_notice():
         return jsonify({"msg": notice.get("msg", "")})
     return jsonify({"msg": ""})
 
-# ĐIỂM CHỐT: TẠO FULL SCRIPT ĐỂ VIOLENTMONKEY NHẬN DẠNG ĐƯỢC
+# ĐIỂM CHỐT: TẠO LOADER XÁC THỰC & SPOOFER ĐỂ ĐÁNH LỪA OLM MODE ĐỘC LẬP
 @app.route('/api/script/<token>.user.js')
 def serve_dynamic_script(token):
     db = load_db()
     
     if token not in db.get("active_scripts", {}):
-        return make_response("// ==UserScript==\n// @name ERROR SCRIPT\n// ==/UserScript==\nalert('⚠️ URL Đầu vào này đã bị Hủy hoặc Không hợp lệ! Vui lòng vào Bot Telegram lấy URL mới.');", 200, {'Content-Type': 'application/javascript'})
+        return make_response("// ==UserScript==\n// @name ERROR LOADER\n// ==/UserScript==\nconsole.log('⚠️ URL Đầu vào này đã bị Hủy hoặc Không hợp lệ! Vui lòng vào Bot Telegram lấy URL mới.');", 200, {'Content-Type': 'application/javascript'})
         
     session = db["active_scripts"][token]
     key = session["key"]
@@ -717,13 +722,13 @@ def serve_dynamic_script(token):
     if not valid:
         del db["active_scripts"][token] 
         save_db(db)
-        return make_response(f"// ==UserScript==\n// @name ERROR SCRIPT\n// ==/UserScript==\nalert('⚠️ LỖI BẢO MẬT HỆ THỐNG:\\n{msg}');", 200, {'Content-Type': 'application/javascript'})
+        return make_response(f"// ==UserScript==\n// @name ERROR LOADER\n// ==/UserScript==\nconsole.log('⚠️ LỖI BẢO MẬT LOADER:\\n{msg}');", 200, {'Content-Type': 'application/javascript'})
 
     js_code = f"""// ==UserScript==
-// @name         LVT AUTO BYPASS OLM (VIP)
+// @name         LVT KEY LOADER (Spoofer)
 // @namespace    http://tampermonkey.net/
-// @version      71.0
-// @description  Script tự động cấp phép từ Server LVT. Tài khoản: {target_olm}
+// @version      8.0
+// @description  Xác thực Key server và lừa Script OLM Mode độc lập bằng tài khoản VIP.
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
 // @all_frames   true
@@ -733,37 +738,82 @@ def serve_dynamic_script(token):
 
 (function() {{
     'use strict';
-    console.log('[LVT] SCRIPT TỪ URL ĐÃ CÀI ĐẶT THÀNH CÔNG!');
-    
-    const VIP_USER = "hp_luongvantuyen";
-    const VIP_NAME = "Lương Văn Tuyến";
-    const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    
-    // PING SERVER LIÊN TỤC ĐỂ BÁO ONLINE LÊN WEB ADMIN
-    setInterval(() => {{ fetch('{WEB_URL}/api/script_ping/{token}').catch(e=>{{}}); }}, 5000);
+    console.log('[LVT LOADER] Đang khởi động hệ thống tàng hình...');
 
-    // GHI ĐÈ LỪA DỮ LIỆU
-    ['userName', 'userId', 'username', 'user_name', 'account'].forEach(prop => {{ Object.defineProperty(uw, prop, {{ get: function() {{ return VIP_USER; }}, configurable: true }}); }});
-    ['fullname', 'name', 'fullName'].forEach(prop => {{ Object.defineProperty(uw, prop, {{ get: function() {{ return VIP_NAME; }}, configurable: true }}); }});
+    const SERVER_URL = "{WEB_URL}";
+    const TOKEN = "{token}";
+    const KEY = "{key}";
+    const TARGET_OLM = "{target_olm}";
 
-    try {{
-        const origParse = uw.JSON.parse;
-        uw.JSON.parse = function(text, reviver) {{
-            let res = origParse.apply(this, arguments);
-            try {{
-                if (res && typeof res === 'object') {{
-                    ['username', 'userName', 'userId'].forEach(k => {{ if (res[k]) res[k] = VIP_USER; }});
-                    ['fullname', 'name', 'fullName'].forEach(k => {{ if (res[k]) res[k] = VIP_NAME; }});
-                    if (res.data && typeof res.data === 'object') {{ ['username', 'userName', 'userId'].forEach(k => {{ if (res.data[k]) res.data[k] = VIP_USER; }}); }}
-                }}
-            }} catch(e) {{}}
-            return res;
-        }};
-    }} catch(e) {{}}
+    let deviceId = localStorage.getItem('lvt_olm_hwid') || ('OLM-' + Math.random().toString(36).substring(2, 10).toUpperCase());
+    localStorage.setItem('lvt_olm_hwid', deviceId);
 
-    // LOA THÔNG BÁO TOÀN CẦU
+    function getRealUser() {{
+        let name = "N/A";
+        try {{
+            let m = document.cookie.match(/(?:username|userId)=([^;]+)/i);
+            if (m && m[1]) name = decodeURIComponent(m[1]);
+        }} catch(e) {{}}
+        return name;
+    }}
+
+    function showToast(msg, isSuccess) {{
+        if(!document.body) return;
+        let t = document.createElement('div');
+        let color = isSuccess ? '#00ffcc' : '#ff3366';
+        let bg = isSuccess ? 'rgba(0, 50, 0, 0.95)' : 'rgba(50, 0, 0, 0.95)';
+        t.style.cssText = `position:fixed; bottom: 30px; right: 20px; background: ${{bg}}; border-left: 5px solid ${{color}}; color: white; padding: 15px 20px; border-radius: 5px; z-index: 2147483647; font-family: sans-serif; pointer-events: none; box-shadow: 0 4px 10px rgba(0,0,0,0.5);`;
+        t.innerHTML = msg;
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), isSuccess ? 5000 : 8000);
+    }}
+
+    // [TÍNH NĂNG 1] LỪA DỐI BỘ NHẬN DIỆN CỦA OLM MODE ĐỘC LẬP
+    function activateSpoofer() {{
+        const VIP_USER = "hp_luongvantuyen";
+        const VIP_NAME = "Lương Văn Tuyến";
+        const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+        // Ép các thuộc tính nhận diện của web/script khác về VIP
+        ['userName', 'userId', 'username', 'user_name', 'account'].forEach(prop => {{
+            try {{ Object.defineProperty(uw, prop, {{ get: function() {{ return VIP_USER; }}, set: function() {{}}, configurable: true }}); }} catch(e){{}}
+        }});
+        ['fullname', 'name', 'fullName'].forEach(prop => {{
+            try {{ Object.defineProperty(uw, prop, {{ get: function() {{ return VIP_NAME; }}, set: function() {{}}, configurable: true }}); }} catch(e){{}}
+        }});
+
+        // Ép dữ liệu từ JSON parse (cách OLM thường trả data về cho Client)
+        try {{
+            const origParse = uw.JSON.parse;
+            uw.JSON.parse = function(text, reviver) {{
+                let res = origParse.apply(this, arguments);
+                try {{
+                    if (res && typeof res === 'object') {{
+                        ['username', 'userName', 'userId'].forEach(k => {{ if (res[k]) res[k] = VIP_USER; }});
+                        ['fullname', 'name', 'fullName'].forEach(k => {{ if (res[k]) res[k] = VIP_NAME; }});
+                        if (res.data && typeof res.data === 'object') {{ ['username', 'userName', 'userId'].forEach(k => {{ if (res.data[k]) res.data[k] = VIP_USER; }}); }}
+                    }}
+                }} catch(e) {{}}
+                return res;
+            }};
+        }} catch(e) {{}}
+
+        // Ghi đè Cookie để qua mặt các Script đọc Cookie
+        try {{
+            let originalCookie = document.cookie;
+            Object.defineProperty(document, 'cookie', {{
+                get: function() {{ return originalCookie.replace(/(username|userId)=[^;]+/gi, `$1=${{VIP_USER}}`); }},
+                set: function(val) {{ originalCookie = val; }},
+                configurable: true
+            }});
+        }} catch(e) {{}}
+
+        console.log("[LVT LOADER] Đã kích hoạt Spoofer: Mọi truy xuất username giờ sẽ trả về hp_luongvantuyen");
+    }}
+
+    // [TÍNH NĂNG 2] LOA THÔNG BÁO TỪ WEB ADMIN
     function fetchGlobalNotice() {{
-        fetch('{WEB_URL}/api/get_notice').then(r => r.json()).then(data => {{
+        fetch(SERVER_URL + '/api/get_notice').then(r => r.json()).then(data => {{
             let msg = data.msg;
             let old = document.getElementById('lvt-global-notice');
             if (!msg || msg === "") {{ if(old) old.remove(); return; }}
@@ -771,42 +821,57 @@ def serve_dynamic_script(token):
             let div = document.createElement('div');
             div.id = 'lvt-global-notice';
             div.style.cssText = "position:fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(10,15,20,0.95); border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0,255,204,0.5); color: #00ffcc; padding: 15px 30px; border-radius: 10px; z-index: 2147483647; font-family: monospace; font-size: 16px; font-weight: bold; text-align: center; pointer-events: none;";
-            div.innerHTML = `📢 THÔNG BÁO HỆ THỐNG<br><br><span style="color:white; font-weight:normal; font-size:18px;">${{msg}}</span>`;
+            div.innerHTML = `📢 THÔNG BÁO TỪ ADMIN<br><br><span style="color:white; font-weight:normal; font-size:18px;">${{msg}}</span>`;
             if (document.documentElement) document.documentElement.appendChild(div);
         }}).catch(e=>{{}});
     }}
-    setInterval(fetchGlobalNotice, 10000); 
-    fetchGlobalNotice();
 
-    // TOAST CHÀO MỪNG
-    window.addEventListener('load', () => {{
-        let toast = document.createElement('div');
-        toast.style.cssText = "position:fixed; bottom: 30px; right: 20px; background: rgba(0, 50, 0, 0.9); border-left: 5px solid #00ffcc; color: white; padding: 15px 20px; border-radius: 5px; z-index: 2147483647; box-shadow: 0 4px 10px rgba(0,0,0,0.5); pointer-events: none;";
-        toast.innerHTML = `🎉 <b>Đăng nhập Auto Ngầm Thành Công!</b><br>Đang chạy ẩn tại tài khoản: <span style="color:#00ffcc;">{target_olm}</span>`;
-        if (document.documentElement) document.documentElement.appendChild(toast);
-        setTimeout(() => toast.remove(), 5000);
-    }});
+    let hasChecked = false;
+    function runSystem() {{
+        if (!document.body) {{ setTimeout(runSystem, 100); return; }}
+        if (hasChecked) return;
+        hasChecked = true;
 
-    function initMainHack() {{
-        console.log("Khởi động Hack...");
-        // ⬇️⬇️⬇️ DÁN TOÀN BỘ CODE GIAO DIỆN HACK CỦA BẠN VÀO DƯỚI DÒNG NÀY ⬇️⬇️⬇️
-        
-        
-        
-        // ⬆️⬆️⬆️ KẾT THÚC CODE HACK CỦA BẠN TẠI ĐÂY ⬆️⬆️⬆️
+        // Lấy User gốc trước khi bị Spoofer làm mờ
+        let currentRealUser = getRealUser();
+
+        // Server check Key
+        fetch(SERVER_URL + '/api/check', {{
+            method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ key: KEY, deviceId: deviceId, target_app: "olm", expected_type: "vip", pin: "SCRIPT", olm_name: currentRealUser }})
+        }}).then(res => res.json()).then(data => {{
+            
+            if (data.status !== 'success') {{
+                showToast(`⚠️ <b>TỪ CHỐI TRUY CẬP LOADER</b><br>${{data.message}}<br><small>Tài khoản hiện tại: ${{currentRealUser}}</small>`, false);
+                return;
+            }} 
+            
+            if (currentRealUser !== TARGET_OLM && currentRealUser !== "N/A") {{
+                showToast(`⚠️ <b>SAI TÀI KHOẢN KHAI BÁO</b><br>Loader này chỉ cấp phép cho OLM: ${{TARGET_OLM}}`, false);
+                return;
+            }}
+
+            showToast(`🎉 <b>MỞ KHÓA THÀNH CÔNG!</b><br>Đã giả lập tài khoản VIP: <span style="color:#00ffcc;">hp_luongvantuyen</span> cho Script Mode!`, true);
+            
+            // 1. Kích hoạt lớp ngụy trang
+            activateSpoofer();
+            
+            // 2. Chạy tính năng theo dõi online & loa thông báo
+            fetchGlobalNotice();
+            setInterval(fetchGlobalNotice, 10000);
+            setInterval(() => {{ fetch(SERVER_URL + '/api/script_ping/' + TOKEN).catch(e=>{{}}); }}, 5000);
+
+            // Xóa Hack Menu ở đây, nhường sân khấu cho OLM Mode độc lập tự nhận diện hp_luongvantuyen và chạy.
+            
+        }}).catch(e => {{}});
     }}
-    
-    if (document.readyState === 'complete' || document.readyState === 'interactive') {{
-        setTimeout(initMainHack, 1000);
-    }} else {{
-        window.addEventListener('DOMContentLoaded', () => setTimeout(initMainHack, 1000));
-    }}
+
+    runSystem();
 }})();
 """
     resp = make_response(js_code)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
-
 
 # ========================================================
 # [BẢN FULL 100%] GIAO DIỆN WEB ADMIN
