@@ -99,13 +99,12 @@ def load_db():
                 u.setdefault("loader_active", False)
                 u.setdefault("loader_key", "")
                 u.setdefault("loader_olm", "")
-                u.setdefault("loader_token", "")
                 u.setdefault("live_msg_id", None)
                 u.setdefault("live_msg_type", None)
                 u.setdefault("main_menu_id", None)
             for k in data["keys"]:
                 data["keys"][k].setdefault("bound_olm", "") 
-                data["keys"][k].setdefault("loader_enabled", True) # [NEW] TRẠNG THÁI BẬT/TẮT SPOOFER
+                data["keys"][k].setdefault("loader_enabled", True)
             return data
         except: return {"keys": {}, "logs": [], "banned_ips": {}, "global_notice": {"msg": "", "exp": "permanent"}, "locked_olm": {}, "bot_users": {}, "active_scripts": {}}
 
@@ -145,7 +144,7 @@ def _core_validate(db, key, target_olm, real_ip="0.0.0.0"):
     return True, "Success"
 
 # ====================================================================
-# TELEGRAM BOT ENGINE
+# TELEGRAM BOT ENGINE (ĐÃ FIX LỖI ĐƠ BOT /ADMIN)
 # ====================================================================
 def tg_send(chat_id, text, markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
@@ -162,7 +161,11 @@ def tg_edit(chat_id, msg_id, text, markup=None):
     try: 
         res = requests.post(f"{TELEGRAM_API_URL}/editMessageText", json=payload).json()
         if not res.get("ok"): 
-            return tg_send(chat_id, text, markup)
+            desc = res.get("description", "")
+            if "message is not modified" in desc:
+                return msg_id 
+            else:
+                return tg_send(chat_id, text, markup)
         return msg_id
     except: return msg_id
 
@@ -181,7 +184,7 @@ def format_time(exp_ms, now_ms):
     if h > 0: return f"{h} giờ {m} phút"
     return f"{m} phút {s} giây"
 
-# [NEW] VÒNG LẶP CẬP NHẬT MENU LIVE CÓ BẬT/TẮT SPOOFER VÀ LINK CỐ ĐỊNH
+# VÒNG LẶP CẬP NHẬT MENU LIVE (CÓ NÚT BẬT TẮT)
 def live_timer_updater():
     while True:
         time.sleep(10)
@@ -204,9 +207,7 @@ def live_timer_updater():
                             devs = len(kd.get("devices", []))
                             max_devs = kd.get("maxDevices", 1)
                             
-                            # LINK CỐ ĐỊNH CHUNG
                             url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
-                            
                             loader_status = kd.get("loader_enabled", True)
                             btn_text = "🔴 Tắt Spoofer" if loader_status else "🟢 Bật Spoofer"
                             st_spoofer = "🟢 ĐANG BẬT" if loader_status else "🔴 ĐÃ TẮT"
@@ -286,7 +287,7 @@ def telegram_webhook():
             user["live_msg_type"] = None
             user["main_menu_id"] = None 
 
-        # ================= LỆNH CHÍNH & FIX LỖI /ADMIN =================
+        # ================= LỆNH CHÍNH =================
         if msg_text.upper() == "/START" or payload == "MENU_MAIN":
             valid_notices = [n for n in user["notices"] if n["exp"] == 'permanent' or n["exp"] > now_ms]
             user["notices"] = valid_notices
@@ -538,14 +539,12 @@ def telegram_webhook():
                 user["loader_active"] = False
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "✅ <b>ĐÃ HỦY KẾT NỐI.</b>\nCửa sổ Live đã bị đóng.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
             
-            # [NEW] NÚT BẬT TẮT SPOOFER
             elif payload == "TOGGLE_LOADER":
                 k = user.get("loader_key")
                 if k and k in db["keys"]:
                     db["keys"][k]["loader_enabled"] = not db["keys"][k].get("loader_enabled", True)
                     st_txt = "BẬT 🟢" if db["keys"][k]["loader_enabled"] else "TẮT 🔴"
                     tg_send(sid, f"⚙️ Đã {st_txt} Script Spoofer trên Web OLM!")
-                    # Phục hồi lại cửa sổ live
                     user["live_msg_type"] = "loader"
                 
             elif payload == "BUY":
@@ -573,8 +572,20 @@ def telegram_webhook():
     return "ok", 200
 
 # ====================================================================
-# [API] TẠO CODE JS ĐỘNG CHO VIOLENTMONKEY (ĐÃ FIX CƠ CHẾ LOGOUT/ĐỔI ACC)
+# [API] TẠO CODE JS ĐỘNG CHO VIOLENTMONKEY 
 # ====================================================================
+@app.route('/api/script_ping', methods=['POST', 'OPTIONS'])
+def script_ping():
+    if request.method == 'OPTIONS': return make_response("ok", 200)
+    data = request.json
+    key = data.get("key")
+    olm_name = data.get("olm_name")
+    db = load_db()
+    if key in db["keys"]:
+        active_sessions[key] = {"ip": get_real_ip(), "olm_name": olm_name, "key": key, "last_seen": time.time()}
+        return "ok", 200
+    return "invalid", 403
+
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_api():
     if request.method == 'OPTIONS': return make_response("ok", 200)
@@ -604,7 +615,7 @@ def get_notice():
         return jsonify({"msg": notice.get("msg", "")})
     return jsonify({"msg": ""})
 
-# ĐIỂM CHỐT: TẠO LOADER XÁC THỰC KẾT HỢP BẪY TRÁO DỮ LIỆU ĐÁNH LỪA OLM GOD MODE
+# ĐIỂM CHỐT: TẠO LOADER XÁC THỰC CÓ GIAO DIỆN ĐĂNG NHẬP ĐẸP & CHẶN SAI ACC
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
@@ -629,16 +640,81 @@ def serve_dynamic_script():
     let deviceId = localStorage.getItem('lvt_olm_hwid') || ('OLM-' + Math.random().toString(36).substring(2, 10).toUpperCase());
     localStorage.setItem('lvt_olm_hwid', deviceId);
 
-    // HỘP THOẠI HỎI KEY (CHỈ HỎI 1 LẦN)
-    let KEY = localStorage.getItem('lvt_vip_key');
-    if (!KEY) {{
-        KEY = prompt("⚡ LVT SYSTEM ⚡\\nVui lòng nhập License Key của bạn để kích hoạt Spoofer:");
-        if (KEY) localStorage.setItem('lvt_vip_key', KEY.trim());
-    }}
-
     window.lvt_spoofer_active = false;
     let realUser = localStorage.getItem('lvt_real_user') || "N/A";
+    let KEY = localStorage.getItem('lvt_vip_key');
 
+    // =========================================================
+    // UI HỖ TRỢ (THÔNG BÁO, ĐĂNG NHẬP, CẢNH BÁO LỚN)
+    // =========================================================
+    let lastToastState = ""; 
+    
+    function showToast(msg, color) {{
+        let t = document.getElementById('lvt-toast');
+        if(!t) {{
+            t = document.createElement('div');
+            t.id = 'lvt-toast';
+            if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(t);
+        }}
+        t.style.cssText = `position:fixed;bottom:30px;right:20px;background:rgba(0,0,0,0.9);border-left:5px solid ${{color}};color:white;padding:15px;border-radius:5px;z-index:2147483647;box-shadow:0 4px 10px rgba(0,0,0,0.5);font-family:sans-serif;`;
+        t.innerHTML = msg;
+        setTimeout(() => {{ if(t) t.remove(); }}, 5000);
+    }}
+
+    function showBigWarning(title, msg) {{
+        let old = document.getElementById('lvt-big-warning');
+        if(old) old.remove();
+
+        let w = document.createElement('div');
+        w.id = 'lvt-big-warning';
+        w.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(20,0,0,0.95);border:2px solid #ff3366;box-shadow:0 0 30px rgba(255,51,102,0.5);border-radius:15px;padding:30px;z-index:2147483647;text-align:center;color:white;font-family:sans-serif;min-width:320px;pointer-events:none;animation:lvtPop 0.3s ease-out;";
+        w.innerHTML = `
+            <style>@keyframes lvtPop {{ 0% {{ transform: translate(-50%,-50%) scale(0.8); opacity:0;}} 100% {{ transform: translate(-50%,-50%) scale(1); opacity:1;}} }}</style>
+            <div style="font-size:45px;margin-bottom:10px;">⚠️</div>
+            <h2 style="color:#ff3366;margin:0 0 10px 0;font-weight:900;">${{title}}</h2>
+            <p style="font-size:16px;color:#ddd;margin:0;line-height:1.5;">${{msg}}</p>
+            <p style="font-size:12px;color:#888;margin-top:15px;">Script đã tự động TẮT ngụy trang.</p>
+            <p style="font-size:11px;color:#555;">(Tự đóng sau 5s)</p>
+        `;
+        if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(w);
+
+        setTimeout(() => {{ if(w) w.remove(); }}, 5000);
+    }}
+
+    function showBeautifulLogin() {{
+        if (document.getElementById('lvt-login-overlay')) return;
+        let overlay = document.createElement('div');
+        overlay.id = 'lvt-login-overlay';
+        overlay.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(10,10,18,0.95);z-index:2147483647;display:flex;justify-content:center;align-items:center;backdrop-filter:blur(5px);";
+        
+        overlay.innerHTML = `
+            <div style="background:#151525; border:1px solid #00ffcc; border-radius:15px; padding:40px; box-shadow:0 0 20px rgba(0,255,204,0.3); text-align:center; max-width:350px; width:90%; font-family:sans-serif;">
+                <h2 style="color:#00ffcc; margin-top:0; margin-bottom:10px; font-weight:900; letter-spacing:2px;">⚡ LVT SPOOFER ⚡</h2>
+                <p style="color:#888; font-size:14px; margin-bottom:25px;">Hệ thống vượt OLM độc quyền</p>
+                <input type="text" id="lvt-key-input" placeholder="Nhập License Key..." style="width:100%; box-sizing:border-box; padding:12px 15px; background:#0a0a12; border:1px solid #333; color:#fff; border-radius:8px; outline:none; text-align:center; font-size:16px; margin-bottom:20px; transition:0.3s;">
+                <button id="lvt-login-btn" style="width:100%; padding:12px; background:linear-gradient(45deg, #00ffcc, #bd00ff); color:#000; border:none; border-radius:8px; font-size:16px; font-weight:bold; cursor:pointer; transition:0.3s; box-shadow:0 4px 10px rgba(0,255,204,0.2);">KÍCH HOẠT</button>
+            </div>
+        `;
+        if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(overlay);
+
+        let inp = document.getElementById('lvt-key-input');
+        inp.onfocus = () => inp.style.borderColor = '#00ffcc';
+        inp.onblur = () => inp.style.borderColor = '#333';
+
+        document.getElementById('lvt-login-btn').onclick = () => {{
+            let val = inp.value.trim();
+            if(val) {{
+                localStorage.setItem('lvt_vip_key', val);
+                KEY = val;
+                overlay.remove();
+                checkServer(); 
+            }}
+        }};
+    }}
+
+    // =========================================================
+    // TRAPS (CHỈ KÍCH HOẠT NGỤY TRANG KHI ĐƯỢC LỆNH TỪ SERVER)
+    // =========================================================
     function saveRealUser(val) {{
         if (val && typeof val === 'string' && val !== VIP_USER && val !== VIP_NAME && val.length > 2) {{
             realUser = val;
@@ -646,9 +722,6 @@ def serve_dynamic_script():
         }}
     }}
 
-    // =========================================================
-    // TRAPS (CHỈ KÍCH HOẠT NGỤY TRANG KHI ĐƯỢC LỆNH TỪ SERVER)
-    // =========================================================
     const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     
     ['userName', 'userId', 'username', 'account'].forEach(prop => {{
@@ -689,22 +762,8 @@ def serve_dynamic_script():
     }} catch(e){{}}
 
     // =========================================================
-    // UI HỖ TRỢ (TOAST & THÔNG BÁO ADMIN)
+    // VÒNG LẶP KIỂM TRA MÁY CHỦ
     // =========================================================
-    let lastToastState = ""; 
-    
-    function showToast(msg, color) {{
-        let t = document.getElementById('lvt-toast');
-        if(!t) {{
-            t = document.createElement('div');
-            t.id = 'lvt-toast';
-            if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(t);
-        }}
-        t.style.cssText = `position:fixed;bottom:30px;right:20px;background:rgba(0,0,0,0.9);border-left:5px solid ${{color}};color:white;padding:15px;border-radius:5px;z-index:2147483647;box-shadow:0 4px 10px rgba(0,0,0,0.5);font-family:sans-serif;`;
-        t.innerHTML = msg;
-        setTimeout(() => {{ if(t) t.remove(); }}, 5000);
-    }}
-
     function fetchGlobalNotice() {{
         fetch(SERVER_URL + '/api/get_notice').then(r => r.json()).then(data => {{
             let msg = data.msg;
@@ -719,15 +778,16 @@ def serve_dynamic_script():
         }}).catch(e=>{{}});
     }}
 
-    // =========================================================
-    // VÒNG LẶP KIỂM TRA ĐĂNG XUẤT / ĐỔI ACC / BẬT TẮT
-    // =========================================================
     function checkServer() {{
-        if (!KEY) return;
+        if (!KEY) {{
+            if (window.top === window.self) showBeautifulLogin();
+            return;
+        }}
+
         try {{
             let cMatch = document.cookie.match(/(?:username|userId)=([^;]+)/i);
             if (cMatch) saveRealUser(decodeURIComponent(cMatch[1]));
-            else realUser = "N/A"; // Nếu không thấy cookie nghĩa là đã đăng xuất
+            else realUser = "N/A"; // Bắt được sự kiện Đăng Xuất
         }} catch(e) {{}}
 
         fetch(SERVER_URL + '/api/check', {{
@@ -735,45 +795,58 @@ def serve_dynamic_script():
             body: JSON.stringify({{ key: KEY, deviceId: deviceId, olm_name: realUser }})
         }}).then(res => res.json()).then(data => {{
             
-            // LỖI KEY BỊ KHÓA, XÓA HOẶC BAN IP
+            // 1. NẾU KEY BỊ KHÓA, XÓA HOẶC BAN IP
             if (data.status !== 'success') {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'error') {{
-                    showToast(`⚠️ <b>LỖI BẢO MẬT</b><br>${{data.message}}<br><small>Đã đóng ngụy trang.</small>`, '#ff3366');
+                    showBigWarning("HỆ THỐNG TỪ CHỐI", data.message);
                     lastToastState = 'error';
+                    localStorage.removeItem('lvt_vip_key'); // Ép đăng nhập lại
                 }}
                 return;
             }}
 
-            // LỆNH TẮT SPOOFER TỪ BOT TELEGRAM
+            // 2. NẾU TẮT SPOOFER TỪ BOT TELEGRAM
             if (data.loader_enabled === false) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'disabled') {{
-                    showToast(`🛑 <b>SPOOFER ĐÃ TẮT</b><br>Bạn đã tắt Script từ Bot Telegram.`, '#ffcc00');
+                    showBigWarning("SPOOFER ĐÃ TẮT", "Bạn đã tắt Script từ Bot Telegram.");
                     lastToastState = 'disabled';
                 }}
                 return;
             }}
             
-            // LỖI SAI TÀI KHOẢN (ĐĂNG XUẤT HOẶC QUA TÀI KHOẢN KHÁC)
             let bound = data.bound_olm;
-            if (bound && bound !== "N/A" && realUser !== "N/A" && realUser.toLowerCase() !== bound.toLowerCase()) {{
+            
+            // 3. KIỂM TRA ĐĂNG XUẤT
+            if (realUser === "N/A" || !realUser) {{
+                window.lvt_spoofer_active = false;
+                if (lastToastState !== 'logged_out') {{
+                    showBigWarning("ĐÃ ĐĂNG XUẤT", "Bạn không ở trong tài khoản OLM nào.<br>Spoofer đã tự động tắt.");
+                    lastToastState = 'logged_out';
+                }}
+                return;
+            }}
+
+            // 4. LỖI SAI TÀI KHOẢN OLM (QUA ACC KHÁC)
+            if (bound && bound !== "N/A" && realUser.toLowerCase() !== bound.toLowerCase()) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'wrong_acc') {{
-                    showToast(`⚠️ <b>SAI TÀI KHOẢN CHỈ ĐỊNH</b><br>Bạn đang ở: <b>${{realUser}}</b><br>Vui lòng đổi sang: <b>${{bound}}</b><br><small>Spoofer đang tạm khóa...</small>`, '#ff3366');
+                    showBigWarning("SAI TÀI KHOẢN", `Bạn đang ở: <b>${{realUser}}</b><br>Vui lòng đổi sang đúng tài khoản đã mua: <b>${{bound}}</b>`);
                     lastToastState = 'wrong_acc';
                 }}
                 return;
             }}
 
-            // THỎA MÃN TẤT CẢ -> MỞ SPOOFER
-            if (!window.lvt_spoofer_active && realUser !== "N/A") {{
+            // 5. THỎA MÃN TẤT CẢ -> MỞ SPOOFER
+            if (!window.lvt_spoofer_active) {{
                 window.lvt_spoofer_active = true;
                 showToast(`🎉 <b>XÁC THỰC THÀNH CÔNG!</b><br>Đúng tài khoản: <span style="color:#00ffcc;">${{realUser}}</span><br>Đã bật chế độ ngụy trang VIP.`, '#00ffcc');
                 lastToastState = 'success';
             }}
 
             fetchGlobalNotice();
+            fetch(SERVER_URL + '/api/script_ping', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{key: KEY, olm_name: realUser}}) }}).catch(e=>{{}});
 
         }}).catch(e => {{}});
     }}
@@ -939,9 +1012,9 @@ def web_bind_olm():
 def online_ips():
     if request.cookies.get('admin_auth') != 'true': return redirect('/login')
     html_rows = ""
-    for token, info in active_sessions.items():
+    for key, info in active_sessions.items():
         onl_time = time.strftime('%H:%M:%S', time.localtime(info["last_seen"]))
-        html_rows += f"<tr><td>{info['ip']}</td><td class='text-warning'>{info['olm_name']}</td><td class='text-info'>{info['key']}</td><td>URL Cài Đặt (Script Ngầm)</td><td>{onl_time}</td><td><a href='/admin/action/ban/{info['key']}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
+        html_rows += f"<tr><td>{info['ip']}</td><td class='text-warning'>{info['olm_name']}</td><td class='text-info'>{info['key']}</td><td>Cố định: /api/script/lvt_vip_loader.user.js</td><td>{onl_time}</td><td><a href='/admin/action/ban/{info['key']}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
     return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Giám Sát Online - LVT</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>body{{background:#0a0a12;color:white;}}</style></head><body class="p-4"><div class="container"><div class="d-flex justify-content-between mb-4"><h2>📡 RADAR GIÁM SÁT OLM ONLINE</h2><a href="/" class="btn btn-secondary">Quay lại Dashboard</a></div><div class="card bg-dark p-3"><table class="table table-dark table-hover"><thead><tr><th>IP Máy</th><th>Tên OLM</th><th>Key Đang Dùng</th><th>Loại Kết Nối</th><th>Tín Hiệu Cuối</th><th>Thao Tác</th></tr></thead><tbody>{html_rows if html_rows else "<tr><td colspan='6' class='text-center text-muted'>Hiện không có ai đang làm OLM.</td></tr>"}</tbody></table></div></div><script>setInterval(() => location.reload(), 10000);</script></body></html>'''
 
 @app.route('/')
