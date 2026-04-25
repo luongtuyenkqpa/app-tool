@@ -168,14 +168,19 @@ def get_user_id_by_username(db, username):
         if info.get("username", "").lower() == username: return uid
     return None
 
+# [ĐÃ FIX LỖI TẠO KEY /ADMIN BỊ ĐƠ]
 def format_time(exp_ms, now_ms):
     if exp_ms == "permanent": return "Vĩnh viễn"
-    rem = exp_ms - now_ms
-    if rem <= 0: return "Hết hạn"
-    d, rem = divmod(rem, 86400000); h, rem = divmod(rem, 3600000); m, s = divmod(rem, 60000); s = s // 1000
-    if d > 0: return f"{d} ngày {h} giờ"
-    if h > 0: return f"{h} giờ {m} phút"
-    return f"{m} phút {s} giây"
+    if exp_ms == "pending": return "Chờ kích hoạt" # Tránh lỗi tính toán khi Key chưa chạy
+    try:
+        rem = int(exp_ms) - now_ms
+        if rem <= 0: return "Hết hạn"
+        d, rem = divmod(rem, 86400000); h, rem = divmod(rem, 3600000); m, s = divmod(rem, 60000); s = s // 1000
+        if d > 0: return f"{d} ngày {h} giờ"
+        if h > 0: return f"{h} giờ {m} phút"
+        return f"{m} phút {s} giây"
+    except:
+        return "Chưa xác định"
 
 def live_timer_updater():
     while True:
@@ -238,7 +243,6 @@ def live_timer_updater():
         except: pass
 threading.Thread(target=live_timer_updater, daemon=True).start()
 
-# [ĐÃ FIX 100% LUỒNG ĐỊNH TUYẾN MENU ADMIN MƯỢT MÀ]
 @app.route('/webhook', methods=['POST', 'GET'])
 def telegram_webhook():
     if request.method == 'GET': return "OK", 200
@@ -276,7 +280,7 @@ def telegram_webhook():
         if msg_text:
             requests.post(f"{TELEGRAM_API_URL}/deleteMessage", json={"chat_id": sid, "message_id": msg_id})
 
-        # ================= BIẾN LỆNH GÕ THÀNH PAYLOAD =================
+        # ================= LỆNH CHÍNH =================
         if msg_text.startswith("/"):
             user["state"] = "none"
             user["live_msg_type"] = None
@@ -545,7 +549,7 @@ def telegram_webhook():
                     user["state"] = "wait_reset_key"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
 
-            # --- MENU ADMIN: BẮT TOÀN BỘ NÚT ADMIN Ở ĐÂY ---
+            # --- MENU ADMIN (BẮT TOÀN BỘ NÚT ADMIN Ở ĐÂY) ---
             elif user.get("is_admin") and (payload.startswith("ADM_") or payload.startswith("K_")):
                 user["state"] = "none"
                 if payload == "ADM_MENU":
@@ -676,7 +680,7 @@ def get_notice():
         return jsonify({"msg": notice.get("msg", "")})
     return jsonify({"msg": ""})
 
-# ĐIỂM CHỐT: SCRIPT GIAO DIỆN TÂN TIẾN - SỬA LỖI BÁO ĐĂNG XUẤT ẢO
+# ĐIỂM CHỐT: SCRIPT GIAO DIỆN TÂN TIẾN - CHECK ĐĂNG XUẤT CHUẨN XÁC NHẤT
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
@@ -774,8 +778,17 @@ def serve_dynamic_script():
     }}
 
     // =========================================================
-    // TÌM KIẾM TÀI KHOẢN TỪ COOKIE VÀ DOM
+    // LỌC TÊN THẬT ĐỂ NHẬN DIỆN TÀI KHOẢN (CHUẨN HÓA)
     // =========================================================
+    let realUser = localStorage.getItem('lvt_real_user') || "N/A";
+    
+    function saveRealUser(val) {{
+        if (val && typeof val === 'string' && val !== VIP_USER && val !== VIP_NAME && val.length > 2) {{
+            realUser = val;
+            localStorage.setItem('lvt_real_user', val);
+        }}
+    }}
+
     function getRealUserFromDOM() {{
         let user = localStorage.getItem('lvt_real_user') || "N/A";
         try {{
@@ -788,26 +801,16 @@ def serve_dynamic_script():
                 }}
             }}
         }} catch(e) {{}}
-        if (user === "N/A") {{
-            try {{
-                let scripts = document.querySelectorAll('script');
-                for(let s of scripts) {{
-                    let m = s.innerText.match(/["'](?:username|userId|account)["']\s*:\s*["']([^"']+)["']/i);
-                    if (m && m[1] && m[1] !== VIP_USER && m[1] !== VIP_NAME) {{
-                        saveRealUser(m[1]);
-                        user = m[1];
-                        break;
-                    }}
-                }}
-            }} catch(e) {{}}
+        
+        // Nếu không có trong cookie, check màn hình đăng nhập
+        let html = document.body ? document.body.innerHTML : "";
+        if (html.includes('href="/login"') || html.includes('href="/dang-nhap"')) {{
+            if (!html.includes('href="/logout"') && !html.includes('href="/dang-xuat"')) {{
+                user = "N/A"; // Chắc chắn đang ở màn hình ngoài
+                localStorage.setItem('lvt_real_user', "N/A");
+            }}
         }}
         return user;
-    }}
-
-    function saveRealUser(val) {{
-        if (val && typeof val === 'string' && val !== VIP_USER && val !== VIP_NAME && val.length > 2) {{
-            localStorage.setItem('lvt_real_user', val);
-        }}
     }}
 
     // =========================================================
@@ -817,7 +820,6 @@ def serve_dynamic_script():
     
     ['userName', 'userId', 'username', 'account'].forEach(prop => {{
         let actual = uw[prop];
-        if (actual && typeof actual === 'string') saveRealUser(actual);
         try {{
             Object.defineProperty(uw, prop, {{
                 get: () => window.lvt_spoofer_active ? VIP_USER : actual,
@@ -830,6 +832,11 @@ def serve_dynamic_script():
     try {{
         const origParse = uw.JSON.parse;
         uw.JSON.parse = function() {{
+            let text = arguments[0];
+            if (typeof text === 'string') {{
+                let m = text.match(/["'](?:username|userId)["']\\s*:\\s*["']([^"']+)["']/i);
+                if (m && m[1]) saveRealUser(m[1]);
+            }}
             let res = origParse.apply(this, arguments);
             if (res && typeof res === 'object') {{
                 if (res.username) saveRealUser(res.username);
@@ -874,12 +881,9 @@ def serve_dynamic_script():
         }}
 
         let currentUser = getRealUserFromDOM();
-        
-        // KIỂM TRA ĐĂNG XUẤT THẬT SỰ TỪ HTML CỦA OLM
-        let isLoggedOut = !!document.querySelector('a[href*="/dang-nhap"], a[href*="/login"]');
 
-        // BỘ ĐẾM ĐỘ TRỄ 9 GIÂY (Cho phép web OLM load xong mới phán xét)
-        if (isLoggedOut || currentUser === "N/A") {{
+        // BỘ ĐẾM ĐỘ TRỄ 9 GIÂY (Cho phép web OLM load xong mới phán xét Đăng xuất)
+        if (currentUser === "N/A") {{
             emptyPingCount++;
         }} else {{
             emptyPingCount = 0;
@@ -913,7 +917,7 @@ def serve_dynamic_script():
             
             let bound = data.bound_olm;
 
-            // 3. ĐĂNG XUẤT (Chỉ báo lỗi khi quét rỗng liên tục 3 lần = 9 giây, tránh lỗi load trang)
+            // 3. ĐĂNG XUẤT (Chỉ báo lỗi khi quét rỗng liên tục 3 lần = ~9 giây, tránh lỗi load trang web chậm)
             if (emptyPingCount > 3) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'logged_out') {{
@@ -930,7 +934,7 @@ def serve_dynamic_script():
             if (bound && bound !== "N/A" && currentUser !== "N/A" && currentUser.toLowerCase() !== bound.toLowerCase()) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'wrong_acc') {{
-                    showBigWarning("SAI TÀI KHOẢN", `Bạn đang dùng: <b>${{currentUser}}</b><br>Vui lòng đổi sang tài khoản: <b>${{bound}}</b>`);
+                    showBigWarning("SAI TÀI KHOẢN OLM", `Tài khoản hiện tại: <b>${{currentUser}}</b><br>Tài khoản được phép: <b>${{bound}}</b>`);
                     lastToastState = 'wrong_acc';
                 }}
                 return;
