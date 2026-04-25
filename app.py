@@ -278,210 +278,19 @@ def telegram_webhook():
         if msg_text:
             requests.post(f"{TELEGRAM_API_URL}/deleteMessage", json={"chat_id": sid, "message_id": msg_id})
 
-        # ================= GIỮ NGUYÊN CODE CŨ BOT ADMIN =================
         if msg_text.startswith("/"):
             user["state"] = "none"
             user["live_msg_type"] = None
             user["main_menu_id"] = None 
 
-        if msg_text.upper() == "/START" or payload == "MENU_MAIN":
-            valid_notices = [n for n in user["notices"] if n["exp"] == 'permanent' or n["exp"] > now_ms]
-            user["notices"] = valid_notices
-            user["live_msg_type"] = None
-            
-            txt = "🎉 <b>Chào mừng bạn đến với AutoKey (Admin @luongtuyen20)</b>\n➖➖➖➖➖➖➖➖\n\n"
-            sys_notice = db.get("global_notice", {})
-            if sys_notice.get("msg") and (sys_notice.get("exp") == "permanent" or sys_notice.get("exp", 0) > now_ms):
-                txt += f"📢 <b>THÔNG BÁO HỆ THỐNG:</b>\n🔸 {sys_notice['msg']}\n\n"
-            if valid_notices:
-                txt += "🔔 <b>THÔNG BÁO CÁ NHÂN:</b>\n" + "\n".join([f"🔸 {n['msg']}" for n in valid_notices]) + "\n\n"
-            txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Reset Key: <b>{user['resets']}/3</b>\n\n👇 Chọn dịch vụ:"
-            markup = {"inline_keyboard": [[{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}], [{"text": "🔗 Quản Lý Script OLM", "callback_data": "LOADER_MENU"}]]}
-            if user.get("main_menu_id"): tg_edit(sid, user["main_menu_id"], txt, markup)
-            else: user["main_menu_id"] = tg_send(sid, txt, markup)
-            save_db(db)
-            return "ok", 200
+            if msg_text.upper().startswith("/START"):
+                payload = "MENU_MAIN"
+            elif msg_text.upper().startswith("/LOADERKEY"):
+                payload = "LOADER_MENU"
+            elif msg_text.upper().startswith("/ADMIN"):
+                payload = "ADM_MENU"
 
-        # [THÊM MENU FILE OLM MODE]
-        elif msg_text.upper() == "/LOADERKEY" or payload == "LOADER_MENU":
-            user["state"] = "none"
-            user["live_msg_type"] = None
-            txt = "🔗 <b>QUẢN LÝ SCRIPT OLM</b>\n\n👇 Vui lòng chọn chức năng bạn muốn sử dụng:"
-            markup = {"inline_keyboard": [
-                [{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}],
-                [{"text": "📂 Lấy File OLM Mode", "callback_data": "LOADER_FILE_OLM"}],
-                [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]
-            ]}
-            if user.get("main_menu_id"): tg_edit(sid, user["main_menu_id"], txt, markup)
-            else: user["main_menu_id"] = tg_send(sid, txt, markup)
-            save_db(db)
-            return "ok", 200
-            
-        elif msg_text.upper() == "/ADMIN" or payload == "ADM_MENU":
-            if user.get("is_admin"):
-                adm_key = user.get("admin_key", "")
-                if adm_key not in db["keys"] or db["keys"][adm_key].get("target") != "admin_bot":
-                    user["is_admin"] = False
-                    user["state"] = "none"
-                    user["live_msg_type"] = None
-                    save_db(db)
-                    tg_edit(sid, user["main_menu_id"], "⚠️ <b>Key Admin bị khóa hoặc hết hạn.</b> Đã tước quyền!")
-                    return "ok", 200
-
-                user["state"] = "none"
-                user["live_msg_type"] = "admin"
-                t_left = format_time(db["keys"][adm_key]["exp"], now_ms)
-                markup = {"inline_keyboard": [
-                    [{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}],
-                    [{"text": "🔒 Khóa Nick OLM", "callback_data": "ADM_W_LOCK"}, {"text": "🚫 Chặn IP Máy", "callback_data": "ADM_W_BAN"}],
-                    [{"text": "📢 TB Lên Tool", "callback_data": "ADM_W_NOTE"}, {"text": "💬 TB Vào Bot", "callback_data": "ADM_BOT_NOTE"}],
-                    [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}],
-                    [{"text": "📜 Theo Dõi Radar", "callback_data": "ADM_LOGS"}],
-                    [{"text": "❌ Hủy Quyền Admin", "callback_data": "ADM_LOGOUT"}]
-                ]}
-                txt = f"👑 <b>BẢNG ĐIỀU KHIỂN SERVER (SaaS)</b>\n\n⏳ <i>Hạn Admin còn: {t_left}</i>"
-                if payload and user["main_menu_id"]:
-                    user["live_msg_id"] = user["main_menu_id"]
-                    tg_edit(sid, user["main_menu_id"], txt, markup)
-                else:
-                    new_id = tg_send(sid, txt, markup)
-                    user["main_menu_id"] = new_id
-                    user["live_msg_id"] = new_id
-            else:
-                user["state"] = "wait_admin_key"
-                user["live_msg_type"] = None
-                txt = "🔐 <b>BẢO MẬT SERVER</b>\nVui lòng nhập <code>Key Admin</code> để mở khóa:"
-                if user["main_menu_id"]: tg_edit(sid, user["main_menu_id"], txt)
-                else: user["main_menu_id"] = tg_send(sid, txt)
-            save_db(db)
-            return "ok", 200
-
-        # ================= XỬ LÝ PAYLOADS (NÚT BẤM) CŨ =================
-        if payload and user["main_menu_id"]:
-            if payload != "ADM_MENU": user["live_msg_type"] = None 
-
-            if payload == "LOADER_ENTER_KEY":
-                user["state"] = "wait_loader_key"
-                tg_edit(sid, user["main_menu_id"], "🔗 <b>TẠO KẾT NỐI SCRIPT OLM</b>\n\n🔑 Vui lòng dán <b>Mã Key</b> của bạn vào đây:", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]})
-
-            elif payload == "LOADER_FILE_OLM":
-                user["state"] = "none"
-                txt = "📂 <b>FILE OLM MODE ĐỘC QUYỀN</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n"
-                txt += "🔗 <b>Link Cài Đặt (Gist):</b>\n"
-                txt += "<code>https://gist.githubusercontent.com/luongtuyenkqpa/1bc8112b37a09346fc2d89894154d6a1/raw/0930c2808bd6ea6a8ec97e5ca12de57b6d4dcc00/gistfile1.txt</code>\n\n"
-                txt += "🔐 <b>Mật khẩu OLM MODE:</b>\n"
-                txt += "<code>OLM_VIP_786B-XQCH-BYEF-SYUS</code>\n\n"
-                txt += "<i>👉 Hãy copy link trên dán vào Violentmonkey, sau đó dùng mật khẩu để kích hoạt tính năng!</i>"
-                tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]})
-
-            elif payload == "LOADER_DISCONNECT":
-                user["state"] = "none"
-                user["loader_active"] = False
-                tg_edit(sid, user["main_menu_id"], "✅ <b>ĐÃ ĐÓNG CỬA SỔ LIVE.</b>\nCửa sổ theo dõi trạng thái đã được ẩn đi.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
-            
-            elif payload == "TOGGLE_LOADER":
-                k = user.get("loader_key")
-                if k and k in db["keys"]:
-                    db["keys"][k]["loader_enabled"] = not db["keys"][k].get("loader_enabled", True)
-                    st_txt = "BẬT 🟢" if db["keys"][k]["loader_enabled"] else "TẮT 🔴"
-                    tg_send(sid, f"⚙️ Đã {st_txt} Script Spoofer trên Web OLM!")
-                    user["live_msg_type"] = "loader"
-
-            elif payload == "BUY":
-                markup = {"inline_keyboard": [[{"text": "👑 Mua Key VIP", "callback_data": "BUY_VIP"}, {"text": "👤 Mua Key Thường", "callback_data": "BUY_NOR"}],[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]}
-                tg_edit(sid, user["main_menu_id"], "💳 <b>CHỌN LOẠI KEY MUỐN MUA:</b>", markup)
-            elif payload == "BUY_NOR":
-                tg_edit(sid, user["main_menu_id"], "🛠 <b>Tính năng Mua Key Thường đang bảo trì.</b>", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]})
-            elif payload == "BUY_VIP":
-                txt = "🛒 <b>BẢNG GIÁ KEY VIP:</b>\n🕒 1 Giờ: <b>7,000đ</b>\n📅 7 Ngày: <b>30,000đ</b>\n📆 30 Ngày: <b>85,000đ</b>\n🏆 1 Năm: <b>200,000đ</b>\n\n👇 Chọn gói:"
-                markup = {"inline_keyboard": [[{"text": "🕒 1 Giờ", "callback_data": "V_1H"},{"text": "📅 7 Ngày", "callback_data": "V_7D"}], [{"text": "📆 30 Ngày", "callback_data": "V_30D"},{"text": "🏆 1 Năm", "callback_data": "V_1Y"}], [{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]}
-                tg_edit(sid, user["main_menu_id"], txt, markup)
-            elif payload.startswith("V_"):
-                user["state"] = f"wait_qty_{payload}"
-                tg_edit(sid, user["main_menu_id"], "🔢 Nhập <b>SỐ LƯỢNG</b> Key muốn mua:")
-            elif payload == "RESET":
-                if user["resets"] <= 0: tg_edit(sid, user["main_menu_id"], "❌ Bạn đã hết lượt Reset.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
-                else:
-                    user["state"] = "wait_reset_key"
-                    tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
-            
-            # --- ADMIN PAYLOADS ---
-            elif user.get("is_admin"):
-                if payload == "ADM_W_CREATE":
-                    user["state"] = "adm_create"
-                    tg_edit(sid, user["main_menu_id"], "➕ <b>TẠO KEY TOOL</b>\nCú pháp: <code>Hệ Thời_gian Số_máy</code>\nVD: <code>OLM 30d 1</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-                elif payload == "ADM_W_BAL":
-                    user["state"] = "adm_bal"
-                    tg_edit(sid, user["main_menu_id"], "💰 <b>NẠP TIỀN & RESET</b>\nCú pháp: <code>@user Tiền Số_Reset</code>\nVD: <code>@luongtuyen20 50k 3</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-                elif payload == "ADM_W_LOCK":
-                    user["state"] = "adm_lock"
-                    tg_edit(sid, user["main_menu_id"], "🔒 <b>KHÓA TÊN OLM</b>\nCú pháp: <code>Thời_gian Tên_OLM</code>\nVD: <code>vv hp_abc</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-                elif payload == "ADM_W_BAN":
-                    user["state"] = "adm_ban"
-                    tg_edit(sid, user["main_menu_id"], "🚫 <b>CHẶN IP MÁY</b>\nCú pháp: <code>Thời_gian IP</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-                elif payload == "ADM_W_NOTE":
-                    user["state"] = "adm_note"
-                    tg_edit(sid, user["main_menu_id"], "📢 <b>TB LÊN TOOL</b>\nCú pháp: <code>Thời_gian Nội_dung</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-                elif payload == "ADM_BOT_NOTE":
-                    markup = {"inline_keyboard": [[{"text": "📢 Gửi ALL Khách", "callback_data": "ADM_BN_ALL"}, {"text": "👤 Gửi 1 Khách Riêng", "callback_data": "ADM_BN_PRIV"}]]}
-                    tg_edit(sid, user["main_menu_id"], "💬 <b>TB VÀO BOT TELEGRAM</b>", markup)
-                elif payload == "ADM_BN_ALL":
-                    user["state"] = "adm_bn_all"
-                    tg_edit(sid, user["main_menu_id"], "💬 <b>GỬI TẤT CẢ KHÁCH</b>\nCú pháp: <code>Thời_gian Nội_dung</code>")
-                elif payload == "ADM_BN_PRIV":
-                    user["state"] = "adm_bn_priv"
-                    tg_edit(sid, user["main_menu_id"], "👤 <b>GỬI TIN RIÊNG</b>\nCú pháp: <code>@user Thời_gian Nội_dung</code>")
-                elif payload == "ADM_USER":
-                    user["state"] = "adm_check_user"
-                    tg_edit(sid, user["main_menu_id"], "👤 <b>SOI THÔNG TIN</b>\nNhập <code>@username</code> hoặc <code>ID Telegram</code>:")
-                elif payload == "ADM_MANAGE":
-                    user["state"] = "adm_manage_input"
-                    tg_edit(sid, user["main_menu_id"], "🛠 <b>QUẢN LÝ KEY / USER</b>\n\n📝 Nhập:\n- <b>Mã Key</b> (Sửa/xóa/Gia hạn/Ghim tài khoản)\n- <b>@username</b> (Xóa sạch mọi Key của khách đó)")
-                elif payload == "ADM_LOGOUT":
-                    user["is_admin"] = False
-                    user["admin_key"] = ""
-                    tg_edit(sid, user["main_menu_id"], "👋 Đã đăng xuất Admin thành công!", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
-                elif payload == "ADM_LOGS":
-                    txt = "📜 <b>RADAR LOGS (10 HOẠT ĐỘNG MỚI NHẤT):</b>\n\n"
-                    for l in db.get("logs", [])[:10]:
-                        txt += f"• {time.strftime('%H:%M', time.localtime(l['time']))} | <b>{l['action']}</b>\n  └ Key: <code>{l['key']}</code> | User: {l.get('olm_name','')}\n"
-                    tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                
-                # Nút Menu Quản lý 1 Key
-                elif payload.startswith("K_RST_"):
-                    k = payload.replace("K_RST_", "")
-                    if k in db["keys"]:
-                        db["keys"][k]["devices"] = []
-                        db["keys"][k]["known_ips"] = []
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đã Gỡ sạch TB/IP của Key: <code>{k}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                elif payload.startswith("K_DEL_"):
-                    k = payload.replace("K_DEL_", "")
-                    if k in db["keys"]:
-                        del db["keys"][k]
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đã XÓA Key: <code>{k}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                elif payload.startswith("K_VIP_"):
-                    k = payload.replace("K_VIP_", "")
-                    if k in db["keys"]:
-                        db["keys"][k]["vip"] = not db["keys"][k].get("vip", False)
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đổi VIP Key <code>{k}</code> thành: <b>{db['keys'][k]['vip']}</b>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                elif payload.startswith("K_BAN_"):
-                    k = payload.replace("K_BAN_", "")
-                    if k in db["keys"]:
-                        db["keys"][k]["status"] = "banned" if db["keys"][k]["status"] == "active" else "active"
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đổi trạng thái Key <code>{k}</code> thành: <b>{db['keys'][k]['status']}</b>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                elif payload.startswith("K_EXT_"):
-                    k = payload.replace("K_EXT_", "")
-                    user["state"] = f"adm_ext_{k}"
-                    tg_edit(sid, user["main_menu_id"], f"⏳ Nhập thời gian muốn gia hạn thêm cho Key <code>{k}</code> (VD: 30d):", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-                elif payload.startswith("K_BND_"):
-                    k = payload.replace("K_BND_", "")
-                    user["state"] = f"adm_bnd_{k}"
-                    tg_edit(sid, user["main_menu_id"], f"🔐 Nhập <b>Tên Tài Khoản OLM</b> muốn Độc Quyền cho Key <code>{k}</code>:\n(Nhập XOA để gỡ ghim)", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-            save_db(db)
-            return "ok", 200
-
-        # ================= XỬ LÝ NHẬP VĂN BẢN (CŨ CỦA BẠN) =================
-        if msg_text and user["main_menu_id"]:
+        if msg_text and not msg_text.startswith("/") and user["state"] != "none":
             
             if user["state"] == "wait_loader_key":
                 k = msg_text
@@ -489,17 +298,14 @@ def telegram_webhook():
                 if valid: 
                     user["temp_key"] = k
                     user["state"] = "wait_loader_olm"
-                    tg_edit(sid, user["main_menu_id"], f"✅ Key Hợp Lệ!\n\n👤 Nhập <b>Tài khoản OLM</b> bạn muốn cho phép hoạt động (Ví dụ: <code>hp_luongvantuyen</code>):")
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Key Hợp Lệ!\n\n👤 Nhập <b>Tài khoản OLM</b> bạn muốn cho phép hoạt động (Ví dụ: <code>hp_luongvantuyen</code>):")
                 else:
-                    tg_edit(sid, user["main_menu_id"], f"❌ <b>{msg}</b>\n\n🔑 Vui lòng nhập lại Key khác:")
-                save_db(db)
-                return "ok", 200
-
-            if user["state"] == "wait_loader_olm":
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>{msg}</b>\n\n🔑 Vui lòng nhập lại Key khác:")
+            
+            elif user["state"] == "wait_loader_olm":
                 olm_target = msg_text
                 k = user["temp_key"]
                 
-                # Khóa cứng OLM vào database
                 if not db["keys"][k].get("bound_olm"):
                     db["keys"][k]["bound_olm"] = olm_target
 
@@ -515,10 +321,8 @@ def telegram_webhook():
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔴 Tắt Spoofer" if db["keys"][k].get("loader_enabled", True) else "🟢 Bật Spoofer", "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]})
                 user["live_msg_id"] = user["main_menu_id"]
                 add_log(db, "ĐĂNG KÝ OLM", k, "Telegram", "Bot Setup", olm_target)
-                save_db(db)
-                return "ok", 200
-
-            if user["state"].startswith("wait_qty_V_"):
+            
+            elif user["state"].startswith("wait_qty_V_"):
                 pkg = user["state"].replace("wait_qty_", "")
                 if msg_text.isdigit() and int(msg_text) > 0:
                     qty = int(msg_text)
@@ -533,29 +337,25 @@ def telegram_webhook():
                             user["purchases"].insert(0, {"key": nk, "type": f"VIP {name}", "time": now_ms})
                             add_log(db, "MUA KEY", nk, "Telegram", f"Khách: {safe_name}", "N/A")
                             gen_keys.append(nk)
-                        
                         user["state"] = "none"
                         k_str = "\n".join([f"🔑 <code>{k}</code>" for k in gen_keys])
                         txt = f"🎊 <b>CHÚC MỪNG BẠN ĐÃ MUA KEY THÀNH CÔNG!</b>\n➖➖➖➖➖➖➖➖\n{k_str}\n\n📱 Thiết bị cho phép: <b>1 Máy</b>\n⏳ Thời gian sử dụng: <b>{name}</b>\n\n<i>(Key sẽ bắt đầu tính giờ khi bạn nhập vào Loader)</i>"
-                        tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔗 Khởi Tạo Script Ngay", "callback_data": "LOADER_MENU"}]]})
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔗 Khởi Tạo Script Ngay", "callback_data": "LOADER_MENU"}]]})
                     else:
-                        tg_edit(sid, user["main_menu_id"], "❌ Số dư không đủ!", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]})
-                save_db(db)
-                return "ok", 200
-
-            if user["state"] == "wait_reset_key":
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Số dư không đủ!", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]})
+            
+            elif user["state"] == "wait_reset_key":
                 if msg_text in db["keys"]:
                     db["keys"][msg_text]["devices"] = []
                     db["keys"][msg_text]["known_ips"] = []
                     user["resets"] -= 1
                     user["state"] = "none"
                     save_db(db)
-                    tg_edit(sid, user["main_menu_id"], f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
                 else: 
-                    tg_edit(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
-                return "ok", 200
-
-            if user["state"] == "wait_admin_key":
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
+            
+            elif user["state"] == "wait_admin_key":
                 if msg_text in db["keys"] and db["keys"][msg_text].get("target") == "admin_bot":
                     if db["keys"][msg_text].get("exp") == "pending":
                         db["keys"][msg_text]["exp"] = int(time.time() * 1000) + db["keys"][msg_text].get("durationMs", 0)
@@ -563,84 +363,65 @@ def telegram_webhook():
                     user["is_admin"] = True
                     user["admin_key"] = msg_text
                     user["state"] = "none"
-                    save_db(db)
-                    tg_edit(sid, user["main_menu_id"], "✅ <b>XÁC THỰC THÀNH CÔNG!</b> Bấm nút dưới để vào Admin.", {"inline_keyboard": [[{"text": "👑 Vào Bảng Admin", "callback_data": "ADM_MENU"}]]})
+                    payload = "ADM_MENU"
                 else: 
-                    tg_edit(sid, user["main_menu_id"], f"❌ <b>TỪ CHỐI TRUY CẬP:</b>\nPhải là Key Admin hợp lệ mới được vào!", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
-                return "ok", 200
-
-            if user.get("is_admin") and user["state"].startswith("adm_"):
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>TỪ CHỐI TRUY CẬP:</b>\nPhải là Key Admin hợp lệ mới được vào!", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
+            
+            elif user.get("is_admin") and user["state"].startswith("adm_"):
                 try:
                     parts = msg_text.split()
                     if user["state"] == "adm_create":
                         sys_t = parts[0].upper()
                         dur_str = parts[1]
                         devs = int(parts[2])
-                        dur = parse_duration(dur_str)
                         nk = f"{sys_t}-{random.randint(1000,9999)}"
-                        db["keys"][nk] = {"exp": "pending", "maxDevices": devs, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": sys_t.lower(), "durationMs": dur, "bound_olm": "", "loader_enabled": True}
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đã tạo Key mới:\n<code>{nk}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                    
+                        db["keys"][nk] = {"exp": "pending", "maxDevices": devs, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": sys_t.lower(), "durationMs": parse_duration(dur_str), "bound_olm": "", "loader_enabled": True}
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã tạo Key mới:\n<code>{nk}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_bal":
-                        t_user = parts[0]
-                        amt_str = parts[1]
-                        rst = int(parts[2])
+                        t_user, amt_str, rst = parts[0], parts[1], int(parts[2])
                         amt = int(amt_str.lower().replace("k", "000")) 
                         t_id = get_user_id_by_username(db, t_user) if t_user.startswith('@') else t_user
                         if t_id and t_id in db["bot_users"]:
                             db["bot_users"][t_id]["balance"] += amt
                             db["bot_users"][t_id]["resets"] += rst
-                            tg_edit(sid, user["main_menu_id"], f"✅ Đã nạp <b>{amt}đ</b> và <b>{rst}</b> reset cho {t_user}", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã nạp <b>{amt}đ</b> và <b>{rst}</b> reset cho {t_user}", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                             tg_send(t_id, f"🎉 <b>Admin vừa nạp tiền!</b>\n💰 +{amt}đ | 🔄 +{rst} reset.")
                         else:
-                            tg_edit(sid, user["main_menu_id"], "❌ Không tìm thấy User!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Không tìm thấy User!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_lock":
-                        dur_str = parts[0]
-                        target = parts[1]
+                        dur_str, target = parts[0], parts[1]
                         dur = parse_duration(dur_str)
                         db["locked_olm"][target] = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đã Khóa OLM: <b>{target}</b> ({dur_str})", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã Khóa OLM: <b>{target}</b> ({dur_str})", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_ban":
-                        dur_str = parts[0]
-                        target = parts[1]
+                        dur_str, target = parts[0], parts[1]
                         dur = parse_duration(dur_str)
                         db["banned_ips"][target] = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đã Ban IP: <b>{target}</b> ({dur_str})", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã Ban IP: <b>{target}</b> ({dur_str})", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_note":
-                        dur_str = parts[0]
-                        msg = msg_text.split(maxsplit=1)[1]
+                        dur_str, msg = parts[0], msg_text.split(maxsplit=1)[1]
                         dur = parse_duration(dur_str)
                         db["global_notice"] = {"msg": msg, "exp": "permanent" if dur == 'permanent' else int(time.time()*1000) + dur}
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đã cài TB Lên Tool: {msg}", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                    
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã cài TB Lên Tool: {msg}", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_bn_all":
-                        dur_str = parts[0]
-                        msg = msg_text.split(maxsplit=1)[1]
+                        dur_str, msg = parts[0], msg_text.split(maxsplit=1)[1]
                         dur = parse_duration(dur_str)
                         exp = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
                         for uid in db["bot_users"]:
                             db["bot_users"][uid]["notices"].append({"msg": msg, "exp": exp})
                             tg_send(uid, f"🔔 <b>TB TỪ ADMIN:</b>\n{msg}")
-                        tg_edit(sid, user["main_menu_id"], f"✅ Đã đẩy Thông Báo cho ALL Khách Hàng.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                    
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã đẩy Thông Báo cho ALL Khách Hàng.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_bn_priv":
-                        parts = msg_text.split(maxsplit=2)
-                        t_user = parts[0]
-                        dur_str = parts[1]
-                        msg = parts[2]
+                        t_user, dur_str, msg = msg_text.split(maxsplit=2)
                         dur = parse_duration(dur_str)
                         t_id = get_user_id_by_username(db, t_user) if t_user.startswith('@') else t_user
                         if t_id and t_id in db["bot_users"]:
                             exp = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
                             db["bot_users"][t_id]["notices"].append({"msg": msg, "exp": exp})
                             tg_send(t_id, f"🔔 <b>TB TỪ ADMIN:</b>\n{msg}")
-                            tg_edit(sid, user["main_menu_id"], f"✅ Đã gửi TB riêng cho {t_user}.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã gửi TB riêng cho {t_user}.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                         else:
-                            tg_edit(sid, user["main_menu_id"], "❌ Không tìm thấy User!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Không tìm thấy User!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_check_user":
                         t_user = msg_text
                         t_id = get_user_id_by_username(db, t_user) if t_user.startswith('@') else t_user
@@ -648,8 +429,7 @@ def telegram_webhook():
                             uinfo = db["bot_users"][t_id]
                             txt = f"👤 <b>HỒ SƠ KHÁCH HÀNG:</b> {uinfo['name']} ({uinfo.get('username','')})\n🆔 ID: <code>{t_id}</code>\n\n💰 Dư: <b>{uinfo['balance']}đ</b> | 🔄 Reset: <b>{uinfo['resets']}</b>\n\n🛒 <b>LỊCH SỬ MUA:</b>\n"
                             user_keys = [p["key"] for p in uinfo.get("purchases", [])]
-                            for p in uinfo.get("purchases", [])[:5]:
-                                txt += f"- <code>{p['key']}</code> | {time.strftime('%d/%m', time.localtime(p['time']/1000))}\n"
+                            for p in uinfo.get("purchases", [])[:5]: txt += f"- <code>{p['key']}</code> | {time.strftime('%d/%m', time.localtime(p['time']/1000))}\n"
                             txt += "\n📜 <b>LOG HOẠT ĐỘNG:</b>\n"
                             c = 0
                             for l in db.get("logs", []):
@@ -657,10 +437,9 @@ def telegram_webhook():
                                     txt += f"• {time.strftime('%H:%M', time.localtime(l['time']))} | {l['action']} | {l['ip']} | OLM: {l.get('olm_name','')}\n"
                                     c += 1
                                     if c >= 10: break
-                            tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                         else:
-                            tg_edit(sid, user["main_menu_id"], "❌ Khách không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Khách không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_manage_input":
                         k = msg_text
                         if k.startswith('@') or k.isdigit():
@@ -673,48 +452,207 @@ def telegram_webhook():
                                         del db["keys"][uk]
                                         c += 1
                                 db["bot_users"][t_id]["purchases"] = []
-                                tg_edit(sid, user["main_menu_id"], f"✅ Đã xóa sạch <b>{c}</b> Key của {k}.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã xóa sạch <b>{c}</b> Key của {k}.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                             else:
-                                tg_edit(sid, user["main_menu_id"], "❌ Không tìm thấy User!", {"inline_keyboard": [[{"text": "🔙", "callback_data": "ADM_MENU"}]]})
+                                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Không tìm thấy User!", {"inline_keyboard": [[{"text": "🔙", "callback_data": "ADM_MENU"}]]})
                         elif k in db["keys"]:
                             kd = db["keys"][k]
                             st = "Hoạt động" if kd['status']=='active' else "Bị Khóa"
                             is_vip = "VIP" if kd.get('vip') else "Thường"
-                            exp = format_time(kd['exp'], now_ms) if kd['exp']!='pending' else 'Chờ kích hoạt'
+                            exp = format_time(kd['exp'], now_ms)
                             bnd = kd.get('bound_olm', '')
                             bnd_str = f"Chỉ định: <b>{bnd}</b>" if bnd else "Chạy mọi acc"
                             txt = f"🔑 <b>BẢNG ĐIỀU KHIỂN KEY:</b> <code>{k}</code>\n\n📌 Hệ: {kd['target'].upper()} | 💎 {is_vip} | ⚡ {st}\n⏳ Hạn: {exp}\n📱 TB: {len(kd.get('devices',[]))}/{kd['maxDevices']}\n🔐 Khóa Account: {bnd_str}"
-                            markup = {"inline_keyboard": [
-                                [{"text": "🔄 Gỡ TB", "callback_data": f"K_RST_{k}"}, {"text": "🗑 Xóa", "callback_data": f"K_DEL_{k}"}],
-                                [{"text": "🌟 Đổi VIP", "callback_data": f"K_VIP_{k}"}, {"text": "⏳ Gia Hạn", "callback_data": f"K_EXT_{k}"}],
-                                [{"text": "🔒 Bật/Tắt Khóa Key", "callback_data": f"K_BAN_{k}"}],
-                                [{"text": "🔐 Ghim Độc Quyền OLM", "callback_data": f"K_BND_{k}"}],
-                                [{"text": "🔙 Về Menu Admin", "callback_data": "ADM_MENU"}]]}
-                            tg_edit(sid, user["main_menu_id"], txt, markup)
+                            markup = {"inline_keyboard": [[{"text": "🔄 Gỡ TB", "callback_data": f"K_RST_{k}"}, {"text": "🗑 Xóa", "callback_data": f"K_DEL_{k}"}], [{"text": "🌟 Đổi VIP", "callback_data": f"K_VIP_{k}"}, {"text": "⏳ Gia Hạn", "callback_data": f"K_EXT_{k}"}], [{"text": "🔒 Bật/Tắt Khóa Key", "callback_data": f"K_BAN_{k}"}], [{"text": "🔐 Ghim Độc Quyền OLM", "callback_data": f"K_BND_{k}"}], [{"text": "🔙 Về Menu Admin", "callback_data": "ADM_MENU"}]]}
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
                         else:
-                            tg_edit(sid, user["main_menu_id"], "❌ Mã Key sai!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Mã Key sai!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"].startswith("adm_ext_"):
                         k = user["state"].replace("adm_ext_", "")
                         dur = parse_duration(msg_text)
                         if k in db["keys"]:
                             if db["keys"][k]['exp'] not in ['permanent', 'pending']:
                                 db["keys"][k]['exp'] = max(db["keys"][k]['exp'], int(time.time()*1000)) + dur
-                                tg_edit(sid, user["main_menu_id"], f"✅ Đã gia hạn Key <code>{k}</code> thêm {msg_text}!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                    
+                                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã gia hạn Key <code>{k}</code> thêm {msg_text}!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"].startswith("adm_bnd_"):
                         k = user["state"].replace("adm_bnd_", "")
                         if k in db["keys"]:
                             if msg_text.upper() == "XOA": db["keys"][k]["bound_olm"] = ""
                             else: db["keys"][k]["bound_olm"] = msg_text.strip()
-                            tg_edit(sid, user["main_menu_id"], f"✅ Cập nhật độc quyền OLM cho Key <code>{k}</code> thành công!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                
-                    save_db(db)
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Cập nhật độc quyền OLM cho Key <code>{k}</code> thành công!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                    
                     user["state"] = "none"
-                    save_db(db)
                 except Exception as e: 
-                    tg_edit(sid, user["main_menu_id"], f"❌ Lỗi cú pháp! Vui lòng thao tác lại.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>Lỗi Cú Pháp!</b>\nBạn đã nhập sai định dạng lệnh.", {"inline_keyboard": [[{"text": "🔙 Về Menu Admin", "callback_data": "ADM_MENU"}]]})
+            
+            save_db(db)
             return "ok", 200
+
+        # ================= XỬ LÝ NÚT BẤM (PAYLOAD) =================
+        if payload:
+            user["live_msg_type"] = None
+            
+            if payload == "MENU_MAIN":
+                valid_notices = [n for n in user["notices"] if n["exp"] == 'permanent' or n["exp"] > now_ms]
+                user["notices"] = valid_notices
+                txt = "🎉 <b>Chào mừng bạn đến với AutoKey (Admin @luongtuyen20)</b>\n➖➖➖➖➖➖➖➖\n\n"
+                sys_notice = db.get("global_notice", {})
+                if sys_notice.get("msg") and (sys_notice.get("exp") == "permanent" or sys_notice.get("exp", 0) > now_ms):
+                    txt += f"📢 <b>THÔNG BÁO HỆ THỐNG:</b>\n🔸 {sys_notice['msg']}\n\n"
+                if valid_notices:
+                    txt += "🔔 <b>THÔNG BÁO CÁ NHÂN:</b>\n" + "\n".join([f"🔸 {n['msg']}" for n in valid_notices]) + "\n\n"
+                txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Reset Key: <b>{user['resets']}/3</b>\n\n👇 Chọn dịch vụ:"
+                markup = {"inline_keyboard": [[{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}], [{"text": "🔗 Quản Lý Script OLM", "callback_data": "LOADER_MENU"}]]}
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
+
+            elif payload == "LOADER_MENU":
+                user["state"] = "none"
+                txt = "🔗 <b>QUẢN LÝ SCRIPT OLM</b>\n\n👇 Vui lòng chọn chức năng bạn muốn sử dụng:"
+                markup = {"inline_keyboard": [
+                    [{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}],
+                    [{"text": "📂 Lấy File OLM Mode", "callback_data": "LOADER_FILE_OLM"}],
+                    [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]
+                ]}
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
+
+            elif payload == "LOADER_ENTER_KEY":
+                user["state"] = "wait_loader_key"
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🔗 <b>TẠO KẾT NỐI SCRIPT OLM</b>\n\n🔑 Vui lòng dán <b>Mã Key</b> của bạn vào đây:", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]})
+
+            elif payload == "LOADER_FILE_OLM":
+                user["state"] = "none"
+                txt = "📂 <b>FILE OLM MODE ĐỘC QUYỀN</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n"
+                txt += "🔗 <b>Link Cài Đặt (Gist):</b>\n"
+                txt += "<code>https://gist.githubusercontent.com/luongtuyenkqpa/1bc8112b37a09346fc2d89894154d6a1/raw/0930c2808bd6ea6a8ec97e5ca12de57b6d4dcc00/gistfile1.txt</code>\n\n"
+                txt += "🔐 <b>Mật khẩu OLM MODE:</b>\n"
+                txt += "<code>OLM_VIP_786B-XQCH-BYEF-SYUS</code>\n\n"
+                txt += "<i>👉 Hãy copy link trên dán vào Violentmonkey, sau đó dùng mật khẩu để kích hoạt tính năng!</i>"
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]})
+
+            elif payload == "LOADER_DISCONNECT":
+                user["state"] = "none"
+                user["loader_active"] = False
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "✅ <b>ĐÃ ĐÓNG CỬA SỔ LIVE.</b>\nCửa sổ theo dõi trạng thái đã được ẩn đi.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+            
+            elif payload == "TOGGLE_LOADER":
+                k = user.get("loader_key")
+                if k and k in db["keys"]:
+                    db["keys"][k]["loader_enabled"] = not db["keys"][k].get("loader_enabled", True)
+                    st_txt = "BẬT 🟢" if db["keys"][k]["loader_enabled"] else "TẮT 🔴"
+                    tg_send(sid, f"⚙️ Đã {st_txt} Script Spoofer trên Web OLM!")
+                    user["live_msg_type"] = "loader"
+
+            elif payload == "BUY":
+                markup = {"inline_keyboard": [[{"text": "👑 Mua Key VIP", "callback_data": "BUY_VIP"}, {"text": "👤 Mua Key Thường", "callback_data": "BUY_NOR"}],[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]}
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "💳 <b>CHỌN LOẠI KEY MUỐN MUA:</b>", markup)
+            elif payload == "BUY_NOR":
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🛠 <b>Tính năng Mua Key Thường đang bảo trì.</b>", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]})
+            elif payload == "BUY_VIP":
+                txt = "🛒 <b>BẢNG GIÁ KEY VIP:</b>\n🕒 1 Giờ: <b>7,000đ</b>\n📅 7 Ngày: <b>30,000đ</b>\n📆 30 Ngày: <b>85,000đ</b>\n🏆 1 Năm: <b>200,000đ</b>\n\n👇 Chọn gói:"
+                markup = {"inline_keyboard": [[{"text": "🕒 1 Giờ", "callback_data": "V_1H"},{"text": "📅 7 Ngày", "callback_data": "V_7D"}], [{"text": "📆 30 Ngày", "callback_data": "V_30D"},{"text": "🏆 1 Năm", "callback_data": "V_1Y"}], [{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]}
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
+            elif payload.startswith("V_"):
+                user["state"] = f"wait_qty_{payload}"
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🔢 Nhập <b>SỐ LƯỢNG</b> Key muốn mua:")
+            elif payload == "RESET":
+                if user["resets"] <= 0: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Bạn đã hết lượt Reset.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
+                else:
+                    user["state"] = "wait_reset_key"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
+
+            # ================= LỆNH CHUẨN ĐỊNH TUYẾN NÚT ADMIN =================
+            elif user.get("is_admin"):
+                user["state"] = "none"
+                if payload == "ADM_MENU":
+                    user["live_msg_type"] = "admin"
+                    adm_key = user.get("admin_key", "")
+                    if adm_key in db["keys"]:
+                        t_left = format_time(db["keys"][adm_key]["exp"], now_ms)
+                        markup = {"inline_keyboard": [[{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}], [{"text": "🔒 Khóa Nick OLM", "callback_data": "ADM_W_LOCK"}, {"text": "🚫 Chặn IP Máy", "callback_data": "ADM_W_BAN"}], [{"text": "📢 TB Lên Tool", "callback_data": "ADM_W_NOTE"}, {"text": "💬 TB Vào Bot", "callback_data": "ADM_BOT_NOTE"}], [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}], [{"text": "📜 Theo Dõi Radar", "callback_data": "ADM_LOGS"}], [{"text": "❌ Hủy Quyền Admin", "callback_data": "ADM_LOGOUT"}]]}
+                        txt = f"👑 <b>BẢNG ĐIỀU KHIỂN SERVER (SaaS)</b>\n\n⏳ <i>Hạn Admin còn: {t_left}</i>"
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
+                        user["live_msg_id"] = user["main_menu_id"]
+                    else:
+                        user["is_admin"] = False
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "⚠️ <b>Key Admin bị khóa hoặc hết hạn.</b> Đã tước quyền!")
+                
+                elif payload == "ADM_W_CREATE":
+                    user["state"] = "adm_create"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "➕ <b>TẠO KEY TOOL</b>\nCú pháp: <code>Hệ Thời_gian Số_máy</code>\nVD: <code>OLM 30d 1</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_W_BAL":
+                    user["state"] = "adm_bal"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "💰 <b>NẠP TIỀN & RESET</b>\nCú pháp: <code>@user Tiền Số_Reset</code>\nVD: <code>@luongtuyen20 50k 3</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_W_LOCK":
+                    user["state"] = "adm_lock"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🔒 <b>KHÓA TÊN OLM</b>\nCú pháp: <code>Thời_gian Tên_OLM</code>\nVD: <code>vv hp_abc</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_W_BAN":
+                    user["state"] = "adm_ban"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🚫 <b>CHẶN IP MÁY</b>\nCú pháp: <code>Thời_gian IP</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_W_NOTE":
+                    user["state"] = "adm_note"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📢 <b>TB LÊN TOOL</b>\nCú pháp: <code>Thời_gian Nội_dung</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_BOT_NOTE":
+                    markup = {"inline_keyboard": [[{"text": "📢 Gửi ALL Khách", "callback_data": "ADM_BN_ALL"}, {"text": "👤 Gửi 1 Khách Riêng", "callback_data": "ADM_BN_PRIV"}], [{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]}
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "💬 <b>TB VÀO BOT TELEGRAM</b>", markup)
+                elif payload == "ADM_BN_ALL":
+                    user["state"] = "adm_bn_all"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "💬 <b>GỬI TẤT CẢ KHÁCH</b>\nCú pháp: <code>Thời_gian Nội_dung</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_BN_PRIV":
+                    user["state"] = "adm_bn_priv"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "👤 <b>GỬI TIN RIÊNG</b>\nCú pháp: <code>@user Thời_gian Nội_dung</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_USER":
+                    user["state"] = "adm_check_user"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "👤 <b>SOI THÔNG TIN</b>\nNhập <code>@username</code> hoặc <code>ID Telegram</code>:", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_MANAGE":
+                    user["state"] = "adm_manage_input"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🛠 <b>QUẢN LÝ KEY / USER</b>\n\n📝 Nhập:\n- <b>Mã Key</b> (Sửa/xóa/Gia hạn/Ghim tài khoản)\n- <b>@username</b> (Xóa sạch mọi Key của khách đó)", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload == "ADM_LOGOUT":
+                    user["is_admin"] = False
+                    user["admin_key"] = ""
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "👋 Đã đăng xuất Admin thành công!", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+                elif payload == "ADM_LOGS":
+                    txt = "📜 <b>RADAR LOGS (10 HOẠT ĐỘNG MỚI NHẤT):</b>\n\n"
+                    for l in db.get("logs", [])[:10]: txt += f"• {time.strftime('%H:%M', time.localtime(l['time']))} | <b>{l['action']}</b>\n  └ Key: <code>{l['key']}</code> | User: {l.get('olm_name','')}\n"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                
+                # CHỨC NĂNG QUẢN LÝ TỪNG KEY
+                elif payload.startswith("K_RST_"):
+                    k = payload.replace("K_RST_", "")
+                    if k in db["keys"]:
+                        db["keys"][k]["devices"] = []
+                        db["keys"][k]["known_ips"] = []
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã Gỡ sạch TB/IP của Key: <code>{k}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_DEL_"):
+                    k = payload.replace("K_DEL_", "")
+                    if k in db["keys"]:
+                        del db["keys"][k]
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã XÓA Key: <code>{k}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_VIP_"):
+                    k = payload.replace("K_VIP_", "")
+                    if k in db["keys"]:
+                        db["keys"][k]["vip"] = not db["keys"][k].get("vip", False)
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đổi VIP Key <code>{k}</code> thành: <b>{db['keys'][k]['vip']}</b>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_BAN_"):
+                    k = payload.replace("K_BAN_", "")
+                    if k in db["keys"]:
+                        db["keys"][k]["status"] = "banned" if db["keys"][k]["status"] == "active" else "active"
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đổi trạng thái Key <code>{k}</code> thành: <b>{db['keys'][k]['status']}</b>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_EXT_"):
+                    k = payload.replace("K_EXT_", "")
+                    user["state"] = f"adm_ext_{k}"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"⏳ Nhập thời gian muốn gia hạn thêm cho Key <code>{k}</code> (VD: 30d):", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                elif payload.startswith("K_BND_"):
+                    k = payload.replace("K_BND_", "")
+                    user["state"] = f"adm_bnd_{k}"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"🔐 Nhập <b>Tên Tài Khoản OLM</b> muốn Độc Quyền cho Key <code>{k}</code>:\n(Nhập XOA để gỡ ghim)", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+            
+            elif payload.startswith("ADM_"):
+                # Cố tình bấm nút admin khi chưa có quyền
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ <b>BẠN KHÔNG CÓ QUYỀN TRUY CẬP ADMIN!</b>", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+
+            save_db(db)
+            return "ok", 200
+
     except Exception as e: print("Webhook Error:", e)
     return "ok", 200
 
@@ -761,7 +699,7 @@ def get_notice():
         return jsonify({"msg": notice.get("msg", "")})
     return jsonify({"msg": ""})
 
-# [CỰC CHUẨN] SCRIPT GIAO DIỆN TÂN TIẾN - CHẶN SAI ACCOUNT (FIX ĐĂNG XUẤT LỖI ẢO VÀ REDIRECT QUAY LẠI MÀN HÌNH ĐĂNG NHẬP KEY)
+# ĐIỂM CHỐT: SCRIPT GIAO DIỆN TÂN TIẾN - CHẶN SAI ACCOUNT (FIX ĐĂNG XUẤT LỖI ẢO)
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
@@ -861,13 +799,14 @@ def serve_dynamic_script():
                 localStorage.setItem('lvt_vip_key', val);
                 KEY = val;
                 overlay.remove();
+                emptyPingCount = 0;
                 checkServer(); 
             }}
         }};
     }}
 
     // =========================================================
-    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC TỪ COOKIE BẢO MẬT
+    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC TỪ COOKIE & BIẾN NỘI BỘ
     // =========================================================
     let realUser = localStorage.getItem('lvt_real_user') || "N/A";
     
@@ -878,17 +817,32 @@ def serve_dynamic_script():
         }}
     }}
 
-    function getRealUserFromCookie() {{
+    function getRealUser() {{
+        const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        // Quét biến toàn cục
+        for (let prop of ['userName', 'userId', 'username', 'account']) {{
+            if (uw[prop] && typeof uw[prop] === 'string' && uw[prop] !== VIP_USER && uw[prop].length > 2) {{
+                saveRealUser(uw[prop]);
+                return uw[prop];
+            }}
+        }}
+
+        // Quét Cookie
         let cookies = document.cookie.split(';');
         for (let i = 0; i < cookies.length; i++) {{
             let c = cookies[i].trim();
             if (c.startsWith("username=") || c.startsWith("userId=")) {{
                 let val = decodeURIComponent(c.substring(c.indexOf('=') + 1));
                 if (val !== VIP_USER && val !== VIP_NAME && val.length > 1) {{
+                    saveRealUser(val);
                     return val;
                 }}
             }}
         }}
+        
+        let cached = localStorage.getItem('lvt_real_user');
+        if (cached && cached !== "N/A") return cached;
+
         return "N/A";
     }}
 
@@ -899,10 +853,11 @@ def serve_dynamic_script():
     
     ['userName', 'userId', 'username', 'account'].forEach(prop => {{
         let actual = uw[prop];
+        if (actual && typeof actual === 'string' && actual !== VIP_USER) saveRealUser(actual);
         try {{
             Object.defineProperty(uw, prop, {{
                 get: () => window.lvt_spoofer_active ? VIP_USER : actual,
-                set: (val) => {{ saveRealUser(val); actual = val; }},
+                set: (val) => {{ if(val !== VIP_USER) saveRealUser(val); actual = val; }},
                 configurable: true
             }});
         }} catch(e){{}}
@@ -935,7 +890,7 @@ def serve_dynamic_script():
     }} catch(e){{}}
 
     // =========================================================
-    // VÒNG LẶP KIỂM TRA MÁY CHỦ (CHỐNG LỖI ĐĂNG XUẤT ẢO)
+    // VÒNG LẶP KIỂM TRA MÁY CHỦ (BỘ ĐẾM TRỄ THÔNG MINH)
     // =========================================================
     function fetchGlobalNotice() {{
         fetch(SERVER_URL + '/api/get_notice').then(r => r.json()).then(data => {{
@@ -959,25 +914,14 @@ def serve_dynamic_script():
             return;
         }}
 
-        // Đọc tên thật từ Cookie phiên làm việc
-        let currentUser = getRealUserFromCookie();
-        if (currentUser !== "N/A") saveRealUser(currentUser);
-        else currentUser = localStorage.getItem('lvt_real_user') || "N/A";
-
-        // XÁC MINH CHUẨN XÁC: Nếu đã mất Cookie Phiên, xem như mất kết nối (đăng xuất)
-        if (!document.cookie.includes('PHPSESSID') && !document.cookie.includes('olm_')) {{
-            emptyPingCount++;
-            currentUser = "N/A";
-        }} else {{
-            emptyPingCount = 0;
-        }}
+        let currentUser = getRealUser();
 
         fetch(SERVER_URL + '/api/check', {{
             method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
             body: JSON.stringify({{ key: KEY, deviceId: deviceId, olm_name: currentUser }})
         }}).then(res => res.json()).then(data => {{
             
-            // 1. NẾU KHÓA KEY HOẶC BAN IP (Server tự khóa)
+            // 1. LỖI KHÓA KEY TỪ SERVER
             if (data.status !== 'success') {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'error') {{
@@ -987,7 +931,7 @@ def serve_dynamic_script():
                 return;
             }}
 
-            // 2. NẾU BỊ TẮT NGỤY TRANG QUA NÚT TRÊN BOT TELEGRAM
+            // 2. LỆNH TẮT TỪ BOT
             if (data.loader_enabled === false) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'disabled') {{
@@ -999,21 +943,23 @@ def serve_dynamic_script():
             
             let bound = data.bound_olm;
 
-            // 3. LỖI ĐĂNG XUẤT (Chờ nhịp quét 3 lần (~9s) mới khóa để không bị khóa lộn khi mạng lag load trang)
-            if (emptyPingCount > 3) {{
-                window.lvt_spoofer_active = false;
-                if (lastToastState !== 'logged_out') {{
-                    showBigWarningAndResetKey("BẠN ĐÃ ĐĂNG XUẤT OLM", `⚠️ Bạn chưa vào đúng tài khoản đăng nhập olm mà key cho phép hoặc đã đăng xuất tài khoản đăng nhập mà key cho phép.<br>Tài khoản cho phép là: <b>${{bound}}</b>`);
-                    lastToastState = 'logged_out';
+            // 3. XỬ LÝ ĐĂNG XUẤT (Chờ nhịp quét 4 lần = 12 giây để Load web)
+            if (currentUser === "N/A") {{
+                emptyPingCount++;
+                if (emptyPingCount > 4) {{
+                    window.lvt_spoofer_active = false;
+                    if (lastToastState !== 'logged_out') {{
+                        showBigWarningAndResetKey("BẠN ĐÃ ĐĂNG XUẤT OLM", `⚠️ Bạn chưa vào đúng tài khoản đăng nhập olm mà key cho phép hoặc đã đăng xuất tài khoản đăng nhập mà key cho phép.<br>Tài khoản cho phép là: <b>${{bound}}</b>`);
+                        lastToastState = 'logged_out';
+                    }}
                 }}
-                return;
+                return; // Ngắt luồng tại đây để đợi trang load xong, ko báo sai tài khoản
             }}
             
-            // Nếu mới rỗng 1-2 lần (đang xoay vòng load trang), im lặng chờ kết quả lần sau
-            if (emptyPingCount > 0) return;
+            emptyPingCount = 0; // Reset nếu đã tìm ra tài khoản
 
-            // 4. LỖI SAI TÀI KHOẢN (Vào khác tên đăng ký)
-            if (bound && bound !== "N/A" && currentUser !== "N/A" && currentUser.toLowerCase() !== bound.toLowerCase()) {{
+            // 4. XỬ LÝ SAI TÀI KHOẢN 
+            if (bound && bound !== "N/A" && currentUser.toLowerCase() !== bound.toLowerCase()) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'wrong_acc') {{
                     showBigWarningAndResetKey("SAI TÀI KHOẢN OLM", `⚠️ Bạn chưa vào đúng tài khoản đăng nhập olm mà key cho phép hoặc đã đăng xuất tài khoản đăng nhập mà key cho phép.<br>Tài khoản cho phép là: <b>${{bound}}</b>`);
@@ -1022,7 +968,7 @@ def serve_dynamic_script():
                 return;
             }}
 
-            // 5. THỎA MÃN TẤT CẢ (Vào đúng tài khoản) -> MỞ SPOOFER BÁO XANH LÁ
+            // 5. VÀO ĐÚNG TÀI KHOẢN -> BẬT NGỤY TRANG
             if (!window.lvt_spoofer_active && currentUser !== "N/A") {{
                 window.lvt_spoofer_active = true;
                 showToast(`🎉 <b>XÁC THỰC THÀNH CÔNG!</b><br>Chào mừng tài khoản: <span style="color:#00ffcc;">${{currentUser}}</span><br>Đã bật chế độ ngụy trang VIP.`, '#00ffcc');
