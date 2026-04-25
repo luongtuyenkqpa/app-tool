@@ -278,7 +278,7 @@ def telegram_webhook():
         if msg_text:
             requests.post(f"{TELEGRAM_API_URL}/deleteMessage", json={"chat_id": sid, "message_id": msg_id})
 
-        # ================= BIẾN LỆNH GÕ THÀNH PAYLOAD =================
+        # ================= LỆNH CHÍNH =================
         if msg_text.startswith("/"):
             user["state"] = "none"
             user["live_msg_type"] = None
@@ -297,7 +297,7 @@ def telegram_webhook():
                     save_db(db)
                     return "ok", 200
 
-        # ================= XỬ LÝ VĂN BẢN (THEO STATE) =================
+        # ================= XỬ LÝ VĂN BẢN ĐẦU VÀO (THEO TRẠNG THÁI) =================
         if msg_text and not msg_text.startswith("/") and user["state"] != "none":
             
             if user["state"] == "wait_loader_key":
@@ -314,6 +314,7 @@ def telegram_webhook():
                 olm_target = msg_text
                 k = user["temp_key"]
                 
+                # Khóa cứng OLM vào database
                 if not db["keys"][k].get("bound_olm"):
                     db["keys"][k]["bound_olm"] = olm_target
 
@@ -513,7 +514,6 @@ def telegram_webhook():
                 markup = {"inline_keyboard": [[{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}], [{"text": "🔗 Quản Lý Script OLM", "callback_data": "LOADER_MENU"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
-            # [NEW] GIAO DIỆN QUẢN LÝ SCRIPT
             elif payload == "LOADER_MENU":
                 user["state"] = "none"
                 txt = "🔗 <b>QUẢN LÝ SCRIPT OLM</b>\n\n👇 Vui lòng chọn chức năng bạn muốn sử dụng:"
@@ -569,7 +569,7 @@ def telegram_webhook():
                     user["state"] = "wait_reset_key"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
 
-            # ================= LỆNH CHUẨN ĐỊNH TUYẾN NÚT ADMIN =================
+            # ================= LỆNH QUẢN LÝ ADMIN =================
             elif user.get("is_admin") and (payload.startswith("ADM_") or payload.startswith("K_")):
                 user["state"] = "none"
                 if payload == "ADM_MENU":
@@ -700,7 +700,7 @@ def get_notice():
         return jsonify({"msg": notice.get("msg", "")})
     return jsonify({"msg": ""})
 
-# [FIX CHÍ MẠNG] SCRIPT KIỂM TRA ĐÚNG/SAI TÀI KHOẢN QUA COOKIE
+# [ĐÃ FIX 100%] SCRIPT GIAO DIỆN TÂN TIẾN - CHẶN SAI ACCOUNT KHÔNG LỖI ẢO
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
@@ -798,14 +798,13 @@ def serve_dynamic_script():
                 localStorage.setItem('lvt_vip_key', val);
                 KEY = val;
                 overlay.remove();
-                emptyPingCount = 0;
                 checkServer(); 
             }}
         }};
     }}
 
     // =========================================================
-    // LẤY TÊN TÀI KHOẢN CHUẨN XÁC NHẤT
+    // LẤY TÊN TÀI KHOẢN CHUẨN XÁC TỪ OLM (LOẠI BỎ QUÉT ẢO)
     // =========================================================
     let realUser = localStorage.getItem('lvt_real_user') || "N/A";
     
@@ -817,7 +816,9 @@ def serve_dynamic_script():
     }}
 
     function getRealUser() {{
+        // Cố gắng đọc từ Cookie (OLM dùng 'username=' hoặc 'userId=')
         let cookies = document.cookie.split(';');
+        let found = false;
         for (let i = 0; i < cookies.length; i++) {{
             let c = cookies[i].trim();
             if (c.startsWith("username=") || c.startsWith("userId=")) {{
@@ -828,12 +829,10 @@ def serve_dynamic_script():
                 }}
             }}
         }}
-        // Nếu không có Cookie, thử lấy từ LocalStorage
+        // Nếu ko có cookie, lấy từ LocalStorage đã sao lưu
         let cached = localStorage.getItem('lvt_real_user');
-        if (cached && cached !== "N/A") {{
-            if (document.cookie.includes('PHPSESSID') || document.cookie.includes('olm_')) return cached;
-        }}
-        return "N/A"; // Hoàn toàn không có tài khoản
+        if (cached && cached !== "N/A") return cached;
+        return "N/A";
     }}
 
     // =========================================================
@@ -855,6 +854,11 @@ def serve_dynamic_script():
     try {{
         const origParse = uw.JSON.parse;
         uw.JSON.parse = function() {{
+            let text = arguments[0];
+            if (typeof text === 'string') {{
+                let m = text.match(/["'](?:username|userId)["']\\s*:\\s*["']([^"']+)["']/i);
+                if (m && m[1]) saveRealUser(m[1]);
+            }}
             let res = origParse.apply(this, arguments);
             if (res && typeof res === 'object') {{
                 if (res.username) saveRealUser(res.username);
@@ -874,7 +878,7 @@ def serve_dynamic_script():
     }} catch(e){{}}
 
     // =========================================================
-    // VÒNG LẶP KIỂM TRA MÁY CHỦ (BỘ ĐẾM TRỄ THÔNG MINH)
+    // VÒNG LẶP KIỂM TRA MÁY CHỦ (CHÍNH XÁC 100%)
     // =========================================================
     function fetchGlobalNotice() {{
         fetch(SERVER_URL + '/api/get_notice').then(r => r.json()).then(data => {{
@@ -890,8 +894,6 @@ def serve_dynamic_script():
         }}).catch(e=>{{}});
     }}
 
-    let emptyPingCount = 0;
-
     function checkServer() {{
         if (!KEY) {{
             if (window.top === window.self) showBeautifulLogin();
@@ -900,30 +902,33 @@ def serve_dynamic_script():
 
         let currentUser = getRealUser();
 
-        // Tăng bộ đếm nếu không tìm thấy user (chờ 3 lần = 9s để OLM load cookie)
-        if (currentUser === "N/A" || !currentUser) {{
-            emptyPingCount++;
-        }} else {{
-            emptyPingCount = 0;
+        // CHỈ BÁO ĐĂNG XUẤT KHI THẤY RÕ NÚT "ĐĂNG NHẬP" TRÊN MÀN HÌNH HOẶC KHÔNG CÒN COOKIE PHIÊN
+        let isLoggedOut = false;
+        if (document.body) {{
+            let html = document.body.innerHTML;
+            if (html.includes('href="/dang-nhap"') || html.includes('href="/login"')) isLoggedOut = true;
         }}
+        if (!document.cookie.includes('olm_')) isLoggedOut = true;
+
+        if (isLoggedOut) currentUser = "N/A";
 
         fetch(SERVER_URL + '/api/check', {{
             method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
             body: JSON.stringify({{ key: KEY, deviceId: deviceId, olm_name: currentUser }})
         }}).then(res => res.json()).then(data => {{
             
-            // 1. LỖI KHÓA KEY, BAN IP TỪ SERVER
+            // 1. LỖI KHÓA KEY TỪ SERVER
             if (data.status !== 'success') {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'error') {{
                     showBigWarning("HỆ THỐNG TỪ CHỐI", data.message);
                     lastToastState = 'error';
-                    localStorage.removeItem('lvt_vip_key'); // Ép nhập lại Key
+                    localStorage.removeItem('lvt_vip_key'); // Ép nhập lại
                 }}
                 return;
             }}
 
-            // 2. LỆNH TẮT TỪ BOT TELEGRAM
+            // 2. LỆNH TẮT TỪ BOT
             if (data.loader_enabled === false) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'disabled') {{
@@ -935,8 +940,8 @@ def serve_dynamic_script():
             
             let bound = data.bound_olm;
 
-            // 3. ĐĂNG XUẤT (Chỉ báo lỗi khi quét rỗng liên tục 3 lần = ~9 giây, tránh lỗi load trang web chậm)
-            if (emptyPingCount > 3) {{
+            // 3. XỬ LÝ ĐĂNG XUẤT
+            if (isLoggedOut || currentUser === "N/A") {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'logged_out') {{
                     showBigWarning("BẠN ĐÃ ĐĂNG XUẤT", `⚠️ Bạn chưa vào đúng tài khoản đăng nhập olm mà key cho phép hoặc đã đăng xuất tài khoản đăng nhập mà key cho phép.<br>Tài khoản cho phép là: <b>${{bound}}</b>`);
@@ -944,22 +949,19 @@ def serve_dynamic_script():
                 }}
                 return;
             }}
-            
-            // Đang chờ load trang, bỏ qua vòng lặp này
-            if (emptyPingCount > 0) return;
 
-            // 4. SAI TÀI KHOẢN
-            if (bound && bound !== "N/A" && currentUser !== "N/A" && currentUser.toLowerCase() !== bound.toLowerCase()) {{
+            // 4. XỬ LÝ SAI TÀI KHOẢN 
+            if (bound && bound !== "N/A" && currentUser.toLowerCase() !== bound.toLowerCase()) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'wrong_acc') {{
-                    showBigWarning("SAI TÀI KHOẢN OLM", `⚠️ Bạn chưa vào đúng tài khoản đăng nhập olm mà key cho phép.<br>Tài khoản hiện tại: <b>${{currentUser}}</b><br>Tài khoản cho phép: <b>${{bound}}</b>`);
+                    showBigWarning("SAI TÀI KHOẢN", `⚠️ Bạn chưa vào đúng tài khoản đăng nhập olm mà key cho phép.<br>Tài khoản hiện tại: <b>${{currentUser}}</b><br>Tài khoản cho phép: <b>${{bound}}</b>`);
                     lastToastState = 'wrong_acc';
                 }}
                 return;
             }}
 
-            // 5. THỎA MÃN TẤT CẢ -> MỞ SPOOFER CHÀO MỪNG
-            if (!window.lvt_spoofer_active && currentUser !== "N/A") {{
+            // 5. VÀO ĐÚNG TÀI KHOẢN -> BẬT NGỤY TRANG
+            if (!window.lvt_spoofer_active) {{
                 window.lvt_spoofer_active = true;
                 showToast(`🎉 <b>XÁC THỰC THÀNH CÔNG!</b><br>Chào mừng tài khoản: <span style="color:#00ffcc;">${{currentUser}}</span><br>Đã bật chế độ ngụy trang VIP.`, '#00ffcc');
                 lastToastState = 'success';
