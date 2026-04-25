@@ -104,7 +104,6 @@ def load_db():
                 u.setdefault("main_menu_id", None)
                 u.setdefault("is_admin", False)
                 u.setdefault("admin_exp", 0)
-                u.setdefault("admin_key", "")
             for k in data["keys"]:
                 data["keys"][k].setdefault("bound_olm", "") 
                 data["keys"][k].setdefault("loader_enabled", True)
@@ -651,6 +650,7 @@ def telegram_webhook():
                     user["state"] = "wait_reset_key"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
 
+            # ================= LỆNH CHUẨN ĐỊNH TUYẾN NÚT ADMIN =================
             elif payload == "ADM_MENU":
                 is_valid_admin, msg_err = is_admin_valid(db, sid)
                 if not is_valid_admin:
@@ -809,7 +809,9 @@ def get_notice():
         return jsonify({"msg": notice.get("msg", "")})
     return jsonify({"msg": ""})
 
-# [FIX TỈ MỈ 100%] SCRIPT VIOLENTMONKEY - BỎ LỖI ĐĂNG XUẤT, THÊM BAN THEO GIỜ, BẬT NGỤY TRANG SỚM NHẤT
+# =========================================================
+# [SỬA 100% NHƯ YÊU CẦU] SCRIPT VIOLENTMONKEY: HỆ THỐNG TRỪNG PHẠT
+# =========================================================
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
@@ -835,18 +837,21 @@ def serve_dynamic_script():
     localStorage.setItem('lvt_olm_hwid', deviceId);
 
     window.lvt_spoofer_active = false;
+    
+    // Tự động xóa Key nếu Key đó đang trong thời gian bị phạt Ban
     let KEY = localStorage.getItem('lvt_vip_key');
-    
-    // Đọc bộ đếm Ban
-    let banUntil = parseInt(localStorage.getItem('lvt_ban_until') || '0');
-    
-    // Nếu có key & KHÔNG BỊ BAN, bật ngụy trang tạm ngay lập tức (Mili-giây 0)
-    if (KEY && Date.now() > banUntil) {{
-        window.lvt_spoofer_active = true;
+    if (KEY) {{
+        let banUntil = parseInt(localStorage.getItem('lvt_banned_' + KEY) || '0');
+        if (Date.now() > banUntil) {{
+            window.lvt_spoofer_active = true;
+        }} else {{
+            KEY = null;
+            localStorage.removeItem('lvt_vip_key');
+        }}
     }}
 
     // =========================================================
-    // UI HỖ TRỢ (THÔNG BÁO XANH ĐỎ VÀ MÀN HÌNH KHÓA BAN)
+    // UI HỖ TRỢ (THÔNG BÁO, ĐĂNG NHẬP, CẢNH BÁO LỚN)
     // =========================================================
     let lastToastState = ""; 
     let currentWarningTitle = "";
@@ -865,8 +870,7 @@ def serve_dynamic_script():
         setTimeout(() => {{ if(div) div.remove(); }}, 4000);
     }}
 
-    // Hàm BAN màn hình
-    function showBanScreen(unbanTimeMs, currentUser, boundUser) {{
+    function showBanScreen(unbanTimeMs) {{
         let old = document.getElementById('lvt-ban-screen');
         if(old) return;
 
@@ -876,15 +880,21 @@ def serve_dynamic_script():
         
         w.innerHTML = `
             <div style="font-size:60px;margin-bottom:10px;">⛔</div>
-            <h1 style="color:#ff3366;font-weight:900;text-transform:uppercase;">PHÁT HIỆN SAI TÀI KHOẢN</h1>
-            <p style="color:#fff;font-size:16px;max-width:500px;line-height:1.5;">Bạn đang sử dụng tài khoản: <b style="color:#ffcc00">${{currentUser}}</b><br>Key này chỉ dành cho: <b style="color:#00ffcc">${{boundUser}}</b></p>
+            <h1 style="color:#ff3366;font-weight:900;text-transform:uppercase;">KEY NÀY ĐANG BỊ KHÓA PHẠT</h1>
+            <p style="color:#fff;font-size:16px;max-width:500px;line-height:1.5;">Key này đã bị hệ thống khóa do vi phạm sử dụng sai tài khoản OLM đã cấp phép nhiều lần.</p>
             <div style="background:#220000;border:1px solid #ff3366;padding:20px;border-radius:10px;margin-top:20px;">
-                <p style="color:#aaa;margin:0 0 10px 0;font-size:14px;">TẠM KHÓA KEY. THỜI GIAN CÒN LẠI:</p>
+                <p style="color:#aaa;margin:0 0 10px 0;font-size:14px;">THỜI GIAN KHÓA CÒN LẠI:</p>
                 <div id="lvt-ban-timer" style="font-size:35px;color:#ffcc00;font-weight:bold;font-variant-numeric: tabular-nums;">--:--:--</div>
             </div>
-            <p style="font-size:12px;color:#555;margin-top:30px;">Hãy đợi hết thời gian phạt để sử dụng lại.</p>
+            <button id="lvt-ban-back-btn" style="margin-top:30px;padding:12px 25px;background:#333;color:#fff;border:1px solid #555;border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold;">Sử Dụng Key Khác</button>
         `;
         if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(w);
+
+        document.getElementById('lvt-ban-back-btn').onclick = () => {{
+            if (window.banTimerInterval) clearInterval(window.banTimerInterval);
+            w.remove();
+            showBeautifulLogin();
+        }};
 
         if (window.banTimerInterval) clearInterval(window.banTimerInterval);
         window.banTimerInterval = setInterval(() => {{
@@ -893,8 +903,7 @@ def serve_dynamic_script():
             if (rem <= 0) {{
                 clearInterval(window.banTimerInterval);
                 w.remove();
-                localStorage.removeItem('lvt_vip_key');
-                location.reload();
+                showBeautifulLogin();
             }} else {{
                 let days = Math.floor(rem / (1000 * 60 * 60 * 24));
                 let hours = Math.floor((rem % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -924,7 +933,6 @@ def serve_dynamic_script():
         w.id = 'lvt-big-warning';
         w.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(20,0,0,0.95);border:2px solid #ff3366;box-shadow:0 0 30px rgba(255,51,102,0.5);border-radius:15px;padding:30px;z-index:2147483647;text-align:center;color:white;font-family:sans-serif;min-width:320px;pointer-events:none;animation:lvtPop 0.3s ease-out;";
         w.innerHTML = `
-            <style>@keyframes lvtPop {{ 0% {{ transform: translate(-50%,-50%) scale(0.8); opacity:0;}} 100% {{ transform: translate(-50%,-50%) scale(1); opacity:1;}} }}</style>
             <div style="font-size:45px;margin-bottom:10px;">⚠️</div>
             <h2 style="color:#ff3366;margin:0 0 10px 0;font-weight:900;">${{title}}</h2>
             <p style="font-size:16px;color:#ddd;margin:0;line-height:1.5;">${{msg}}</p>
@@ -955,8 +963,7 @@ def serve_dynamic_script():
                 <button id="lvt-login-btn" style="width:100%; padding:12px; background:linear-gradient(45deg, #00ffcc, #bd00ff); color:#000; border:none; border-radius:8px; font-size:16px; font-weight:bold; cursor:pointer; transition:0.3s; box-shadow:0 4px 10px rgba(0,255,204,0.2);">XÁC NHẬN KEY</button>
             </div>
         `;
-        let root = document.body || document.documentElement;
-        if(root) root.appendChild(overlay);
+        if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(overlay);
 
         let inp = document.getElementById('lvt-key-input');
         inp.onfocus = () => inp.style.borderColor = '#00ffcc';
@@ -965,17 +972,43 @@ def serve_dynamic_script():
         document.getElementById('lvt-login-btn').onclick = () => {{
             let val = inp.value.trim();
             if(val) {{
+                // Kiểm tra xem Key nhập vào có đang bị Ban không
+                let banUntil = parseInt(localStorage.getItem('lvt_banned_' + val) || '0');
+                if (Date.now() < banUntil) {{
+                    overlay.remove();
+                    showBanScreen(banUntil);
+                    return;
+                }}
+                
                 localStorage.setItem('lvt_vip_key', val);
                 KEY = val;
                 overlay.remove();
                 window.lvt_spoofer_active = true;
+                emptyPingCount = 0;
                 checkServer(); 
             }}
         }};
     }}
 
+    function applyBan() {{
+        if (!KEY) return;
+        let offenses = parseInt(localStorage.getItem('lvt_offense_count_' + KEY) || '0') + 1;
+        localStorage.setItem('lvt_offense_count_' + KEY, offenses);
+
+        let banTimeMs = 0;
+        if (offenses === 1) banTimeMs = 30 * 60 * 1000; // 30 phút
+        else if (offenses === 2) banTimeMs = 12 * 60 * 60 * 1000; // 12 tiếng
+        else banTimeMs = 7 * 24 * 60 * 60 * 1000; // 7 ngày
+
+        let unbanTime = Date.now() + banTimeMs;
+        localStorage.setItem('lvt_banned_' + KEY, unbanTime);
+        
+        window.lvt_spoofer_active = false;
+        showBigWarningAndResetKey("PHÁT HIỆN SAI TÀI KHOẢN", "Key này đã bị khóa phạt do sử dụng sai tài khoản OLM.");
+    }}
+
     // =========================================================
-    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC TỪ JS BIẾN NỘI BỘ HOẶC COOKIE
+    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC TỪ COOKIE BẢO MẬT
     // =========================================================
     let realUser = localStorage.getItem('lvt_real_user') || "N/A";
     
@@ -986,58 +1019,31 @@ def serve_dynamic_script():
         }}
     }}
 
-    function getRealUser() {{
-        let found = "N/A";
-        try {{
-            let cookies = document.cookie.split(';');
-            for (let i = 0; i < cookies.length; i++) {{
-                let c = cookies[i].trim();
-                if (c.startsWith("username=") || c.startsWith("userId=")) {{
-                    let val = decodeURIComponent(c.substring(c.indexOf('=') + 1));
-                    if (val !== VIP_USER && val !== VIP_NAME && val.length > 2) {{
-                        found = val;
-                    }}
+    function getRealUserFromCookie() {{
+        let cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {{
+            let c = cookies[i].trim();
+            if (c.startsWith("username=") || c.startsWith("userId=")) {{
+                let val = decodeURIComponent(c.substring(c.indexOf('=') + 1));
+                if (val !== VIP_USER && val !== VIP_NAME && val.length > 1) {{
+                    return val;
                 }}
             }}
-        }} catch(e) {{}}
-
-        try {{
-            const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-            if (uw.account && uw.account.username && uw.account.username !== VIP_USER) found = uw.account.username;
-            else if (uw.user && uw.user.username && uw.user.username !== VIP_USER) found = uw.user.username;
-        }} catch(e) {{}}
-
-        return found;
-    }}
-
-    function applyBan(currentUser, boundUser) {{
-        let offenses = parseInt(localStorage.getItem('lvt_offense_count') || '0') + 1;
-        localStorage.setItem('lvt_offense_count', offenses);
-
-        let banTimeMs = 0;
-        if (offenses === 1) banTimeMs = 30 * 60 * 1000; // 30 phút
-        else if (offenses === 2) banTimeMs = 12 * 60 * 60 * 1000; // 12 tiếng
-        else banTimeMs = 7 * 24 * 60 * 60 * 1000; // 7 ngày
-
-        let unbanTime = Date.now() + banTimeMs;
-        localStorage.setItem('lvt_ban_until', unbanTime);
-        
-        window.lvt_spoofer_active = false;
-        showBanScreen(unbanTime, currentUser, boundUser);
+        }}
+        return "N/A";
     }}
 
     // =========================================================
-    // TRAPS (ĐEO MẶT NẠ CHO SCRIPT KHÁC)
+    // TRAPS (CHỈ KÍCH HOẠT NGỤY TRANG KHI ĐƯỢC LỆNH TỪ SERVER)
     // =========================================================
     const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     
     ['userName', 'userId', 'username', 'account'].forEach(prop => {{
         let actual = uw[prop];
-        if (actual && typeof actual === 'string' && actual !== VIP_USER) saveRealUser(actual);
         try {{
             Object.defineProperty(uw, prop, {{
                 get: () => window.lvt_spoofer_active ? VIP_USER : actual,
-                set: (val) => {{ if(val !== VIP_USER) saveRealUser(val); actual = val; }},
+                set: (val) => {{ saveRealUser(val); actual = val; }},
                 configurable: true
             }});
         }} catch(e){{}}
@@ -1049,12 +1055,12 @@ def serve_dynamic_script():
             let text = arguments[0];
             if (typeof text === 'string') {{
                 let m = text.match(/["'](?:username|userId)["']\\s*:\\s*["']([^"']+)["']/i);
-                if (m && m[1] && m[1] !== VIP_USER) saveRealUser(m[1]);
+                if (m && m[1]) saveRealUser(m[1]);
             }}
             let res = origParse.apply(this, arguments);
             if (res && typeof res === 'object') {{
-                if (res.username && res.username !== VIP_USER) saveRealUser(res.username);
-                if (res.userId && res.userId !== VIP_USER) saveRealUser(res.userId);
+                if (res.username) saveRealUser(res.username);
+                if (res.userId) saveRealUser(res.userId);
                 
                 if (window.lvt_spoofer_active) {{
                     if (res.username) res.username = VIP_USER;
@@ -1072,40 +1078,33 @@ def serve_dynamic_script():
     // =========================================================
     // VÒNG LẶP KIỂM TRA MÁY CHỦ
     // =========================================================
-    function fetchGlobalNotice() {{
-        fetch(SERVER_URL + '/api/get_notice').then(r => r.json()).then(data => {{
-            let msg = data.msg;
-            let old = document.getElementById('lvt-global-notice');
-            if (!msg || msg === "") {{ if(old) old.remove(); return; }}
-            if (old) old.remove();
-            let div = document.createElement('div');
-            div.id = 'lvt-global-notice';
-            div.style.cssText = "position:fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(10,15,20,0.95); border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0,255,204,0.5); color: #00ffcc; padding: 15px 30px; border-radius: 10px; z-index: 2147483647; font-family: monospace; font-size: 16px; font-weight: bold; text-align: center; pointer-events: none;";
-            div.innerHTML = `📢 THÔNG BÁO TỪ ADMIN<br><br><span style="color:white; font-weight:normal; font-size:18px;">${{msg}}</span>`;
-            if (document.documentElement) document.documentElement.appendChild(div);
-        }}).catch(e=>{{}});
-    }}
-
+    let emptyPingCount = 0;
     let hasShownSuccess = false;
 
     function checkServer() {{
-        let banUntil = parseInt(localStorage.getItem('lvt_ban_until') || '0');
-        if (Date.now() < banUntil) {{
-            window.lvt_spoofer_active = false;
-            showBanScreen(banUntil, "Đang bị khóa", "Chờ mở khóa");
-            return;
-        }}
-
         if (!KEY) {{
             if (window.top === window.self) showBeautifulLogin();
             return;
         }}
 
-        let currentUser = getRealUser();
-        if (currentUser !== "N/A") {{
-            localStorage.setItem('lvt_real_user', currentUser);
+        let currentUser = getRealUserFromCookie();
+        if (currentUser !== "N/A") saveRealUser(currentUser);
+        else currentUser = localStorage.getItem('lvt_real_user') || "N/A";
+
+        // CHỈ BÁO LỖI ĐĂNG XUẤT KHI CHẮC CHẮN MẤT COOKIE HOẶC THẤY NÚT LOGIN TRÊN DOM
+        let isLoggedOut = false;
+        let isPageLoaded = document.readyState === "complete" || document.readyState === "interactive";
+
+        if (document.body && isPageLoaded) {{
+            let html = document.body.innerHTML;
+            if (html.includes('href="/dang-nhap"') || html.includes('href="/login"')) isLoggedOut = true;
+        }}
+
+        if (isLoggedOut || (!document.cookie.includes('PHPSESSID') && !document.cookie.includes('olm_') && isPageLoaded)) {{
+            emptyPingCount++;
+            currentUser = "N/A";
         }} else {{
-            currentUser = localStorage.getItem('lvt_real_user') || "N/A";
+            emptyPingCount = 0;
         }}
 
         fetch(SERVER_URL + '/api/check', {{
@@ -1113,14 +1112,12 @@ def serve_dynamic_script():
             body: JSON.stringify({{ key: KEY, deviceId: deviceId, olm_name: currentUser }})
         }}).then(res => res.json()).then(data => {{
             
-            // 1. LỖI TỪ SERVER (Hết hạn, Ban IP, Ban Key)
             if (data.status !== 'success') {{
                 window.lvt_spoofer_active = false;
                 showBigWarningAndResetKey("HỆ THỐNG TỪ CHỐI", data.message);
                 return;
             }}
 
-            // 2. LỆNH TẮT TỪ BOT TELEGRAM
             if (data.loader_enabled === false) {{
                 window.lvt_spoofer_active = false;
                 showBigWarningAndResetKey("SPOOFER ĐÃ TẮT", "Bạn đã tắt chức năng ngụy trang từ Bot Telegram.");
@@ -1129,39 +1126,31 @@ def serve_dynamic_script():
             
             let bound = data.bound_olm;
 
-            // 3. TÍNH NĂNG SAI TÀI KHOẢN (Chỉ kích hoạt nếu quét ra được 1 Tên Rõ Ràng)
-            if (bound && bound !== "N/A" && currentUser !== "N/A") {{
-                let cUser = currentUser.toLowerCase().trim();
-                let bUser = bound.toLowerCase().trim();
-                
-                // Loại trừ những Tên Hiển Thị (Có dấu cách) mà vô tình quét trúng. 
-                // Chỉ BAN khi chắc chắn đó là Username (Thường viết liền không dấu)
-                if (cUser !== bUser && !cUser.includes(' ')) {{
-                    applyBan(currentUser, bound);
-                    return;
+            // KIỂM TRA LỖI SAI TÀI KHOẢN VÀ BAN KEY (LƯU VÀO LOCALSTORAGE)
+            if (bound && bound !== "N/A" && currentUser !== "N/A" && currentUser.toLowerCase() !== bound.toLowerCase()) {{
+                window.lvt_spoofer_active = false;
+                applyBan(); // Khóa Key
+                return;
+            }}
+
+            // VÀO ĐÚNG TÀI KHOẢN -> BẬT NGỤY TRANG
+            if (currentUser !== "N/A") {{
+                window.lvt_spoofer_active = true;
+                localStorage.setItem('lvt_offense_count_' + KEY, '0'); // Xóa lỗi cũ
+                if (!hasShownSuccess) {{
+                    showCenterSuccess(currentUser);
+                    hasShownSuccess = true;
                 }}
             }}
 
-            // 4. VÀO ĐÚNG TÀI KHOẢN -> MỞ SPOOFER (Reset án phạt)
-            window.lvt_spoofer_active = true;
-            localStorage.setItem('lvt_offense_count', '0'); // Xóa tội cũ
-
-            if (!hasShownSuccess) {{
-                let displayUser = currentUser !== "N/A" ? currentUser : "Người dùng VIP";
-                showCenterSuccess(displayUser);
-                hasShownSuccess = true;
-            }}
-
-            fetchGlobalNotice();
             fetch(SERVER_URL + '/api/script_ping', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{key: KEY, olm_name: currentUser}}) }}).catch(e=>{{}});
 
         }}).catch(e => {{}});
     }}
 
-    // Mở bảng ngay lập tức (Ưu tiên nhất màn hình)
-    if (!KEY && window.top === window.self && Date.now() > banUntil) {{
-        showBeautifulLogin();
+    if (!KEY && window.top === window.self) {{
         document.addEventListener('DOMContentLoaded', showBeautifulLogin);
+        setTimeout(showBeautifulLogin, 500);
     }}
 
     setTimeout(checkServer, 500);
@@ -1174,7 +1163,7 @@ def serve_dynamic_script():
     return resp
 
 # ========================================================
-# [BẢN FULL 100%] GIAO DIỆN WEB ADMIN (GIỮ NGUYÊN HOÀN TOÀN)
+# [BẢN FULL 100%] GIAO DIỆN WEB ADMIN
 # ========================================================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
