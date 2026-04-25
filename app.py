@@ -168,10 +168,9 @@ def get_user_id_by_username(db, username):
         if info.get("username", "").lower() == username: return uid
     return None
 
-# [ĐÃ FIX LỖI TẠO KEY /ADMIN BỊ ĐƠ]
 def format_time(exp_ms, now_ms):
     if exp_ms == "permanent": return "Vĩnh viễn"
-    if exp_ms == "pending": return "Chờ kích hoạt" # Tránh lỗi tính toán khi Key chưa chạy
+    if exp_ms == "pending": return "Chờ kích hoạt"
     try:
         rem = int(exp_ms) - now_ms
         if rem <= 0: return "Hết hạn"
@@ -179,8 +178,7 @@ def format_time(exp_ms, now_ms):
         if d > 0: return f"{d} ngày {h} giờ"
         if h > 0: return f"{h} giờ {m} phút"
         return f"{m} phút {s} giây"
-    except:
-        return "Chưa xác định"
+    except: return "Lỗi thời gian"
 
 def live_timer_updater():
     while True:
@@ -280,7 +278,6 @@ def telegram_webhook():
         if msg_text:
             requests.post(f"{TELEGRAM_API_URL}/deleteMessage", json={"chat_id": sid, "message_id": msg_id})
 
-        # ================= LỆNH CHÍNH =================
         if msg_text.startswith("/"):
             user["state"] = "none"
             user["live_msg_type"] = None
@@ -299,7 +296,7 @@ def telegram_webhook():
                     save_db(db)
                     return "ok", 200
 
-        # ================= XỬ LÝ VĂN BẢN (THEO STATE) =================
+        # ================= XỬ LÝ VĂN BẢN ĐẦU VÀO (THEO TRẠNG THÁI) =================
         if msg_text and not msg_text.startswith("/") and user["state"] != "none":
             
             if user["state"] == "wait_loader_key":
@@ -368,6 +365,10 @@ def telegram_webhook():
             
             elif user["state"] == "wait_admin_key":
                 if msg_text in db["keys"] and db["keys"][msg_text].get("target") == "admin_bot":
+                    # Kích hoạt Key nếu đang ở Pending
+                    if db["keys"][msg_text].get("exp") == "pending":
+                        db["keys"][msg_text]["exp"] = int(time.time() * 1000) + db["keys"][msg_text].get("durationMs", 0)
+                        
                     user["is_admin"] = True
                     user["admin_key"] = msg_text
                     user["state"] = "none"
@@ -375,7 +376,6 @@ def telegram_webhook():
                 else: 
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>TỪ CHỐI TRUY CẬP:</b>\nPhải là Key Admin hợp lệ mới được vào!", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
             
-            # --- MENU ADMIN TEXT XỬ LÝ ---
             elif user.get("is_admin") and user["state"].startswith("adm_"):
                 try:
                     parts = msg_text.split()
@@ -468,7 +468,7 @@ def telegram_webhook():
                             kd = db["keys"][k]
                             st = "Hoạt động" if kd['status']=='active' else "Bị Khóa"
                             is_vip = "VIP" if kd.get('vip') else "Thường"
-                            exp = format_time(kd['exp'], now_ms) if kd['exp']!='pending' else 'Chờ kích hoạt'
+                            exp = format_time(kd['exp'], now_ms)
                             bnd = kd.get('bound_olm', '')
                             bnd_str = f"Chỉ định: <b>{bnd}</b>" if bnd else "Chạy mọi acc"
                             txt = f"🔑 <b>BẢNG ĐIỀU KHIỂN KEY:</b> <code>{k}</code>\n\n📌 Hệ: {kd['target'].upper()} | 💎 {is_vip} | ⚡ {st}\n⏳ Hạn: {exp}\n📱 TB: {len(kd.get('devices',[]))}/{kd['maxDevices']}\n🔐 Khóa Account: {bnd_str}"
@@ -489,7 +489,6 @@ def telegram_webhook():
                             if msg_text.upper() == "XOA": db["keys"][k]["bound_olm"] = ""
                             else: db["keys"][k]["bound_olm"] = msg_text.strip()
                             user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Cập nhật độc quyền OLM cho Key <code>{k}</code> thành công!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                    
                     user["state"] = "none"
                 except Exception as e: 
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>Lỗi Cú Pháp!</b>\nBạn đã nhập sai định dạng lệnh.", {"inline_keyboard": [[{"text": "🔙 Về Menu Admin", "callback_data": "ADM_MENU"}]]})
@@ -549,7 +548,7 @@ def telegram_webhook():
                     user["state"] = "wait_reset_key"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
 
-            # --- MENU ADMIN (BẮT TOÀN BỘ NÚT ADMIN Ở ĐÂY) ---
+            # ================= LỆNH QUẢN LÝ ADMIN =================
             elif user.get("is_admin") and (payload.startswith("ADM_") or payload.startswith("K_")):
                 user["state"] = "none"
                 if payload == "ADM_MENU":
@@ -680,7 +679,7 @@ def get_notice():
         return jsonify({"msg": notice.get("msg", "")})
     return jsonify({"msg": ""})
 
-# ĐIỂM CHỐT: SCRIPT GIAO DIỆN TÂN TIẾN - CHECK ĐĂNG XUẤT CHUẨN XÁC NHẤT
+# ĐIỂM CHỐT: SCRIPT GIAO DIỆN TÂN TIẾN - CHẶN BÁO LỖI ẢO, BẬT MẶT NẠ TỨC THÌ
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
@@ -705,13 +704,17 @@ def serve_dynamic_script():
     let deviceId = localStorage.getItem('lvt_olm_hwid') || ('OLM-' + Math.random().toString(36).substring(2, 10).toUpperCase());
     localStorage.setItem('lvt_olm_hwid', deviceId);
 
-    window.lvt_spoofer_active = false;
     let KEY = localStorage.getItem('lvt_vip_key');
+    
+    // [FIX] BẬT NGỤY TRANG NGAY LẬP TỨC ĐỂ KHÔNG BỊ HỎI LẠI KEY HACK
+    let hasCookie = document.cookie.includes('olm_') || document.cookie.includes('PHPSESSID');
+    window.lvt_spoofer_active = (KEY && hasCookie) ? true : false;
 
     // =========================================================
     // UI HỖ TRỢ (THÔNG BÁO, ĐĂNG NHẬP, CẢNH BÁO LỚN)
     // =========================================================
     let lastToastState = ""; 
+    let currentWarningTitle = "";
     
     function showToast(msg, color) {{
         let t = document.getElementById('lvt-toast');
@@ -726,6 +729,9 @@ def serve_dynamic_script():
     }}
 
     function showBigWarning(title, msg) {{
+        if (currentWarningTitle === title && document.getElementById('lvt-big-warning')) return; // Tránh nhấp nháy
+        currentWarningTitle = title;
+
         let old = document.getElementById('lvt-big-warning');
         if(old) old.remove();
 
@@ -742,7 +748,10 @@ def serve_dynamic_script():
         `;
         if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(w);
 
-        setTimeout(() => {{ if(w) w.remove(); }}, 5000);
+        setTimeout(() => {{ 
+            if(w) w.remove(); 
+            currentWarningTitle = ""; // Reset để lần sau có thể hiện lại
+        }}, 5000);
     }}
 
     function showBeautifulLogin() {{
@@ -778,7 +787,7 @@ def serve_dynamic_script():
     }}
 
     // =========================================================
-    // LỌC TÊN THẬT ĐỂ NHẬN DIỆN TÀI KHOẢN (CHUẨN HÓA)
+    // LẤY TÊN TÀI KHOẢN CHUẨN XÁC NHẤT
     // =========================================================
     let realUser = localStorage.getItem('lvt_real_user') || "N/A";
     
@@ -789,28 +798,18 @@ def serve_dynamic_script():
         }}
     }}
 
-    function getRealUserFromDOM() {{
-        let user = localStorage.getItem('lvt_real_user') || "N/A";
-        try {{
-            let cMatch = document.cookie.match(/(?:username|userId)=([^;]+)/i);
-            if (cMatch) {{
-                let dc = decodeURIComponent(cMatch[1]);
-                if (dc !== VIP_USER && dc !== VIP_NAME && dc.length > 2) {{
-                    saveRealUser(dc);
-                    user = dc;
+    function getRealUserFromCookie() {{
+        let cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {{
+            let c = cookies[i].trim();
+            if (c.startsWith("username=") || c.startsWith("userId=")) {{
+                let val = decodeURIComponent(c.substring(c.indexOf('=') + 1));
+                if (val !== VIP_USER && val !== VIP_NAME && val.length > 1) {{
+                    return val;
                 }}
             }}
-        }} catch(e) {{}}
-        
-        // Nếu không có trong cookie, check màn hình đăng nhập
-        let html = document.body ? document.body.innerHTML : "";
-        if (html.includes('href="/login"') || html.includes('href="/dang-nhap"')) {{
-            if (!html.includes('href="/logout"') && !html.includes('href="/dang-xuat"')) {{
-                user = "N/A"; // Chắc chắn đang ở màn hình ngoài
-                localStorage.setItem('lvt_real_user', "N/A");
-            }}
         }}
-        return user;
+        return "N/A";
     }}
 
     // =========================================================
@@ -856,7 +855,7 @@ def serve_dynamic_script():
     }} catch(e){{}}
 
     // =========================================================
-    // VÒNG LẶP KIỂM TRA MÁY CHỦ (BỘ ĐẾM TRỄ THÔNG MINH)
+    // VÒNG LẶP KIỂM TRA MÁY CHỦ
     // =========================================================
     function fetchGlobalNotice() {{
         fetch(SERVER_URL + '/api/get_notice').then(r => r.json()).then(data => {{
@@ -880,11 +879,24 @@ def serve_dynamic_script():
             return;
         }}
 
-        let currentUser = getRealUserFromDOM();
+        // Lấy tên từ Cookie mới nhất
+        let currentUser = getRealUserFromCookie();
+        if (currentUser !== "N/A") saveRealUser(currentUser);
+        else currentUser = localStorage.getItem('lvt_real_user') || "N/A";
 
-        // BỘ ĐẾM ĐỘ TRỄ 9 GIÂY (Cho phép web OLM load xong mới phán xét Đăng xuất)
-        if (currentUser === "N/A") {{
+        // Kiểm tra xem trang web có chữ "Đăng nhập" (tức là đã logout hoàn toàn) không
+        let isLoggedOutUI = false;
+        if (document.body) {{
+            let html = document.body.innerHTML;
+            if (html.includes('href="/dang-nhap"') || html.includes('href="/login"')) {{
+                isLoggedOutUI = true;
+            }}
+        }}
+
+        // Đếm độ trễ (chờ 9 giây để chắc chắn là đã đăng xuất chứ không phải do web đang load)
+        if (isLoggedOutUI || !document.cookie.includes('olm_')) {{
             emptyPingCount++;
+            currentUser = "N/A";
         }} else {{
             emptyPingCount = 0;
         }}
@@ -921,7 +933,7 @@ def serve_dynamic_script():
             if (emptyPingCount > 3) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'logged_out') {{
-                    showBigWarning("CHƯA ĐĂNG NHẬP OLM", "Vui lòng đăng nhập đúng tài khoản OLM đã mua để tiếp tục.");
+                    showBigWarning("ĐÃ ĐĂNG XUẤT OLM", `Bạn đã đăng xuất khỏi hệ thống.<br>Vui lòng đăng nhập lại tài khoản: <b>${{bound}}</b>`);
                     lastToastState = 'logged_out';
                 }}
                 return;
@@ -934,7 +946,7 @@ def serve_dynamic_script():
             if (bound && bound !== "N/A" && currentUser !== "N/A" && currentUser.toLowerCase() !== bound.toLowerCase()) {{
                 window.lvt_spoofer_active = false;
                 if (lastToastState !== 'wrong_acc') {{
-                    showBigWarning("SAI TÀI KHOẢN OLM", `Tài khoản hiện tại: <b>${{currentUser}}</b><br>Tài khoản được phép: <b>${{bound}}</b>`);
+                    showBigWarning("SAI TÀI KHOẢN OLM", `Tài khoản hiện tại: <b>${{currentUser}}</b><br>Tài khoản được phép: <b>${{bound}}</b><br>Vui lòng đổi sang đúng tài khoản!`);
                     lastToastState = 'wrong_acc';
                 }}
                 return;
@@ -996,9 +1008,11 @@ def create_key():
     db = load_db()
     for _ in range(qty):
         nk = f"{pfx}-{random.randint(1000000, 9999999)}"
-        db["keys"][nk] = {"exp": "permanent" if t == 'permanent' else "pending", "maxDevices": md, "devices": [], "known_ips": [], "status": "active", "vip": vip, "target": target_app, "bound_olm": "", "loader_enabled": True}
+        db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": [], "status": "active", "vip": vip, "target": target_app, "bound_olm": "", "loader_enabled": True}
         if t != 'permanent':
             db["keys"][nk]["durationMs"] = int(dur) * multipliers_web.get(t, 86400000)
+        else:
+            db["keys"][nk]["exp"] = "permanent"
     save_db(db)
     return redirect('/')
 
@@ -1182,7 +1196,7 @@ def dashboard():
     for uid, udata in db.get("bot_users", {}).items():
         uname = udata.get("username", "")
         uname_html = f'<span class="text-warning">{uname}</span>' if uname else ''
-        users_html += f'<tr><td><strong class="text-info">{udata["name"]}</strong> {uname_html}<br><small class="text-muted">{uid}</small></td><td><span class="badge bg-success">{udata["balance"]}đ</span></td><td>{udata["resets"]} lần</td></tr>'
+        users_html += f'<tr><td><strong class="text-info">{udata["name"]}</strong> {uname_html}<br><small class="text-muted">{uid}</small></td><td><span class="badge bg-success">{udata["balance"]}</span></td><td>{udata["resets"]} lần</td></tr>'
 
     return f'''
     <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4">
