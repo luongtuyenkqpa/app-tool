@@ -81,7 +81,7 @@ def load_db():
     if not os.path.exists(DB_FILE) and os.path.exists(DB_BACKUP):
         shutil.copy2(DB_BACKUP, DB_FILE)
     if not os.path.exists(DB_FILE):
-        return {"keys": {}, "logs": [], "banned_ips": {}, "global_notice": {"msg": "", "exp": "permanent"}, "locked_olm": {}, "bot_users": {}, "active_scripts": {}}
+        return {"keys": {}, "logs": [], "banned_ips": {}, "locked_olm": {}, "bot_users": {}, "active_scripts": {}}
     with open(DB_FILE, 'r', encoding='utf-8') as f:
         try:
             data = json.load(f)
@@ -91,7 +91,8 @@ def load_db():
             data.setdefault("keys", {})
             data.setdefault("logs", [])
             data.setdefault("active_scripts", {})
-            if not isinstance(data.get("global_notice"), dict): data["global_notice"] = {"msg": "", "exp": "permanent"}
+            # Đã xóa global_notice
+            if "global_notice" in data: del data["global_notice"]
             for uid in data["bot_users"]:
                 u = data["bot_users"][uid]
                 u.setdefault("purchases", [])
@@ -104,11 +105,12 @@ def load_db():
                 u.setdefault("main_menu_id", None)
                 u.setdefault("is_admin", False)
                 u.setdefault("admin_exp", 0)
+                u.setdefault("admin_key", "")
             for k in data["keys"]:
                 data["keys"][k].setdefault("bound_olm", "") 
                 data["keys"][k].setdefault("loader_enabled", True)
             return data
-        except: return {"keys": {}, "logs": [], "banned_ips": {}, "global_notice": {"msg": "", "exp": "permanent"}, "locked_olm": {}, "bot_users": {}, "active_scripts": {}}
+        except: return {"keys": {}, "logs": [], "banned_ips": {}, "locked_olm": {}, "bot_users": {}, "active_scripts": {}}
 
 def save_db(db):
     with open(DB_FILE, 'w', encoding='utf-8') as f:
@@ -269,9 +271,8 @@ def live_timer_updater():
                             markup = {"inline_keyboard": [
                                 [{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}],
                                 [{"text": "🔒 Khóa Nick OLM", "callback_data": "ADM_W_LOCK"}, {"text": "🚫 Chặn IP Máy", "callback_data": "ADM_W_BAN"}],
-                                [{"text": "📢 TB Lên Tool", "callback_data": "ADM_W_NOTE"}, {"text": "💬 TB Vào Bot", "callback_data": "ADM_BOT_NOTE"}],
                                 [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}],
-                                [{"text": "👑 Cấp Quyền Admin", "callback_data": "ADM_GRANT_ADMIN"}],
+                                [{"text": "👑 Cấp Quyền Admin", "callback_data": "ADM_GRANT_ADMIN"}, {"text": "💬 Gửi Tin Khách Riêng", "callback_data": "ADM_BN_PRIV"}],
                                 [{"text": "📜 Theo Dõi Radar", "callback_data": "ADM_LOGS"}],
                                 [{"text": "❌ Đăng Xuất Admin", "callback_data": "ADM_LOGOUT"}]
                             ]}
@@ -488,19 +489,6 @@ def telegram_webhook():
                         dur = parse_duration(dur_str)
                         db["banned_ips"][target] = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
                         user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã Ban IP: <b>{target}</b> ({dur_str})", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                    elif user["state"] == "adm_note":
-                        dur_str, msg = parts[0], msg_text.split(maxsplit=1)[1]
-                        dur = parse_duration(dur_str)
-                        db["global_notice"] = {"msg": msg, "exp": "permanent" if dur == 'permanent' else int(time.time()*1000) + dur}
-                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã cài TB Lên Tool: {msg}", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
-                    elif user["state"] == "adm_bn_all":
-                        dur_str, msg = parts[0], msg_text.split(maxsplit=1)[1]
-                        dur = parse_duration(dur_str)
-                        exp = "permanent" if dur == 'permanent' else int(time.time()*1000) + dur
-                        for uid in db["bot_users"]:
-                            db["bot_users"][uid]["notices"].append({"msg": msg, "exp": exp})
-                            tg_send(uid, f"🔔 <b>TB TỪ ADMIN:</b>\n{msg}")
-                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã đẩy Thông Báo cho ALL Khách Hàng.", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     elif user["state"] == "adm_bn_priv":
                         t_user, dur_str, msg = msg_text.split(maxsplit=2)
                         dur = parse_duration(dur_str)
@@ -586,9 +574,6 @@ def telegram_webhook():
                 valid_notices = [n for n in user["notices"] if n["exp"] == 'permanent' or n["exp"] > now_ms]
                 user["notices"] = valid_notices
                 txt = "🎉 <b>Chào mừng bạn đến với AutoKey (Admin @luongtuyen20)</b>\n➖➖➖➖➖➖➖➖\n\n"
-                sys_notice = db.get("global_notice", {})
-                if sys_notice.get("msg") and (sys_notice.get("exp") == "permanent" or sys_notice.get("exp", 0) > now_ms):
-                    txt += f"📢 <b>THÔNG BÁO HỆ THỐNG:</b>\n🔸 {sys_notice['msg']}\n\n"
                 if valid_notices:
                     txt += "🔔 <b>THÔNG BÁO CÁ NHÂN:</b>\n" + "\n".join([f"🔸 {n['msg']}" for n in valid_notices]) + "\n\n"
                 txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Reset Key: <b>{user['resets']}/3</b>\n\n👇 Chọn dịch vụ:"
@@ -650,7 +635,6 @@ def telegram_webhook():
                     user["state"] = "wait_reset_key"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
 
-            # ================= LỆNH CHUẨN ĐỊNH TUYẾN NÚT ADMIN =================
             elif payload == "ADM_MENU":
                 is_valid_admin, msg_err = is_admin_valid(db, sid)
                 if not is_valid_admin:
@@ -672,9 +656,8 @@ def telegram_webhook():
                 markup = {"inline_keyboard": [
                     [{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}],
                     [{"text": "🔒 Khóa Nick OLM", "callback_data": "ADM_W_LOCK"}, {"text": "🚫 Chặn IP Máy", "callback_data": "ADM_W_BAN"}],
-                    [{"text": "📢 TB Lên Tool", "callback_data": "ADM_W_NOTE"}, {"text": "💬 TB Vào Bot", "callback_data": "ADM_BOT_NOTE"}],
                     [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}],
-                    [{"text": "👑 Cấp Quyền Admin", "callback_data": "ADM_GRANT_ADMIN"}],
+                    [{"text": "👑 Cấp Quyền Admin", "callback_data": "ADM_GRANT_ADMIN"}, {"text": "💬 Gửi Tin Khách", "callback_data": "ADM_BN_PRIV"}],
                     [{"text": "📜 Theo Dõi Radar", "callback_data": "ADM_LOGS"}],
                     [{"text": "❌ Đăng Xuất Admin", "callback_data": "ADM_LOGOUT"}]
                 ]}
@@ -699,15 +682,6 @@ def telegram_webhook():
                 elif payload == "ADM_W_BAN":
                     user["state"] = "adm_ban"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🚫 <b>CHẶN IP MÁY</b>\nCú pháp: <code>Thời_gian IP</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-                elif payload == "ADM_W_NOTE":
-                    user["state"] = "adm_note"
-                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📢 <b>TB LÊN TOOL</b>\nCú pháp: <code>Thời_gian Nội_dung</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
-                elif payload == "ADM_BOT_NOTE":
-                    markup = {"inline_keyboard": [[{"text": "📢 Gửi ALL Khách", "callback_data": "ADM_BN_ALL"}, {"text": "👤 Gửi 1 Khách Riêng", "callback_data": "ADM_BN_PRIV"}], [{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]}
-                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "💬 <b>TB VÀO BOT TELEGRAM</b>", markup)
-                elif payload == "ADM_BN_ALL":
-                    user["state"] = "adm_bn_all"
-                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "💬 <b>GỬI TẤT CẢ KHÁCH</b>\nCú pháp: <code>Thời_gian Nội_dung</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
                 elif payload == "ADM_BN_PRIV":
                     user["state"] = "adm_bn_priv"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "👤 <b>GỬI TIN RIÊNG</b>\nCú pháp: <code>@user Thời_gian Nội_dung</code>", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
@@ -766,9 +740,6 @@ def telegram_webhook():
     except Exception as e: print("Webhook Error:", e)
     return "ok", 200
 
-# ====================================================================
-# [API] TẠO CODE JS ĐỘNG CHO VIOLENTMONKEY 
-# ====================================================================
 @app.route('/api/script_ping', methods=['POST', 'OPTIONS'])
 def script_ping():
     if request.method == 'OPTIONS': return make_response("ok", 200)
@@ -799,18 +770,8 @@ def check_api():
         "bound_olm": kd.get("bound_olm", "N/A")
     })
 
-@app.route('/api/get_notice', methods=['GET', 'OPTIONS'])
-def get_notice():
-    if request.method == 'OPTIONS': return make_response("ok", 200)
-    db = load_db()
-    notice = db.get("global_notice", {})
-    now = int(time.time() * 1000)
-    if notice.get("exp") == "permanent" or notice.get("exp", 0) > now:
-        return jsonify({"msg": notice.get("msg", "")})
-    return jsonify({"msg": ""})
-
 # =========================================================
-# [SỬA 100% NHƯ YÊU CẦU] SCRIPT VIOLENTMONKEY: HỆ THỐNG TRỪNG PHẠT
+# SCRIPT VIOLENTMONKEY (BẢN CHUẨN: CHẶN LỖI SAI NICK)
 # =========================================================
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
@@ -837,25 +798,24 @@ def serve_dynamic_script():
     localStorage.setItem('lvt_olm_hwid', deviceId);
 
     window.lvt_spoofer_active = false;
-    
-    // Tự động xóa Key nếu Key đó đang trong thời gian bị phạt Ban
     let KEY = localStorage.getItem('lvt_vip_key');
-    if (KEY) {{
-        let banUntil = parseInt(localStorage.getItem('lvt_banned_' + KEY) || '0');
-        if (Date.now() > banUntil) {{
-            window.lvt_spoofer_active = true;
-        }} else {{
-            KEY = null;
-            localStorage.removeItem('lvt_vip_key');
-        }}
+    
+    function getBanTime() {{
+        let lsBan = parseInt(localStorage.getItem('lvt_banned_' + KEY) || '0');
+        let cMatch = document.cookie.match(new RegExp('lvt_banned_' + KEY + '=([^;]+)'));
+        let cBan = cMatch ? parseInt(cMatch[1]) : 0;
+        return Math.max(lsBan, cBan);
+    }}
+
+    let banUntil = getBanTime();
+    
+    if (KEY && Date.now() > banUntil) {{
+        window.lvt_spoofer_active = true;
     }}
 
     // =========================================================
-    // UI HỖ TRỢ (THÔNG BÁO, ĐĂNG NHẬP, CẢNH BÁO LỚN)
+    // UI HỖ TRỢ
     // =========================================================
-    let lastToastState = ""; 
-    let currentWarningTitle = "";
-    
     function showCenterSuccess(user) {{
         let div = document.createElement('div');
         div.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,50,0,0.95);border:2px solid #00ffcc;box-shadow:0 0 30px rgba(0,255,204,0.5);border-radius:15px;padding:30px;z-index:2147483647;text-align:center;color:white;font-family:sans-serif;min-width:320px;animation:lvtPop 0.3s ease-out;";
@@ -870,7 +830,7 @@ def serve_dynamic_script():
         setTimeout(() => {{ if(div) div.remove(); }}, 4000);
     }}
 
-    function showBanScreen(unbanTimeMs) {{
+    function showBanScreen(unbanTimeMs, currentUser, boundUser) {{
         let old = document.getElementById('lvt-ban-screen');
         if(old) return;
 
@@ -881,19 +841,20 @@ def serve_dynamic_script():
         w.innerHTML = `
             <div style="font-size:60px;margin-bottom:10px;">⛔</div>
             <h1 style="color:#ff3366;font-weight:900;text-transform:uppercase;">KEY NÀY ĐANG BỊ KHÓA PHẠT</h1>
-            <p style="color:#fff;font-size:16px;max-width:500px;line-height:1.5;">Key này đã bị hệ thống khóa do vi phạm sử dụng sai tài khoản OLM đã cấp phép nhiều lần.</p>
+            <p style="color:#fff;font-size:16px;max-width:500px;line-height:1.5;">Bạn đã dùng sai Tài khoản. Key này chỉ cho phép: <b style="color:#00ffcc">${{boundUser}}</b></p>
             <div style="background:#220000;border:1px solid #ff3366;padding:20px;border-radius:10px;margin-top:20px;">
                 <p style="color:#aaa;margin:0 0 10px 0;font-size:14px;">THỜI GIAN KHÓA CÒN LẠI:</p>
                 <div id="lvt-ban-timer" style="font-size:35px;color:#ffcc00;font-weight:bold;font-variant-numeric: tabular-nums;">--:--:--</div>
             </div>
-            <button id="lvt-ban-back-btn" style="margin-top:30px;padding:12px 25px;background:#333;color:#fff;border:1px solid #555;border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold;">Sử Dụng Key Khác</button>
+            <button id="lvt-ban-back-btn" style="margin-top:30px;padding:12px 25px;background:#333;color:#fff;border:1px solid #555;border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold;">Quay lại đăng nhập Key</button>
         `;
         if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(w);
 
         document.getElementById('lvt-ban-back-btn').onclick = () => {{
             if (window.banTimerInterval) clearInterval(window.banTimerInterval);
             w.remove();
-            showBeautifulLogin();
+            localStorage.removeItem('lvt_vip_key');
+            location.reload();
         }};
 
         if (window.banTimerInterval) clearInterval(window.banTimerInterval);
@@ -903,7 +864,8 @@ def serve_dynamic_script():
             if (rem <= 0) {{
                 clearInterval(window.banTimerInterval);
                 w.remove();
-                showBeautifulLogin();
+                localStorage.removeItem('lvt_vip_key');
+                location.reload();
             }} else {{
                 let days = Math.floor(rem / (1000 * 60 * 60 * 24));
                 let hours = Math.floor((rem % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -923,9 +885,6 @@ def serve_dynamic_script():
     }}
 
     function showBigWarningAndResetKey(title, msg) {{
-        if (currentWarningTitle === title && document.getElementById('lvt-big-warning')) return; 
-        currentWarningTitle = title;
-
         let old = document.getElementById('lvt-big-warning');
         if(old) old.remove();
 
@@ -943,7 +902,6 @@ def serve_dynamic_script():
 
         setTimeout(() => {{ 
             if(w) w.remove(); 
-            currentWarningTitle = ""; 
             localStorage.removeItem('lvt_vip_key'); 
             location.reload(); 
         }}, 5000);
@@ -972,11 +930,10 @@ def serve_dynamic_script():
         document.getElementById('lvt-login-btn').onclick = () => {{
             let val = inp.value.trim();
             if(val) {{
-                // Kiểm tra xem Key nhập vào có đang bị Ban không
-                let banUntil = parseInt(localStorage.getItem('lvt_banned_' + val) || '0');
-                if (Date.now() < banUntil) {{
+                let cBanUntil = parseInt(localStorage.getItem('lvt_banned_' + val) || '0');
+                if (Date.now() < cBanUntil) {{
                     overlay.remove();
-                    showBanScreen(banUntil);
+                    showBanScreen(cBanUntil, "Bị Khóa", "Bị Khóa");
                     return;
                 }}
                 
@@ -984,31 +941,31 @@ def serve_dynamic_script():
                 KEY = val;
                 overlay.remove();
                 window.lvt_spoofer_active = true;
-                emptyPingCount = 0;
                 checkServer(); 
             }}
         }};
     }}
 
-    function applyBan() {{
+    function applyBan(currentUser, boundUser) {{
         if (!KEY) return;
         let offenses = parseInt(localStorage.getItem('lvt_offense_count_' + KEY) || '0') + 1;
         localStorage.setItem('lvt_offense_count_' + KEY, offenses);
 
         let banTimeMs = 0;
-        if (offenses === 1) banTimeMs = 30 * 60 * 1000; // 30 phút
-        else if (offenses === 2) banTimeMs = 12 * 60 * 60 * 1000; // 12 tiếng
-        else banTimeMs = 7 * 24 * 60 * 60 * 1000; // 7 ngày
+        if (offenses === 1) banTimeMs = 30 * 60 * 1000; 
+        else if (offenses === 2) banTimeMs = 12 * 60 * 60 * 1000; 
+        else banTimeMs = 7 * 24 * 60 * 60 * 1000; 
 
         let unbanTime = Date.now() + banTimeMs;
         localStorage.setItem('lvt_banned_' + KEY, unbanTime);
+        document.cookie = "lvt_banned_" + KEY + "=" + unbanTime + "; path=/; max-age=" + (banTimeMs/1000);
         
         window.lvt_spoofer_active = false;
-        showBigWarningAndResetKey("PHÁT HIỆN SAI TÀI KHOẢN", "Key này đã bị khóa phạt do sử dụng sai tài khoản OLM.");
+        showBanScreen(unbanTime, currentUser, boundUser);
     }}
 
     // =========================================================
-    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC TỪ COOKIE BẢO MẬT
+    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC TỪ COOKIE VÀ BIẾN NỘI BỘ
     // =========================================================
     let realUser = localStorage.getItem('lvt_real_user') || "N/A";
     
@@ -1019,31 +976,55 @@ def serve_dynamic_script():
         }}
     }}
 
-    function getRealUserFromCookie() {{
-        let cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {{
-            let c = cookies[i].trim();
-            if (c.startsWith("username=") || c.startsWith("userId=")) {{
-                let val = decodeURIComponent(c.substring(c.indexOf('=') + 1));
-                if (val !== VIP_USER && val !== VIP_NAME && val.length > 1) {{
-                    return val;
+    function getRealUser() {{
+        let found = "N/A";
+        
+        try {{
+            let cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {{
+                let c = cookies[i].trim();
+                if (c.startsWith("username=")) {{
+                    let val = decodeURIComponent(c.substring(9));
+                    val = val.replace(/^"|"$/g, '').trim(); 
+                    if (val !== VIP_USER && val !== VIP_NAME && val.length > 2) {{
+                        found = val;
+                    }}
                 }}
             }}
+        }} catch(e) {{}}
+
+        if (found === "N/A") {{
+            try {{
+                const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                if (uw.account && uw.account.username && uw.account.username !== VIP_USER) found = uw.account.username;
+                else if (uw.user && uw.user.username && uw.user.username !== VIP_USER) found = uw.user.username;
+            }} catch(e) {{}}
         }}
-        return "N/A";
+        
+        if (found === "N/A") {{
+            let cached = localStorage.getItem('lvt_real_user');
+            if (cached && cached !== "N/A") found = cached;
+        }} else {{
+            localStorage.setItem('lvt_real_user', found);
+        }}
+        
+        return found;
     }}
 
     // =========================================================
-    // TRAPS (CHỈ KÍCH HOẠT NGỤY TRANG KHI ĐƯỢC LỆNH TỪ SERVER)
+    // TRAPS (ĐEO MẶT NẠ CHO SCRIPT KHÁC)
     // =========================================================
     const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     
-    ['userName', 'userId', 'username', 'account'].forEach(prop => {{
+    ['userName', 'username', 'account'].forEach(prop => {{
         let actual = uw[prop];
         try {{
             Object.defineProperty(uw, prop, {{
                 get: () => window.lvt_spoofer_active ? VIP_USER : actual,
-                set: (val) => {{ saveRealUser(val); actual = val; }},
+                set: (val) => {{ 
+                    if (val && typeof val === 'string' && val !== VIP_USER && isNaN(val)) saveRealUser(val); 
+                    actual = val; 
+                }},
                 configurable: true
             }});
         }} catch(e){{}}
@@ -1052,15 +1033,9 @@ def serve_dynamic_script():
     try {{
         const origParse = uw.JSON.parse;
         uw.JSON.parse = function() {{
-            let text = arguments[0];
-            if (typeof text === 'string') {{
-                let m = text.match(/["'](?:username|userId)["']\\s*:\\s*["']([^"']+)["']/i);
-                if (m && m[1]) saveRealUser(m[1]);
-            }}
             let res = origParse.apply(this, arguments);
             if (res && typeof res === 'object') {{
-                if (res.username) saveRealUser(res.username);
-                if (res.userId) saveRealUser(res.userId);
+                if (res.username && res.username !== VIP_USER && isNaN(res.username)) saveRealUser(res.username);
                 
                 if (window.lvt_spoofer_active) {{
                     if (res.username) res.username = VIP_USER;
@@ -1079,7 +1054,7 @@ def serve_dynamic_script():
     // VÒNG LẶP KIỂM TRA MÁY CHỦ
     // =========================================================
     let emptyPingCount = 0;
-    let hasShownSuccess = false;
+    let wrongAccountCount = 0; 
 
     function checkServer() {{
         if (!KEY) {{
@@ -1087,20 +1062,18 @@ def serve_dynamic_script():
             return;
         }}
 
-        let currentUser = getRealUserFromCookie();
-        if (currentUser !== "N/A") saveRealUser(currentUser);
-        else currentUser = localStorage.getItem('lvt_real_user') || "N/A";
-
-        // CHỈ BÁO LỖI ĐĂNG XUẤT KHI CHẮC CHẮN MẤT COOKIE HOẶC THẤY NÚT LOGIN TRÊN DOM
-        let isLoggedOut = false;
-        let isPageLoaded = document.readyState === "complete" || document.readyState === "interactive";
-
-        if (document.body && isPageLoaded) {{
-            let html = document.body.innerHTML;
-            if (html.includes('href="/dang-nhap"') || html.includes('href="/login"')) isLoggedOut = true;
+        let cBanUntil = getBanTime();
+        if (Date.now() < cBanUntil) {{
+            window.lvt_spoofer_active = false;
+            showBanScreen(cBanUntil, "Đang bị khóa", "Chờ mở khóa");
+            return;
         }}
 
-        if (isLoggedOut || (!document.cookie.includes('PHPSESSID') && !document.cookie.includes('olm_') && isPageLoaded)) {{
+        let currentUser = getRealUser();
+
+        let isPageLoaded = document.readyState === "complete" || document.readyState === "interactive";
+
+        if (isPageLoaded && !document.cookie.includes('olm_')) {{
             emptyPingCount++;
             currentUser = "N/A";
         }} else {{
@@ -1124,22 +1097,43 @@ def serve_dynamic_script():
                 return;
             }}
             
-            let bound = data.bound_olm;
+            let boundUser = data.bound_olm;
 
-            // KIỂM TRA LỖI SAI TÀI KHOẢN VÀ BAN KEY (LƯU VÀO LOCALSTORAGE)
-            if (bound && bound !== "N/A" && currentUser !== "N/A" && currentUser.toLowerCase() !== bound.toLowerCase()) {{
+            if (emptyPingCount > 4) {{
                 window.lvt_spoofer_active = false;
-                applyBan(); // Khóa Key
+                showBigWarningAndResetKey("ĐÃ ĐĂNG XUẤT OLM", `⚠️ Vui lòng đăng nhập lại tài khoản: <b>${{boundUser}}</b>`);
                 return;
+            }}
+            if (emptyPingCount > 0) return;
+
+            // [HỆ THỐNG TRỪNG PHẠT SAI TÀI KHOẢN CỰC MẠNH NHƯNG CHUẨN XÁC]
+            if (boundUser && boundUser !== "N/A" && currentUser !== "N/A") {{
+                let cUser = currentUser.toLowerCase().trim();
+                let bUser = boundUser.toLowerCase().trim();
+                
+                // Chỉ phạt khi CHẮC CHẮN nó là Username 
+                if (cUser !== bUser && !cUser.includes(' ') && isNaN(cUser)) {{
+                    wrongAccountCount++;
+                    if (wrongAccountCount >= 2) {{ 
+                        window.lvt_spoofer_active = false;
+                        applyBan(currentUser, boundUser);
+                        return;
+                    }}
+                }} else {{
+                    wrongAccountCount = 0;
+                }}
             }}
 
             // VÀO ĐÚNG TÀI KHOẢN -> BẬT NGỤY TRANG
-            if (currentUser !== "N/A") {{
+            if (currentUser !== "N/A" && wrongAccountCount === 0) {{
                 window.lvt_spoofer_active = true;
-                localStorage.setItem('lvt_offense_count_' + KEY, '0'); // Xóa lỗi cũ
-                if (!hasShownSuccess) {{
+                localStorage.setItem('lvt_offense_count_' + KEY, '0'); 
+                
+                // HIỆN THÔNG BÁO CHÚC MỪNG 1 LẦN DUY NHẤT 
+                let successKey = 'lvt_success_shown_' + KEY;
+                if (!localStorage.getItem(successKey)) {{
                     showCenterSuccess(currentUser);
-                    hasShownSuccess = true;
+                    localStorage.setItem(successKey, 'true');
                 }}
             }}
 
@@ -1148,7 +1142,7 @@ def serve_dynamic_script():
         }}).catch(e => {{}});
     }}
 
-    if (!KEY && window.top === window.self) {{
+    if (!KEY && window.top === window.self && Date.now() > banUntil) {{
         document.addEventListener('DOMContentLoaded', showBeautifulLogin);
         setTimeout(showBeautifulLogin, 500);
     }}
@@ -1228,17 +1222,6 @@ def lock_olm():
 def unlock_olm(user):
     db = load_db()
     if user in db.get("locked_olm", {}): del db["locked_olm"][user]
-    save_db(db)
-    return redirect('/')
-
-@app.route('/admin/notice', methods=['POST'])
-def set_notice():
-    msg = request.form.get('message', '').strip()
-    dur = request.form.get('duration')
-    t = request.form.get('type')
-    db = load_db()
-    exp = "permanent" if t == 'permanent' else int(time.time() * 1000) + int(dur) * multipliers_web.get(t, 1000)
-    db["global_notice"] = {"msg": msg, "exp": exp}
     save_db(db)
     return redirect('/')
 
@@ -1414,7 +1397,27 @@ def dashboard():
         is_adm = udata.get("is_admin", False)
         adm_badge = '<span class="badge bg-danger ms-2">Admin</span>' if is_adm else ''
         revoke_btn = f'<a href="/admin/revoke_user/{uid}" class="btn btn-sm btn-outline-danger mt-1">Thu hồi</a>' if is_adm else ''
-        users_html += f'<tr><td><strong class="text-info">{udata["name"]}</strong> {uname_html} {adm_badge}<br><small class="text-muted">{uid}</small><br>{revoke_btn}</td><td><span class="badge bg-success">{udata["balance"]}</span></td><td>{udata["resets"]} lần</td></tr>'
+        
+        owned_keys = [p["key"] for p in udata.get("purchases", [])]
+        user_ips = set()
+        user_logs = []
+        for l in db.get("logs", []):
+            if l["key"] in owned_keys:
+                user_ips.add(l["ip"])
+                user_logs.append(f"{time.strftime('%d/%m %H:%M', time.localtime(l['time']))}: {l['action']} ({l.get('olm_name','')})")
+        
+        ips_str = "<br>".join(list(user_ips)) if user_ips else "<span class='text-muted'>Chưa có IP</span>"
+        keys_str = "<br>".join(owned_keys) if owned_keys else "<span class='text-muted'>Chưa mua Key</span>"
+        logs_str = "<br>".join(user_logs[:3]) + ("<br>..." if len(user_logs)>3 else "") if user_logs else "<span class='text-muted'>Chưa có HĐ</span>"
+
+        users_html += f'''
+        <tr>
+            <td><strong class="text-info" style="cursor:pointer;" onclick="copyText('{udata["name"]}')" title="Sao chép tên">{udata["name"]}</strong> {uname_html} {adm_badge}<br><small class="text-muted" style="cursor:pointer;" onclick="copyText('{uid}')" title="Sao chép ID">{uid}</small><br>{revoke_btn}</td>
+            <td><span class="badge bg-success">{udata["balance"]}đ</span><br><small>Reset: {udata["resets"]}</small></td>
+            <td>{keys_str}</td>
+            <td style="font-size:12px;">{logs_str}</td>
+            <td style="font-size:12px;" class="text-secondary">{ips_str}</td>
+        </tr>'''
 
     return f'''
     <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-4">
@@ -1425,22 +1428,39 @@ def dashboard():
     
     <div class="card p-3 mb-4" style="border-color: #fff;"><h4><i class="fas fa-robot"></i> Cấp Quyền Admin Bot</h4><form action="/admin/grant" method="POST" class="row g-2"><div class="col-12"><input type="text" name="username" class="form-control bg-dark text-light" placeholder="Nhập @username hoặc ID khách..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="sec">Giây</option><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="year">Năm</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12 mt-2"><button type="submit" class="btn btn-light w-100 fw-bold text-dark">CẤP QUYỀN ADMIN</button></div></form></div>
     
-    <div class="card p-3 mb-4" style="border-color: #2AABEE;"><h4><i class="fab fa-telegram"></i> Quản Lý User Bot Telegram</h4>
-    <form action="/admin/add_balance" method="POST" class="row g-2 mb-3">
-        <div class="col-12"><input type="text" name="target_user" class="form-control bg-dark text-light" placeholder="Nhập @username hoặc ID khách..." required></div>
-        <div class="col-5"><input type="number" name="amount" class="form-control bg-dark text-light" placeholder="Tiền (VD: 50000)" value="0" required></div>
-        <div class="col-4"><input type="number" name="resets" class="form-control bg-dark text-light" placeholder="+ Lượt Reset" value="0" required></div>
-        <div class="col-3"><button type="submit" class="btn w-100 fw-bold" style="background:#2AABEE; color:white;">Nạp</button></div>
-    </form>
-    <div class="table-container" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên (Username/ID)</th><th>Số Dư</th><th>Reset</th></tr></thead><tbody>{users_html}</tbody></table></div></div>
+    <div class="card p-3 mb-4" style="border-color: #2AABEE;">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4><i class="fab fa-telegram"></i> Quản Lý User Bot Telegram</h4>
+        </div>
+        <form action="/admin/add_balance" method="POST" class="row g-2 mb-3">
+            <div class="col-12"><input type="text" name="target_user" class="form-control bg-dark text-light" placeholder="Nhập @username hoặc ID khách..." required></div>
+            <div class="col-5"><input type="number" name="amount" class="form-control bg-dark text-light" placeholder="Tiền (VD: 50000)" value="0" required></div>
+            <div class="col-4"><input type="number" name="resets" class="form-control bg-dark text-light" placeholder="+ Lượt Reset" value="0" required></div>
+            <div class="col-3"><button type="submit" class="btn w-100 fw-bold" style="background:#2AABEE; color:white;">Nạp</button></div>
+        </form>
+        <div class="table-container" style="max-height:300px;">
+            <table class="table table-dark table-sm table-bordered mb-0 align-middle">
+                <thead class="table-active">
+                    <tr>
+                        <th>Người Dùng</th>
+                        <th>Số Dư</th>
+                        <th>Các Key Sở Hữu</th>
+                        <th>Lịch Sử Gần Đây</th>
+                        <th>IP Truy Cập</th>
+                    </tr>
+                </thead>
+                <tbody>{users_html}</tbody>
+            </table>
+        </div>
+    </div>
     
     </div><div class="col-lg-8">
     
     <div class="card p-3 mb-4"><h4 class="text-danger">🛡️ Block IP & Khóa Tên OLM</h4><div class="row g-3"><div class="col-md-6"><form action="/admin/ban-ip" method="POST" class="row g-2"><div class="col-12"><input type="text" name="ip" class="form-control bg-dark text-light" placeholder="Nhập IP..." required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-danger w-100">Ban IP</button></div></form><div class="table-container mt-2" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>IP</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{ips_html}</tbody></table></div></div><div class="col-md-6"><form action="/admin/lock_olm" method="POST" class="row g-2"><div class="col-12"><input type="text" name="user" class="form-control bg-dark text-light" placeholder="Nhập Tên OLM (VD: hp_abc)" required></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian"></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-12"><button type="submit" class="btn btn-warning w-100 text-dark fw-bold">Khóa Tên OLM</button></div></form><div class="table-container mt-2" style="max-height:150px;"><table class="table table-dark table-sm mb-0"><thead><tr><th>Tên OLM</th><th>Hạn</th><th>Xóa</th></tr></thead><tbody>{olm_html}</tbody></table></div></div></div></div>
     
-    <div class="card p-3 mb-4" style="border-color: #bd00ff;"><h4>📢 Thông Báo Toàn Cầu (Gửi đến Script/Tool)</h4><form action="/admin/notice" method="POST" class="row g-2"><div class="col-12"><input type="text" name="message" class="form-control bg-dark text-light" placeholder="Nhập thông báo hiện lên màn hình người dùng..." value="{db.get("global_notice", {}).get("msg", "")}"></div><div class="col-4"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required value="10"></div><div class="col-5"><select name="type" class="form-select bg-dark text-light"><option value="sec">Giây</option><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="year">Năm</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-3"><button type="submit" class="btn btn-info w-100 fw-bold">Phát Loa</button></div></form></div>
+    <div class="card p-3 mb-4"><div class="d-flex justify-content-between align-items-center mb-3"><h4>📋 Quản Lý Key</h4><div class="d-flex gap-2"><form action="/admin/delete_all" method="POST"><button class="btn btn-sm btn-danger fw-bold" onclick="return confirm('CHẮC CHẮN XÓA TOÀN BỘ KEY?')">Xóa ALL Key</button></form><select id="statusFilter" class="form-select form-select-sm bg-dark text-light" onchange="filterTable()"><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="expired">Hết hạn</option><option value="banned">Bị khóa</option></select><input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light" placeholder="Tìm Key..." onkeyup="filterTable()"></div></div><div class="table-container"><table class="table table-dark table-hover mb-0 align-middle"><thead><tr><th>Key</th><th>Hạn</th><th>Thiết bị</th><th>Điều Khiển</th></tr></thead><tbody id="keyTableBody">{keys_html}</tbody></table></div></div>
     
-    <div class="card p-3 mb-4"><div class="d-flex justify-content-between align-items-center mb-3"><h4>📋 Quản Lý Key</h4><div class="d-flex gap-2"><form action="/admin/delete_all" method="POST"><button class="btn btn-sm btn-danger fw-bold" onclick="return confirm('CHẮC CHẮN XÓA TOÀN BỘ KEY?')">Xóa ALL Key</button></form><select id="statusFilter" class="form-select form-select-sm bg-dark text-light" onchange="filterTable()"><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="expired">Hết hạn</option><option value="banned">Bị khóa</option></select><input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light" placeholder="Tìm Key..." onkeyup="filterTable()"></div></div><div class="table-container"><table class="table table-dark table-hover mb-0 align-middle"><thead><tr><th>Key</th><th>Hạn</th><th>Thiết bị</th><th>Điều Khiển</th></tr></thead><tbody id="keyTableBody">{keys_html}</tbody></table></div></div><div class="card p-3"><h4>📡 Lịch sử Logs (Chi tiết IP, TB, User)</h4><div class="table-container" style="max-height:400px;"><table class="table table-dark table-sm table-striped mb-0"><thead><tr><th>Time</th><th>Trạng thái</th><th>Key</th><th>Thông tin IP / Device / OLM</th></tr></thead><tbody>{logs_html}</tbody></table></div></div></div></div>
+    </div></div>
     
     <div class="modal fade" id="extendModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card);"><div class="modal-header"><h5 class="modal-title">⏳ Gia hạn Key</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form action="/admin/extend" method="POST"><div class="modal-body"><input type="hidden" name="key" id="extendKeyInput"><p>Key: <strong id="extendKeyDisplay" class="text-info"></strong></p><div class="row g-2"><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option></select></div></div></div><div class="modal-footer"><button type="submit" class="btn btn-primary w-100">Gia hạn</button></div></form></div></div></div>
     <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card);"><div class="modal-header"><h5 class="modal-title">🔐 Ghim Độc Quyền Account</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><form action="/admin/bind_olm" method="POST"><div class="modal-body"><input type="hidden" name="key" id="bindKeyInput"><p>Key: <strong id="bindKeyDisplay" class="text-info"></strong></p><div class="row g-2"><div class="col-12"><input type="text" name="olm_name" id="bindOlmInput" class="form-control bg-dark text-light" placeholder="Nhập tên OLM muốn ghim (bỏ trống để hủy ghim)"></div></div></div><div class="modal-footer"><button type="submit" class="btn btn-warning w-100">Lưu Chỉ Định</button></div></form></div></div></div>
