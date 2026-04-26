@@ -91,7 +91,8 @@ def load_db():
             data.setdefault("keys", {})
             data.setdefault("logs", [])
             data.setdefault("active_scripts", {})
-            if not isinstance(data.get("global_notice"), dict): data["global_notice"] = {"msg": "", "exp": "permanent"}
+            # Xóa Global Notice theo yêu cầu
+            if "global_notice" in data: del data["global_notice"]
             for uid in data["bot_users"]:
                 u = data["bot_users"][uid]
                 u.setdefault("purchases", [])
@@ -104,6 +105,7 @@ def load_db():
                 u.setdefault("main_menu_id", None)
                 u.setdefault("is_admin", False)
                 u.setdefault("admin_exp", 0)
+                u.setdefault("admin_key", "")
             for k in data["keys"]:
                 data["keys"][k].setdefault("bound_olm", "") 
                 data["keys"][k].setdefault("loader_enabled", True)
@@ -320,6 +322,7 @@ def telegram_webhook():
         if msg_text:
             requests.post(f"{TELEGRAM_API_URL}/deleteMessage", json={"chat_id": sid, "message_id": msg_id})
 
+        # ================= BIẾN LỆNH GÕ THÀNH PAYLOAD =================
         if msg_text.startswith("/"):
             user["state"] = "none"
             user["live_msg_type"] = None
@@ -348,6 +351,7 @@ def telegram_webhook():
                     save_db(db)
                     return "ok", 200
 
+        # ================= XỬ LÝ VĂN BẢN NHẬP VÀO =================
         if msg_text and not msg_text.startswith("/") and user["state"] != "none":
             
             if user["state"] == "wait_loader_key":
@@ -765,7 +769,7 @@ def check_api():
     })
 
 # =========================================================
-# SCRIPT VIOLENTMONKEY ĐÃ FIX TRIỆT ĐỂ CHECK TÀI KHOẢN
+# SCRIPT VIOLENTMONKEY (BẢN CHUẨN: MẮT THẦN ĐỌC ĐÚNG NICK)
 # =========================================================
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
@@ -812,13 +816,13 @@ def serve_dynamic_script():
     // =========================================================
     function showCenterSuccess(user) {{
         let div = document.createElement('div');
-        div.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,50,0,0.95);border:2px solid #00ffcc;box-shadow:0 0 30px rgba(0,255,204,0.5);border-radius:15px;padding:30px;z-index:2147483647;text-align:center;color:white;font-family:sans-serif;min-width:320px;animation:lvtPop 0.3s ease-out;";
+        div.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,40,0,0.95);border:2px solid #00ffcc;box-shadow:0 0 40px rgba(0,255,204,0.6);border-radius:15px;padding:35px;z-index:2147483647;text-align:center;color:white;font-family:sans-serif;min-width:350px;animation:lvtPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);";
         div.innerHTML = `
-            <style>@keyframes lvtPop {{ 0% {{ transform: translate(-50%,-50%) scale(0.8); opacity:0;}} 100% {{ transform: translate(-50%,-50%) scale(1); opacity:1;}} }}</style>
-            <div style="font-size:45px;margin-bottom:10px;">🎉</div>
-            <h2 style="color:#00ffcc;margin:0 0 10px 0;font-weight:900;">XÁC THỰC THÀNH CÔNG!</h2>
-            <p style="font-size:16px;color:#ddd;margin:0;line-height:1.5;">Chào mừng tài khoản: <b style="color:#fff;">${{user}}</b></p>
-            <p style="font-size:13px;color:#00ffcc;margin-top:15px;font-weight:bold;">Đã bật chế độ ngụy trang VIP.</p>
+            <style>@keyframes lvtPop {{ 0% {{ transform: translate(-50%,-50%) scale(0.5); opacity:0;}} 100% {{ transform: translate(-50%,-50%) scale(1); opacity:1;}} }}</style>
+            <div style="font-size:55px;margin-bottom:15px;">🎉</div>
+            <h2 style="color:#00ffcc;margin:0 0 10px 0;font-weight:900;letter-spacing:1px;">XÁC THỰC THÀNH CÔNG!</h2>
+            <p style="font-size:17px;color:#ddd;margin:0;line-height:1.5;">Chào mừng tài khoản: <b style="color:#fff;font-size:19px;">${{user}}</b></p>
+            <p style="font-size:14px;color:#00ffcc;margin-top:20px;font-weight:bold;background:rgba(0,255,204,0.1);padding:8px;border-radius:5px;">Đã kích hoạt ngụy trang VIP.</p>
         `;
         if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(div);
         setTimeout(() => {{ if(div) div.remove(); }}, 4000);
@@ -830,17 +834,20 @@ def serve_dynamic_script():
 
         let w = document.createElement('div');
         w.id = 'lvt-ban-screen';
-        w.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(15,0,0,0.98);z-index:2147483647;display:flex;flex-direction:column;justify-content:center;align-items:center;backdrop-filter:blur(10px);text-align:center;font-family:sans-serif;";
+        w.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(20,0,0,0.98);z-index:2147483647;display:flex;flex-direction:column;justify-content:center;align-items:center;backdrop-filter:blur(12px);text-align:center;font-family:sans-serif;";
         
         w.innerHTML = `
-            <div style="font-size:60px;margin-bottom:10px;">⛔</div>
-            <h1 style="color:#ff3366;font-weight:900;text-transform:uppercase;">KEY NÀY ĐANG BỊ KHÓA PHẠT</h1>
-            <p style="color:#fff;font-size:16px;max-width:500px;line-height:1.5;">Bạn đã dùng sai Tài khoản. Key này chỉ cho phép: <b style="color:#00ffcc">${{boundUser}}</b></p>
-            <div style="background:#220000;border:1px solid #ff3366;padding:20px;border-radius:10px;margin-top:20px;">
-                <p style="color:#aaa;margin:0 0 10px 0;font-size:14px;">THỜI GIAN KHÓA CÒN LẠI:</p>
-                <div id="lvt-ban-timer" style="font-size:35px;color:#ffcc00;font-weight:bold;font-variant-numeric: tabular-nums;">--:--:--</div>
+            <div style="font-size:70px;margin-bottom:15px;">⛔</div>
+            <h1 style="color:#ff3366;font-weight:900;text-transform:uppercase;letter-spacing:2px;font-size:28px;">PHÁT HIỆN SAI TÀI KHOẢN</h1>
+            <div style="background:rgba(255,51,102,0.1);border:1px solid #ff3366;padding:20px;border-radius:10px;margin-top:20px;max-width:90%;">
+                <p style="color:#fff;font-size:16px;margin:0 0 10px 0;line-height:1.6;">Tài khoản hiện tại: <b style="color:#ffcc00;font-size:18px;">${{currentUser}}</b></p>
+                <p style="color:#fff;font-size:16px;margin:0;line-height:1.6;">Key chỉ cấp phép cho: <b style="color:#00ffcc;font-size:18px;">${{boundUser}}</b></p>
             </div>
-            <button id="lvt-ban-back-btn" style="margin-top:30px;padding:12px 25px;background:#333;color:#fff;border:1px solid #555;border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold;">Sử Dụng Key Khác</button>
+            <div style="margin-top:30px;">
+                <p style="color:#aaa;margin:0 0 10px 0;font-size:15px;text-transform:uppercase;letter-spacing:1px;">Key Bị Khóa Phạt Tạm Thời Trong:</p>
+                <div id="lvt-ban-timer" style="font-size:45px;color:#ffcc00;font-weight:900;font-variant-numeric:tabular-nums;text-shadow: 0 0 10px rgba(255,204,0,0.5);">--:--:--</div>
+            </div>
+            <button id="lvt-ban-back-btn" style="margin-top:40px;padding:15px 35px;background:linear-gradient(45deg, #440000, #880000);color:#fff;border:1px solid #ff3366;border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold;box-shadow:0 5px 15px rgba(255,51,102,0.3);transition:0.3s;">Nhập Key Khác</button>
         `;
         if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(w);
 
@@ -890,7 +897,7 @@ def serve_dynamic_script():
             <h2 style="color:#ff3366;margin:0 0 10px 0;font-weight:900;">${{title}}</h2>
             <p style="font-size:16px;color:#ddd;margin:0;line-height:1.5;">${{msg}}</p>
             <p style="font-size:12px;color:#888;margin-top:15px;">Script đã tự động TẮT ngụy trang.</p>
-            <p style="font-size:13px;color:#ffcc00;margin-top:10px;font-weight:bold;">Đang quay lại màn hình nhập Key...</p>
+            <p style="font-size:13px;color:#ffcc00;margin-top:10px;font-weight:bold;">Đang tải lại trang nhập Key...</p>
         `;
         if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(w);
 
@@ -898,7 +905,7 @@ def serve_dynamic_script():
             if(w) w.remove(); 
             localStorage.removeItem('lvt_vip_key'); 
             location.reload(); 
-        }}, 5000);
+        }}, 4000);
     }}
 
     function showBeautifulLogin() {{
@@ -927,7 +934,7 @@ def serve_dynamic_script():
                 let cBanUntil = parseInt(localStorage.getItem('lvt_banned_' + val) || '0');
                 if (Date.now() < cBanUntil) {{
                     overlay.remove();
-                    showBanScreen(cBanUntil, "Bị Khóa", "Bị Khóa");
+                    showBanScreen(cBanUntil, "Đang Bị Khóa", "Key đã bị phạt");
                     return;
                 }}
                 
@@ -935,7 +942,6 @@ def serve_dynamic_script():
                 KEY = val;
                 overlay.remove();
                 window.lvt_spoofer_active = true;
-                emptyPingCount = 0;
                 checkServer(); 
             }}
         }};
@@ -960,12 +966,13 @@ def serve_dynamic_script():
     }}
 
     // =========================================================
-    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC (TUYỆT ĐỐI KHÔNG BẮT NHẦM SỐ ID)
+    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC: QUÉT RẤT KỸ KHÔNG ĐỂ NHẦM SỐ
     // =========================================================
     let realUser = localStorage.getItem('lvt_real_user') || "N/A";
     
     function saveRealUser(val) {{
-        if (val && typeof val === 'string' && val !== VIP_USER && val !== VIP_NAME && val.length > 2 && isNaN(val)) {{
+        // Bắt buộc chuỗi phải lớn hơn 2 ký tự, không phải là số ID, không có khoảng trắng và không phải là tên VIP ảo
+        if (val && typeof val === 'string' && val !== VIP_USER && val !== VIP_NAME && val.length > 2 && isNaN(val) && !val.includes(' ')) {{
             realUser = val;
             localStorage.setItem('lvt_real_user', val);
         }}
@@ -974,33 +981,29 @@ def serve_dynamic_script():
     function getRealUser() {{
         let found = "N/A";
         
+        // 1. Quét Cookie
         try {{
-            const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-            if (uw.account && uw.account.username && uw.account.username !== VIP_USER && isNaN(uw.account.username)) found = uw.account.username;
-            else if (uw.user && uw.user.username && uw.user.username !== VIP_USER && isNaN(uw.user.username)) found = uw.user.username;
-        }} catch(e) {{}}
-
-        if (found === "N/A") {{
-            try {{
-                let cookies = document.cookie.split(';');
-                for (let i = 0; i < cookies.length; i++) {{
-                    let c = cookies[i].trim();
-                    if (c.startsWith("username=")) {{
-                        let val = decodeURIComponent(c.substring(9));
-                        val = val.replace(/^"|"$/g, '').trim(); 
-                        if (val !== VIP_USER && val !== VIP_NAME && val.length > 2 && isNaN(val)) {{
-                            found = val;
-                        }}
+            let cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {{
+                let c = cookies[i].trim();
+                if (c.startsWith("username=")) {{
+                    let val = decodeURIComponent(c.substring(9));
+                    val = val.replace(/^"|"$/g, '').trim(); 
+                    if (val !== VIP_USER && val !== VIP_NAME && val.length > 2 && isNaN(val) && !val.includes(' ')) {{
+                        found = val;
                     }}
                 }}
-            }} catch(e) {{}}
-        }}
-        
+            }}
+        }} catch(e) {{}}
+
+        // 2. Bộ nhớ đệm localStorage (nếu cookie bị mất tạm thời)
         if (found === "N/A") {{
             let cached = localStorage.getItem('lvt_real_user');
-            if (cached && cached !== "N/A") found = cached;
-        }} else {{
-            localStorage.setItem('lvt_real_user', found);
+            if (cached && cached !== "N/A" && cached !== VIP_USER && isNaN(cached)) found = cached;
+        }}
+
+        if (found !== "N/A") {{
+            saveRealUser(found);
         }}
         
         return found;
@@ -1011,6 +1014,7 @@ def serve_dynamic_script():
     // =========================================================
     const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     
+    // KHÔNG bọc userId để tránh bắt nhầm các dãy số linh tinh
     ['userName', 'username', 'account'].forEach(prop => {{
         let actual = uw[prop];
         try {{
@@ -1030,7 +1034,7 @@ def serve_dynamic_script():
         uw.JSON.parse = function() {{
             let res = origParse.apply(this, arguments);
             if (res && typeof res === 'object') {{
-                if (res.username && res.username !== VIP_USER && isNaN(res.username)) saveRealUser(res.username);
+                if (res.username && res.username !== VIP_USER && isNaN(res.username) && !res.username.includes(' ')) saveRealUser(res.username);
                 
                 if (window.lvt_spoofer_active) {{
                     if (res.username) res.username = VIP_USER;
@@ -1048,12 +1052,14 @@ def serve_dynamic_script():
     // =========================================================
     // VÒNG LẶP KIỂM TRA MÁY CHỦ
     // =========================================================
-    let emptyPingCount = 0;
     let wrongAccountCount = 0; 
 
     function checkServer() {{
         if (!KEY) {{
-            if (window.top === window.self) showBeautifulLogin();
+            let url = window.location.href.toLowerCase();
+            if (!url.includes('/dang-nhap') && !url.includes('/login')) {{
+                if (window.top === window.self) showBeautifulLogin();
+            }}
             return;
         }}
 
@@ -1064,15 +1070,20 @@ def serve_dynamic_script():
             return;
         }}
 
-        let currentUser = getRealUser();
-        let isPageLoaded = document.readyState === "complete" || document.readyState === "interactive";
-
-        if (isPageLoaded && !document.cookie.includes('olm_')) {{
-            emptyPingCount++;
-            currentUser = "N/A";
-        }} else {{
-            emptyPingCount = 0;
+        // [XÁC MINH CHUẨN XÁC ĐĂNG XUẤT THẬT]
+        // Chỉ tính là Đăng xuất khi trang hiện tại đang CHUYỂN HƯỚNG về link login. BỎ HOÀN TOÀN MỌI CÁCH BÁO LỖI KHÁC.
+        let url = window.location.href.toLowerCase();
+        if (url.includes('/dang-nhap') || url.includes('/login')) {{
+            window.lvt_spoofer_active = false;
+            localStorage.removeItem('lvt_vip_key');
+            localStorage.removeItem('lvt_real_user'); 
+            showBigWarningAndResetKey("CHƯA ĐĂNG NHẬP", "Vui lòng đăng nhập vào OLM trước khi nhập Key.");
+            return;
         }}
+
+        let currentUser = getRealUser();
+        // Nếu tên vẫn chưa bóc ra được (Web đang load ngầm) -> Im lặng chờ, tuyệt đối không báo lỗi
+        if (currentUser === "N/A") return; 
 
         fetch(SERVER_URL + '/api/check', {{
             method: 'POST', headers: {{ 'Content-Type': 'application/json' }},
@@ -1093,41 +1104,33 @@ def serve_dynamic_script():
             
             let boundUser = data.bound_olm;
 
-            if (emptyPingCount > 4) {{
-                window.lvt_spoofer_active = false;
-                showBigWarningAndResetKey("ĐÃ ĐĂNG XUẤT", `⚠️ Vui lòng đăng nhập lại tài khoản: <b>${{boundUser}}</b>`);
-                return;
-            }}
-            if (emptyPingCount > 0) return; // Chờ web load
-
-            // [HỆ THỐNG TRỪNG PHẠT SAI TÀI KHOẢN CỰC MẠNH NHƯNG CHUẨN XÁC]
+            // [HỆ THỐNG TRỪNG PHẠT: KIỂM TRA CHẮC CHẮN MỚI BAN]
             if (boundUser && boundUser !== "N/A" && currentUser !== "N/A") {{
                 let cUser = currentUser.toLowerCase().trim();
                 let bUser = boundUser.toLowerCase().trim();
                 
-                // Chỉ phạt khi CHẮC CHẮN nó là Username (Không chứa dấu cách, không phải số ID)
+                // Phải là một username chuẩn mới so sánh, loại bỏ tạp âm (có chứa số thuần, dấu cách)
                 if (cUser !== bUser && !cUser.includes(' ') && isNaN(cUser)) {{
                     wrongAccountCount++;
-                    if (wrongAccountCount >= 2) {{ // Phải sai 2 lần quét liên tiếp mới Khóa (Chống lag web tải nhầm tên)
+                    if (wrongAccountCount >= 2) {{ // Bắt phải sai 2 lần quét liên tiếp (trễ vài giây) mới Khóa
                         window.lvt_spoofer_active = false;
                         applyBan(currentUser, boundUser);
                         return;
                     }}
                 }} else {{
-                    wrongAccountCount = 0;
+                    wrongAccountCount = 0; // Vào đúng thì reset bộ đếm trừng phạt
                 }}
             }}
 
-            // VÀO ĐÚNG TÀI KHOẢN -> BẬT NGỤY TRANG
+            // ĐÚNG TÀI KHOẢN -> MỞ TÀNG HÌNH VÀ BÁO CHÚC MỪNG ĐÚNG 1 LẦN
             if (currentUser !== "N/A" && wrongAccountCount === 0) {{
                 window.lvt_spoofer_active = true;
-                localStorage.setItem('lvt_offense_count_' + KEY, '0'); // Xóa án phạt
+                localStorage.setItem('lvt_offense_count_' + KEY, '0'); // Xóa án phạt cũ nếu có
                 
-                // HIỆN THÔNG BÁO CHÚC MỪNG 1 LẦN DUY NHẤT 
                 let successKey = 'lvt_success_shown_' + KEY;
                 if (!localStorage.getItem(successKey)) {{
                     showCenterSuccess(currentUser);
-                    localStorage.setItem(successKey, 'true');
+                    localStorage.setItem(successKey, 'true'); // Đánh dấu đã chúc mừng
                 }}
             }}
 
@@ -1136,13 +1139,17 @@ def serve_dynamic_script():
         }}).catch(e => {{}});
     }}
 
+    // Khi khởi động, nếu web không phải trang đăng nhập thì mới che bảng ép nhập key
     if (!KEY && window.top === window.self && Date.now() > banUntil) {{
-        document.addEventListener('DOMContentLoaded', showBeautifulLogin);
-        setTimeout(showBeautifulLogin, 500);
+        let url = window.location.href.toLowerCase();
+        if (!url.includes('/dang-nhap') && !url.includes('/login')) {{
+            document.addEventListener('DOMContentLoaded', showBeautifulLogin);
+            setTimeout(showBeautifulLogin, 500);
+        }}
     }}
 
-    setTimeout(checkServer, 500);
-    setInterval(checkServer, 3000);
+    setTimeout(checkServer, 1000);
+    setInterval(checkServer, 3500);
 
 }})();
 """
