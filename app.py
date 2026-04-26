@@ -91,8 +91,7 @@ def load_db():
             data.setdefault("keys", {})
             data.setdefault("logs", [])
             data.setdefault("active_scripts", {})
-            # Đã xóa global_notice
-            if "global_notice" in data: del data["global_notice"]
+            if not isinstance(data.get("global_notice"), dict): data["global_notice"] = {"msg": "", "exp": "permanent"}
             for uid in data["bot_users"]:
                 u = data["bot_users"][uid]
                 u.setdefault("purchases", [])
@@ -105,7 +104,6 @@ def load_db():
                 u.setdefault("main_menu_id", None)
                 u.setdefault("is_admin", False)
                 u.setdefault("admin_exp", 0)
-                u.setdefault("admin_key", "")
             for k in data["keys"]:
                 data["keys"][k].setdefault("bound_olm", "") 
                 data["keys"][k].setdefault("loader_enabled", True)
@@ -272,7 +270,7 @@ def live_timer_updater():
                                 [{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}],
                                 [{"text": "🔒 Khóa Nick OLM", "callback_data": "ADM_W_LOCK"}, {"text": "🚫 Chặn IP Máy", "callback_data": "ADM_W_BAN"}],
                                 [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}],
-                                [{"text": "👑 Cấp Quyền Admin", "callback_data": "ADM_GRANT_ADMIN"}, {"text": "💬 Gửi Tin Khách Riêng", "callback_data": "ADM_BN_PRIV"}],
+                                [{"text": "👑 Cấp Quyền Admin", "callback_data": "ADM_GRANT_ADMIN"}, {"text": "💬 Gửi Tin Khách", "callback_data": "ADM_BN_PRIV"}],
                                 [{"text": "📜 Theo Dõi Radar", "callback_data": "ADM_LOGS"}],
                                 [{"text": "❌ Đăng Xuất Admin", "callback_data": "ADM_LOGOUT"}]
                             ]}
@@ -571,11 +569,7 @@ def telegram_webhook():
             user["live_msg_type"] = None
             
             if payload == "MENU_MAIN":
-                valid_notices = [n for n in user["notices"] if n["exp"] == 'permanent' or n["exp"] > now_ms]
-                user["notices"] = valid_notices
                 txt = "🎉 <b>Chào mừng bạn đến với AutoKey (Admin @luongtuyen20)</b>\n➖➖➖➖➖➖➖➖\n\n"
-                if valid_notices:
-                    txt += "🔔 <b>THÔNG BÁO CÁ NHÂN:</b>\n" + "\n".join([f"🔸 {n['msg']}" for n in valid_notices]) + "\n\n"
                 txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Reset Key: <b>{user['resets']}/3</b>\n\n👇 Chọn dịch vụ:"
                 markup = {"inline_keyboard": [[{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}], [{"text": "🔗 Quản Lý Script OLM", "callback_data": "LOADER_MENU"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
@@ -771,7 +765,7 @@ def check_api():
     })
 
 # =========================================================
-# SCRIPT VIOLENTMONKEY (BẢN CHUẨN: CHẶN LỖI SAI NICK)
+# SCRIPT VIOLENTMONKEY ĐÃ FIX TRIỆT ĐỂ CHECK TÀI KHOẢN
 # =========================================================
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
@@ -846,7 +840,7 @@ def serve_dynamic_script():
                 <p style="color:#aaa;margin:0 0 10px 0;font-size:14px;">THỜI GIAN KHÓA CÒN LẠI:</p>
                 <div id="lvt-ban-timer" style="font-size:35px;color:#ffcc00;font-weight:bold;font-variant-numeric: tabular-nums;">--:--:--</div>
             </div>
-            <button id="lvt-ban-back-btn" style="margin-top:30px;padding:12px 25px;background:#333;color:#fff;border:1px solid #555;border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold;">Quay lại đăng nhập Key</button>
+            <button id="lvt-ban-back-btn" style="margin-top:30px;padding:12px 25px;background:#333;color:#fff;border:1px solid #555;border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold;">Sử Dụng Key Khác</button>
         `;
         if(document.body || document.documentElement) (document.body || document.documentElement).appendChild(w);
 
@@ -941,6 +935,7 @@ def serve_dynamic_script():
                 KEY = val;
                 overlay.remove();
                 window.lvt_spoofer_active = true;
+                emptyPingCount = 0;
                 checkServer(); 
             }}
         }};
@@ -952,9 +947,9 @@ def serve_dynamic_script():
         localStorage.setItem('lvt_offense_count_' + KEY, offenses);
 
         let banTimeMs = 0;
-        if (offenses === 1) banTimeMs = 30 * 60 * 1000; 
-        else if (offenses === 2) banTimeMs = 12 * 60 * 60 * 1000; 
-        else banTimeMs = 7 * 24 * 60 * 60 * 1000; 
+        if (offenses === 1) banTimeMs = 30 * 60 * 1000; // 30 phút
+        else if (offenses === 2) banTimeMs = 12 * 60 * 60 * 1000; // 12 tiếng
+        else banTimeMs = 7 * 24 * 60 * 60 * 1000; // 7 ngày
 
         let unbanTime = Date.now() + banTimeMs;
         localStorage.setItem('lvt_banned_' + KEY, unbanTime);
@@ -965,12 +960,12 @@ def serve_dynamic_script():
     }}
 
     // =========================================================
-    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC TỪ COOKIE VÀ BIẾN NỘI BỘ
+    // LỌC TÊN TÀI KHOẢN CHUẨN XÁC (TUYỆT ĐỐI KHÔNG BẮT NHẦM SỐ ID)
     // =========================================================
     let realUser = localStorage.getItem('lvt_real_user') || "N/A";
     
     function saveRealUser(val) {{
-        if (val && typeof val === 'string' && val !== VIP_USER && val !== VIP_NAME && val.length > 2) {{
+        if (val && typeof val === 'string' && val !== VIP_USER && val !== VIP_NAME && val.length > 2 && isNaN(val)) {{
             realUser = val;
             localStorage.setItem('lvt_real_user', val);
         }}
@@ -980,24 +975,24 @@ def serve_dynamic_script():
         let found = "N/A";
         
         try {{
-            let cookies = document.cookie.split(';');
-            for (let i = 0; i < cookies.length; i++) {{
-                let c = cookies[i].trim();
-                if (c.startsWith("username=")) {{
-                    let val = decodeURIComponent(c.substring(9));
-                    val = val.replace(/^"|"$/g, '').trim(); 
-                    if (val !== VIP_USER && val !== VIP_NAME && val.length > 2) {{
-                        found = val;
-                    }}
-                }}
-            }}
+            const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            if (uw.account && uw.account.username && uw.account.username !== VIP_USER && isNaN(uw.account.username)) found = uw.account.username;
+            else if (uw.user && uw.user.username && uw.user.username !== VIP_USER && isNaN(uw.user.username)) found = uw.user.username;
         }} catch(e) {{}}
 
         if (found === "N/A") {{
             try {{
-                const uw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-                if (uw.account && uw.account.username && uw.account.username !== VIP_USER) found = uw.account.username;
-                else if (uw.user && uw.user.username && uw.user.username !== VIP_USER) found = uw.user.username;
+                let cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {{
+                    let c = cookies[i].trim();
+                    if (c.startsWith("username=")) {{
+                        let val = decodeURIComponent(c.substring(9));
+                        val = val.replace(/^"|"$/g, '').trim(); 
+                        if (val !== VIP_USER && val !== VIP_NAME && val.length > 2 && isNaN(val)) {{
+                            found = val;
+                        }}
+                    }}
+                }}
             }} catch(e) {{}}
         }}
         
@@ -1070,7 +1065,6 @@ def serve_dynamic_script():
         }}
 
         let currentUser = getRealUser();
-
         let isPageLoaded = document.readyState === "complete" || document.readyState === "interactive";
 
         if (isPageLoaded && !document.cookie.includes('olm_')) {{
@@ -1101,20 +1095,20 @@ def serve_dynamic_script():
 
             if (emptyPingCount > 4) {{
                 window.lvt_spoofer_active = false;
-                showBigWarningAndResetKey("ĐÃ ĐĂNG XUẤT OLM", `⚠️ Vui lòng đăng nhập lại tài khoản: <b>${{boundUser}}</b>`);
+                showBigWarningAndResetKey("ĐÃ ĐĂNG XUẤT", `⚠️ Vui lòng đăng nhập lại tài khoản: <b>${{boundUser}}</b>`);
                 return;
             }}
-            if (emptyPingCount > 0) return;
+            if (emptyPingCount > 0) return; // Chờ web load
 
             // [HỆ THỐNG TRỪNG PHẠT SAI TÀI KHOẢN CỰC MẠNH NHƯNG CHUẨN XÁC]
             if (boundUser && boundUser !== "N/A" && currentUser !== "N/A") {{
                 let cUser = currentUser.toLowerCase().trim();
                 let bUser = boundUser.toLowerCase().trim();
                 
-                // Chỉ phạt khi CHẮC CHẮN nó là Username 
+                // Chỉ phạt khi CHẮC CHẮN nó là Username (Không chứa dấu cách, không phải số ID)
                 if (cUser !== bUser && !cUser.includes(' ') && isNaN(cUser)) {{
                     wrongAccountCount++;
-                    if (wrongAccountCount >= 2) {{ 
+                    if (wrongAccountCount >= 2) {{ // Phải sai 2 lần quét liên tiếp mới Khóa (Chống lag web tải nhầm tên)
                         window.lvt_spoofer_active = false;
                         applyBan(currentUser, boundUser);
                         return;
@@ -1127,7 +1121,7 @@ def serve_dynamic_script():
             // VÀO ĐÚNG TÀI KHOẢN -> BẬT NGỤY TRANG
             if (currentUser !== "N/A" && wrongAccountCount === 0) {{
                 window.lvt_spoofer_active = true;
-                localStorage.setItem('lvt_offense_count_' + KEY, '0'); 
+                localStorage.setItem('lvt_offense_count_' + KEY, '0'); // Xóa án phạt
                 
                 // HIỆN THÔNG BÁO CHÚC MỪNG 1 LẦN DUY NHẤT 
                 let successKey = 'lvt_success_shown_' + KEY;
@@ -1443,7 +1437,7 @@ def dashboard():
                 <thead class="table-active">
                     <tr>
                         <th>Người Dùng</th>
-                        <th>Số Dư</th>
+                        <th>Tài Khoản</th>
                         <th>Các Key Sở Hữu</th>
                         <th>Lịch Sử Gần Đây</th>
                         <th>IP Truy Cập</th>
