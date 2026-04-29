@@ -127,7 +127,7 @@ def after_request(response):
 # ========================================================
 # CẤU HÌNH BOT TELEGRAM
 # ========================================================
-TELEGRAM_BOT_TOKEN = "8621133442:AAEimlzP2LKIfWOLE18iQGoUUHS7pyXmDuw"
+TELEGRAM_BOT_TOKEN = "8621133442:AAFhgCT-rpiR-Ahp1gXKZVjMwm-kfyoSIaE"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
