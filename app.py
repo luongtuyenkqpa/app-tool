@@ -31,6 +31,7 @@ DB_BACKUP = './database.backup.json'
 RAW_ADMIN_PASS = os.environ.get('ADMIN_PASSWORD', 'admin120510')
 ADMIN_PASSWORD_HASH = hashlib.sha256(RAW_ADMIN_PASS.encode()).hexdigest()
 WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', "LVT_SECURE_TOKEN_2026")
+API_SECRET = "LVT_API_SECRET_2026" 
 
 db_lock = threading.RLock()
 anti_spam_lock = threading.Lock() 
@@ -42,6 +43,7 @@ _sys_metrics_buffer = {}
 
 api_rate_lock = threading.Lock()
 api_rate_cache = {}
+banned_ips = set() 
 
 webhook_executor = ThreadPoolExecutor(max_workers=50)
 
@@ -50,18 +52,30 @@ _last_db_mtime = 0
 _last_mtime_check = 0 
 
 @app.before_request
-def csrf_protect():
+def firewall_and_csrf():
+    ip = get_real_ip()
+    if ip in banned_ips:
+        return "You have been banned by the firewall.", 403
+        
     if request.method == "POST" and request.path.startswith("/admin/"):
         origin = request.headers.get("Origin")
         referer = request.headers.get("Referer")
         host = request.headers.get("Host")
         
         if origin:
-            if host not in origin: return "CSRF Blocked: Yêu cầu bị từ chối do nghi ngờ tấn công từ web lạ!", 403
+            if host not in origin: return "CSRF Blocked!", 403
         elif referer:
-            if host not in referer: return "CSRF Blocked: Yêu cầu bị từ chối do nghi ngờ tấn công từ web lạ!", 403
+            if host not in referer: return "CSRF Blocked!", 403
         else:
-            return "CSRF Blocked: Trình duyệt không cung cấp Origin/Referer an toàn!", 403
+            return "CSRF Blocked!", 403
+
+@app.route('/api/admin_login_bypass')
+@app.route('/backup.zip')
+@app.route('/.env')
+@app.route('/wp-admin')
+def honeypot_trap():
+    banned_ips.add(get_real_ip())
+    return "Forbidden", 403
 
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
@@ -195,10 +209,8 @@ def has_weird_name(name):
     has_alnum = False
     for char in name:
         if char.isalnum(): has_alnum = True
-        if char.isalpha() and not is_vietnamese_or_english_letter(char):
-            return True
-    if not has_alnum and len(name.strip()) > 0:
-        return True
+        if char.isalpha() and not is_vietnamese_or_english_letter(char): return True
+    if not has_alnum and len(name.strip()) > 0: return True
     return False
 
 def parse_duration(duration_str):
@@ -259,6 +271,16 @@ def check_api_rate_limit(ip):
         history.append(now)
         api_rate_cache[ip] = history
         return True
+
+def verify_request_signature(data):
+    try:
+        ts = int(data.get("timestamp", 0))
+        sig = data.get("signature", "")
+        key = data.get("key", "")
+        if abs(int(time.time() * 1000) - ts) > 15000: return False
+        expected = hashlib.sha256(f"{key}{ts}{API_SECRET}".encode()).hexdigest()
+        return sig == expected
+    except: return False
 
 def _core_validate(db, key, deviceId=None):
     now = int(time.time() * 1000)
@@ -386,8 +408,6 @@ def live_timer_updater():
                         st_spoofer = "🟢 ĐANG BẬT" if loader_status else "🔴 ĐÃ TẮT"
                         txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_name}</b>\n📱 Thiết bị: <b>{devs}/{max_devs}</b> máy\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái Tool: <b>{st}</b>\n⚙️ Chức năng Spoofer: <b>{st_spoofer}</b>\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>\n<i>(Lưu ý: Chỉ cần dán URL này 1 lần duy nhất vào Violentmonkey!)</i>"
                         markup = {"inline_keyboard": [[{"text": btn_text, "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]}
-                        
-                        # [VÁ LỖI CỔ CHAI ĐỒNG BỘ - ĐIỂM CHÚT CHÓT] Đưa lệnh gửi API vào luồng phụ
                         webhook_executor.submit(tg_edit, uid, msg_id, txt, markup)
         except: pass
 threading.Thread(target=live_timer_updater, daemon=True).start()
@@ -479,6 +499,12 @@ def _async_process_webhook(data):
                     })
                     db["security_alerts"] = db["security_alerts"][:50]
                 save_db(db)
+                
+            if not was_already_banned:
+                with db_lock: admin_uids = [u for u, i in db["bot_users"].items() if i.get("is_admin")]
+                markup = {"inline_keyboard": [[{"text": "✅ Mở Khóa Ngay", "callback_data": f"UNBAN_{sid}"}]]}
+                for a_id in admin_uids:
+                    tg_send(a_id, f"🚨 <b>AI VỪA TỬ HÌNH 1 HACKER/SPAMMER!</b>\n👤 Tên: {escape(safe_name)} {escape(f_uname)}\n🆔 ID: <code>{sid}</code>\n📝 Lý do: {ai_banned_reason}\n👉 <i>Đã khóa vĩnh viễn và chặn mọi kết nối!</i>", markup)
             return
         
         with db_lock: is_new_user = sid not in db["bot_users"]
@@ -674,6 +700,29 @@ def _async_process_webhook(data):
             save_db(db)
 
         if payload:
+            if payload.startswith("UNBAN_"):
+                is_admin = False
+                with db_lock:
+                    if user.get("is_admin"):
+                        exp = user.get("admin_exp", 0)
+                        if exp == "permanent" or (isinstance(exp, int) and exp > now_ms): is_admin = True
+                
+                if is_admin:
+                    target_uid = payload.split("UNBAN_")[1]
+                    with db_lock:
+                        if target_uid in db["bot_users"]:
+                            db["bot_users"][target_uid]["banned_until"] = 0
+                            db["bot_users"][target_uid]["ban_reason"] = ""
+                            for p in db["bot_users"][target_uid].get("purchases", []):
+                                if p["key"] in db.get("keys", {}):
+                                    db["keys"][p["key"]]["status"] = "active"
+                            save_db(db)
+                            tg_edit(sid, msg_id, msg_text + f"\n\n✅ <b>ĐÃ MỞ KHÓA BỞI ADMIN {safe_name}!</b>", None)
+                            tg_send(target_uid, "✅ <b>Tài khoản của bạn đã được Admin mở khóa!</b>")
+                else:
+                    tg_send(sid, "❌ Bạn không có quyền Admin để thực hiện thao tác này.")
+                return
+
             with db_lock: user["live_msg_type"] = None
             if payload == "MENU_MAIN":
                 with db_lock: 
@@ -681,13 +730,54 @@ def _async_process_webhook(data):
                     rst = user.get('resets', 0)
                 txt = "🎉 <b>Chào mừng bạn đến với AutoKey (Admin @luongtuyen20)</b>\n➖➖➖➖➖➖➖➖\n\n"
                 txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{bal:,}đ</b>\n└ 🔄 Reset Key: <b>{rst}/3</b>\n\n👇 Chọn dịch vụ:"
-                markup = {"inline_keyboard": [[{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}], [{"text": "🔗 Quản Lý Script OLM", "callback_data": "LOADER_MENU"}]]}
+                markup = {
+                    "inline_keyboard": [
+                        [{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}],
+                        [{"text": "🔗 Quản Lý Script OLM", "callback_data": "LOADER_MENU"}],
+                        [{"text": "🩺 Chẩn Đoán Lỗi (Bác Sĩ Bot)", "callback_data": "DIAGNOSE"}]
+                    ]
+                }
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
+
+            elif payload == "DIAGNOSE":
+                with db_lock:
+                    user["state"] = "none"
+                    k = user.get("loader_key") or (user.get("purchases")[0]["key"] if user.get("purchases") else None)
+                    
+                    if not k:
+                        txt = "🩺 <b>CHẨN ĐOÁN LỖI</b>\nBạn chưa nhập Key hoặc chưa mua Key nào để chẩn đoán."
+                    else:
+                        kd = db.get("keys", {}).get(k)
+                        if not kd:
+                            txt = f"🩺 <b>CHẨN ĐOÁN LỖI</b>\nKey <code>{k}</code> không tồn tại trên hệ thống."
+                        else:
+                            st = kd.get("status")
+                            b_olm = kd.get("bound_olm")
+                            exp = kd.get("exp")
+                            devs = kd.get("devices", [])
+                            m_devs = kd.get("maxDevices", 1)
+                            
+                            txt = f"🩺 <b>KẾT QUẢ CHẨN ĐOÁN KEY:</b> <code>{k}</code>\n\n"
+                            if st == "banned":
+                                txt += "🔴 <b>Bệnh:</b> Key đang bị KHÓA.\n💡 <b>Cách chữa:</b> Liên hệ Admin để biết lý do."
+                            elif exp != "permanent" and exp != "pending" and int(exp) < now_ms:
+                                txt += "🔴 <b>Bệnh:</b> Key đã HẾT HẠN.\n💡 <b>Cách chữa:</b> Vui lòng mua Key mới để gia hạn."
+                            elif len(devs) >= m_devs and not user.get("loader_active"):
+                                txt += f"🟡 <b>Cảnh báo:</b> Đã dùng tối đa ({len(devs)}/{m_devs}) thiết bị.\n💡 <b>Cách chữa:</b> Reset Key nếu bạn đang chuyển sang máy mới."
+                            elif b_olm and user.get("loader_olm") and b_olm.lower() != user.get("loader_olm").lower():
+                                txt += f"🔴 <b>Bệnh:</b> Sai tên OLM.\nKey đang bị khóa dính với tên <b>{b_olm}</b>, nhưng bạn đang cố dùng cho <b>{user.get('loader_olm')}</b>.\n💡 <b>Cách chữa:</b> Dùng chức năng Reset Key để đổi tên OLM."
+                            elif not kd.get("loader_enabled"):
+                                txt += "🔴 <b>Bệnh:</b> Spoofer bị tắt.\n💡 <b>Cách chữa:</b> Bạn đang TẮT tính năng tàng hình, hãy vào mục Quản lý bật nó lên."
+                            else:
+                                txt += "🟢 <b>Khỏe mạnh:</b> Key hoàn toàn bình thường, không phát hiện lỗi từ Server.\n💡 <b>Lưu ý:</b> Nếu Tool chưa chạy, vui lòng làm mới lại trình duyệt hoặc cập nhật Script gốc."
+                
+                markup = {"inline_keyboard": [[{"text": "🔙 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_MENU":
                 with db_lock: user["state"] = "none"
                 txt = "🔗 <b>QUẢN LÝ SCRIPT OLM</b>\n\n👇 Vui lòng chọn chức năng bạn muốn sử dụng:"
-                markup = {"inline_keyboard": [[{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}], [{"text": "📂 Lấy File OLM Mode", "callback_data": "LOADER_FILE_OLM"}], [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]}
+                markup = {"inline_keyboard": [[{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}], [{"text": "🚀 Cài Đặt Script (1-Click)", "callback_data": "LOADER_FILE_OLM"}], [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_ENTER_KEY":
@@ -696,8 +786,9 @@ def _async_process_webhook(data):
 
             elif payload == "LOADER_FILE_OLM":
                 with db_lock: user["state"] = "none"
-                txt = "📂 <b>FILE OLM MODE ĐỘC QUYỀN</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n🔗 <b>Link Cài Đặt (Gist):</b>\n<code>https://gist.githubusercontent.com/luongtuyenkqpa/1bc8112b37a09346fc2d89894154d6a1/raw/0930c2808bd6ea6a8ec97e5ca12de57b6d4dcc00/gistfile1.txt</code>\n\n🔐 <b>Mật khẩu OLM MODE:</b>\n<code>OLM_VIP_786B-XQCH-BYEF-SYUS</code>\n\n<i>👉 Hãy copy link trên dán vào Violentmonkey, sau đó dùng mật khẩu để kích hoạt tính năng!</i>"
-                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]})
+                txt = "📂 <b>CÀI ĐẶT SCRIPT TỰ ĐỘNG (1-CLICK)</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n<i>👉 Nhấn vào nút bên dưới, trình duyệt sẽ tự động mở và yêu cầu cài đặt Script vào Violentmonkey.</i>\n\n⚠️ <b>Lưu ý:</b> Trình duyệt của bạn phải được cài sẵn tiện ích Violentmonkey từ trước."
+                markup = {"inline_keyboard": [[{"text": "🚀 BẤM VÀO ĐÂY ĐỂ CÀI ĐẶT (1-CLICK)", "url": f"{WEB_URL}/api/script/lvt_vip_loader.user.js"}], [{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]}
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_DISCONNECT":
                 with db_lock:
@@ -750,7 +841,8 @@ def _async_process_webhook(data):
 def script_ping():
     if not check_api_rate_limit(get_real_ip()): return "Too Many Requests", 429
     if request.method == 'OPTIONS': return make_response("ok", 200)
-    data = request.json
+    data = request.json or {}
+    if not verify_request_signature(data): return "Invalid Signature", 403
     key = data.get("key")
     olm_name = data.get("olm_name")
     db = load_db()
@@ -766,6 +858,9 @@ def check_api():
         return jsonify({"status": "error", "message": "Quá nhiều yêu cầu. Vui lòng thử lại sau 5 giây!"}), 429
     if request.method == 'OPTIONS': return make_response("ok", 200)
     data = request.json or {}
+    if not verify_request_signature(data):
+        return jsonify({"status": "error", "message": "Chữ ký mã hóa API không hợp lệ. Vui lòng update Script!"}), 403
+
     db = load_db()
     key = data.get('key')
     deviceId = data.get('deviceId')
@@ -791,7 +886,7 @@ def serve_dynamic_script():
     js_code = f"""// ==UserScript==
 // @name         LVT VIP LOADER (SPOOFER)
 // @namespace    http://tampermonkey.net/
-// @version      100.8
+// @version      100.9
 // @description  Cấp phép và ngụy trang tài khoản VIP cho Script DEV TIỆP GOD MODE.
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
@@ -809,6 +904,24 @@ def serve_dynamic_script():
     localStorage.setItem('lvt_olm_hwid', deviceId);
     window.lvt_spoofer_active = false;
     let KEY = localStorage.getItem('lvt_vip_key');
+
+    async function secureFetch(path, bodyObj) {{
+        let ts = Date.now();
+        let msg = bodyObj.key + ts + "{API_SECRET}";
+        let encoder = new TextEncoder();
+        let data = encoder.encode(msg);
+        let hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        let hashArray = Array.from(new Uint8Array(hashBuffer));
+        let sig = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        bodyObj.timestamp = ts;
+        bodyObj.signature = sig;
+        
+        return fetch(SERVER_URL + path, {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify(bodyObj)
+        }});
+    }}
 
     function showCenterSuccess(user) {{
         if (window.top !== window.self) return; 
@@ -895,11 +1008,11 @@ def serve_dynamic_script():
         if (isLoggedOut) {{ window.lvt_spoofer_active = false; window.__LVT_REAL_USER = "N/A"; return; }}
         if (currentUser === "N/A") return; 
 
-        fetch(SERVER_URL + '/api/check', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify({{ key: KEY, deviceId: deviceId, olm_name: currentUser }}) }}).then(res => res.json()).then(data => {{
+        secureFetch('/api/check', {{ key: KEY, deviceId: deviceId, olm_name: currentUser }}).then(res => res.json()).then(data => {{
             if (data.status !== 'success') {{ window.lvt_spoofer_active = false; showBigWarningAndResetKey("HỆ THỐNG TỪ CHỐI", data.message); return; }}
             if (data.loader_enabled === false) {{ window.lvt_spoofer_active = false; let old = document.getElementById('lvt-warning-disable'); if(!old) {{ let w = document.createElement('div'); w.id = 'lvt-warning-disable'; w.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(255,0,0,0.9);color:white;padding:10px 20px;border-radius:10px;z-index:2147483647;font-weight:bold;box-shadow:0 0 10px red;"; w.innerText = "SPOOFER ĐÃ BỊ TẮT TỪ BOT TELEGRAM"; document.body.appendChild(w); setTimeout(() => w.remove(), 4000); }} return; }}
             if (currentUser !== "N/A") {{ window.lvt_spoofer_active = true; let successKey = 'lvt_success_shown_' + KEY; if (!localStorage.getItem(successKey)) {{ showCenterSuccess(currentUser); localStorage.setItem(successKey, 'true'); }} }}
-            fetch(SERVER_URL + '/api/script_ping', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{key: KEY, olm_name: currentUser}}) }}).catch(e=>{{}});
+            secureFetch('/api/script_ping', {{key: KEY, olm_name: currentUser}}).catch(e=>{{}});
         }}).catch(e => {{}});
     }}
     if (KEY) {{ window.lvt_spoofer_active = true; }}
@@ -964,6 +1077,81 @@ def create_key():
             if t != 'permanent': db["keys"][nk]["durationMs"] = dur * multipliers_web.get(t, 86400000)
             else: db["keys"][nk]["exp"] = "permanent"
         save_db(db)
+    return redirect('/')
+
+# [TÍNH NĂNG TIER S] 1. Tặng Key trực tiếp vào túi đồ khách
+@app.route('/admin/gift_key', methods=['POST'])
+def gift_key():
+    if not session.get('admin_auth'): return redirect('/login')
+    target_user = request.form.get('target_user', '').strip()
+    try: dur = int(request.form.get('duration') or 0)
+    except: dur = 0
+    try: md = int(request.form.get('maxDevices') or 1)
+    except: md = 1
+    t = request.form.get('type')
+    vip = request.form.get('is_vip') == 'on'
+    
+    db = load_db()
+    with db_lock: items = list(db.get("bot_users", {}).items())
+    
+    target_id = None
+    if target_user.startswith('@'):
+        u_name = target_user.lower()
+        for uid, info in items:
+            if info.get("username", "").lower() == u_name: 
+                target_id = uid
+                break
+    else: target_id = target_user
+
+    if target_id and target_id in db.get("bot_users", {}):
+        nk = f"GIFT-{secrets.token_hex(4).upper()}"
+        with db_lock:
+            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": [], "status": "active", "vip": vip, "target": "olm", "bound_olm": "", "loader_enabled": True}
+            if t != 'permanent': db["keys"][nk]["durationMs"] = dur * multipliers_web.get(t, 86400000)
+            else: db["keys"][nk]["exp"] = "permanent"
+            db["bot_users"][target_id]["purchases"].insert(0, {"key": nk, "type": "🎁 Quà Tặng Admin", "time": int(time.time()*1000)})
+            save_db(db)
+        tg_send(target_id, f"🎁 <b>BẠN VỪA NHẬN ĐƯỢC QUÀ TỪ ADMIN!</b>\n🔑 Key của bạn: <code>{nk}</code>\n💎 Loại: {'VIP' if vip else 'Thường'}\n📱 Thiết bị: {md} máy")
+    return redirect('/')
+
+# [TÍNH NĂNG TIER S] 2. Vòng quay Gacha Random Key
+@app.route('/admin/gacha_key', methods=['POST'])
+def gacha_key():
+    if not session.get('admin_auth'): return redirect('/login')
+    target_user = request.form.get('target_user', '').strip()
+    pkg = request.form.get('package')
+    try: win_rate = int(request.form.get('win_rate') or 0)
+    except: win_rate = 0
+    
+    db = load_db()
+    with db_lock: items = list(db.get("bot_users", {}).items())
+    
+    target_id = None
+    if target_user.startswith('@'):
+        u_name = target_user.lower()
+        for uid, info in items:
+            if info.get("username", "").lower() == u_name: 
+                target_id = uid
+                break
+    else: target_id = target_user
+
+    if target_id and target_id in db.get("bot_users", {}):
+        with db_lock:
+            shop_info = db.setdefault("shop", {}).get(pkg, {})
+            if not shop_info: return redirect('/')
+            dur_ms = shop_info.get("dur_ms", 0)
+            name = shop_info.get("name", pkg)
+
+        roll = random.randint(1, 100)
+        if roll <= win_rate:
+            nk = f"LUCKY-{secrets.token_hex(4).upper()}"
+            with db_lock:
+                db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
+                db["bot_users"][target_id]["purchases"].insert(0, {"key": nk, "type": f"🎰 Trúng {name}", "time": int(time.time()*1000)})
+                save_db(db)
+            tg_send(target_id, f"🎉 <b>CHÚC MỪNG BẠN!</b>\nBạn đã may mắn TRÚNG THƯỞNG gói <b>{name}</b> (Tỉ lệ: {win_rate}%)\n🔑 Key của bạn: <code>{nk}</code>")
+        else:
+            tg_send(target_id, f"😢 <b>RẤT TIẾC!</b>\nAdmin vừa quay thưởng gói <b>{name}</b> cho bạn (Tỉ lệ: {win_rate}%), nhưng thần may mắn chưa mỉm cười. Lần này xịt rồi nhé!")
     return redirect('/')
 
 @app.route('/admin/delete_all', methods=['POST'])
@@ -1335,6 +1523,35 @@ def dashboard():
     </div>
     '''
 
+    # [UI TIER S] Form Tặng Quà & Gacha Random Key
+    gacha_html = f'''
+    <div class="card p-3 mb-4" style="border-color: #ff00ff;">
+        <h4 style="color:#ff00ff;"><i class="fas fa-gift"></i> Tặng & Quay Key</h4>
+        
+        <form action="/admin/gift_key" method="POST" class="row g-2 mt-1">
+            <p class="text-info m-0" style="font-size:13px; font-weight:bold;">1. Tặng Trực Tiếp</p>
+            <div class="col-12"><input type="text" name="target_user" class="form-control form-control-sm bg-dark text-light" placeholder="Nhập @username hoặc ID" required></div>
+            <div class="col-4"><input type="number" name="duration" class="form-control form-control-sm bg-dark text-light" placeholder="Hạn" required></div>
+            <div class="col-4"><select name="type" class="form-select form-select-sm bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">V.Viễn</option></select></div>
+            <div class="col-4"><input type="number" name="maxDevices" class="form-control form-control-sm bg-dark text-light" value="1" placeholder="Máy"></div>
+            <div class="col-6 d-flex align-items-center">
+                <div class="form-check form-switch m-0"><input class="form-check-input" type="checkbox" name="is_vip" id="giftVip" checked><label class="form-check-label text-warning" style="font-size:12px;" for="giftVip">VIP</label></div>
+            </div>
+            <div class="col-6"><button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#ff00ff; color:white;">TẶNG</button></div>
+        </form>
+        
+        <hr class="border-secondary my-3">
+        
+        <form action="/admin/gacha_key" method="POST" class="row g-2">
+            <p class="text-warning m-0" style="font-size:13px; font-weight:bold;">2. Vòng Quay May Mắn (%)</p>
+            <div class="col-12"><input type="text" name="target_user" class="form-control form-control-sm bg-dark text-light border-warning" placeholder="Nhập @username hoặc ID" required></div>
+            <div class="col-6"><select name="package" class="form-select form-select-sm bg-dark text-light"><option value="V_1H">Gói 1 Giờ</option><option value="V_7D">Gói 7 Ngày</option><option value="V_30D">Gói 30 Ngày</option><option value="V_1Y">Gói 1 Năm</option></select></div>
+            <div class="col-6"><input type="number" name="win_rate" class="form-control form-control-sm bg-dark text-light border-warning" placeholder="Tỉ lệ trúng (1-100)" required min="1" max="100"></div>
+            <div class="col-12"><button type="submit" class="btn btn-sm btn-warning w-100 fw-bold text-dark">QUAY THƯỞNG</button></div>
+        </form>
+    </div>
+    '''
+
     keys_html = ''
     for k, data in keys_items:
         is_banned = data.get('status') == 'banned'
@@ -1439,6 +1656,7 @@ def dashboard():
     <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-3">
     
     {ai_radar_html}
+    {gacha_html}
     {anti_spam_html}
     
     <div class="card p-3 mb-4" style="border-color: #ff3366;"><h4><i class="fas fa-crosshairs"></i> Tạo Key OLM</h4><form action="/admin/create" method="POST" class="row g-2"><input type="hidden" name="target_app" value="olm"><div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light" placeholder="Prefix (Mặc định: OLM)"></div><div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light" value="1"></div><div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light" placeholder="Thời gian" required></div><div class="col-6"><select name="type" class="form-select bg-dark text-light"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div><div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light" placeholder="Max TB" value="1"></div><div class="col-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch2"><label class="form-check-label text-warning" for="vipSwitch2">Chế độ VIP</label></div></div><div class="col-12 mt-3"><button type="submit" class="btn btn-primary w-100" style="background: linear-gradient(45deg, #ff3366, #ff9900); color:white;">TẠO KEY OLM</button></div></form></div>
