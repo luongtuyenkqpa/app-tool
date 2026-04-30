@@ -27,21 +27,43 @@ app.config['SESSION_COOKIE_SECURE'] = True
 
 DB_FILE = './database.json'
 DB_BACKUP = './database.backup.json'
-ADMIN_PASSWORD = 'admin120510'
-WEBHOOK_SECRET = "LVT_SECURE_TOKEN_2026"
+
+RAW_ADMIN_PASS = os.environ.get('ADMIN_PASSWORD', 'admin120510')
+ADMIN_PASSWORD_HASH = hashlib.sha256(RAW_ADMIN_PASS.encode()).hexdigest()
+WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', "LVT_SECURE_TOKEN_2026")
 
 db_lock = threading.RLock()
-anti_spam_lock = threading.Lock() # [VÁ BẢO MẬT] Ổ khóa bảo vệ bộ đệm chống Spam
+anti_spam_lock = threading.Lock() 
 
 active_sessions = {}
 login_attempts = {}
 anti_spam_cache = {} 
+_sys_metrics_buffer = {} 
+
+api_rate_lock = threading.Lock()
+api_rate_cache = {}
 
 webhook_executor = ThreadPoolExecutor(max_workers=50)
 
 GLOBAL_DB = {}
 _last_db_mtime = 0
 _last_mtime_check = 0 
+
+# [VÁ BẢO MẬT TỐI THƯỢNG] Chống giả mạo yêu cầu chéo (CSRF) bảo vệ Web Admin
+@app.before_request
+def csrf_protect():
+    if request.method == "POST" and request.path.startswith("/admin/"):
+        origin = request.headers.get("Origin")
+        referer = request.headers.get("Referer")
+        host = request.headers.get("Host")
+        
+        # Nếu lệnh POST gửi tới Admin mà không xuất phát từ chính tên miền của bạn -> Khóa ngay
+        if origin:
+            if host not in origin: return "CSRF Blocked: Yêu cầu bị từ chối do nghi ngờ tấn công từ web lạ!", 403
+        elif referer:
+            if host not in referer: return "CSRF Blocked: Yêu cầu bị từ chối do nghi ngờ tấn công từ web lạ!", 403
+        else:
+            return "CSRF Blocked: Trình duyệt không cung cấp Origin/Referer an toàn!", 403
 
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
@@ -71,6 +93,10 @@ def load_db():
                 except Exception: pass
                 
             if not data:
+                # [VÁ LỖI CỨU HỘ DỮ LIỆU] Nếu DB bị lỗi cấu trúc, lưu lại tệp lỗi để admin tự phục hồi, không tự tiện ghi đè mất trắng
+                if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
+                    try: shutil.copy2(DB_FILE, DB_FILE + f".corrupted.{int(time.time())}.json")
+                    except: pass
                 data = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}, "shop": {}, "settings": {"max_users": 500}}
                 
             try:
@@ -157,7 +183,7 @@ def after_request(response):
 # ========================================================
 # CẤU HÌNH BOT TELEGRAM
 # ========================================================
-TELEGRAM_BOT_TOKEN = "8621133442:AAFhgCT-rpiR-Ahp1gXKZVjMwm-kfyoSIaE"
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', "8621133442:AAFhgCT-rpiR-Ahp1gXKZVjMwm-kfyoSIaE")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
@@ -208,6 +234,17 @@ def get_real_ip():
         return re.sub(r'[^0-9a-fA-F:.]', '', str(raw_ip))[:45]
     except:
         return "Unknown_IP"
+
+def check_api_rate_limit(ip):
+    now = time.time()
+    with api_rate_lock:
+        if len(api_rate_cache) > 5000: api_rate_cache.clear()
+        history = api_rate_cache.get(ip, [])
+        history = [t for t in history if now - t < 5] 
+        if len(history) >= 15: return False
+        history.append(now)
+        api_rate_cache[ip] = history
+        return True
 
 def _core_validate(db, key, deviceId=None):
     now = int(time.time() * 1000)
@@ -328,8 +365,7 @@ def live_timer_updater():
                                 devs = len(kd.get("devices", []))
                                 max_devs = kd.get("maxDevices", 1)
                                 loader_status = kd.get("loader_enabled", True)
-                            else:
-                                continue
+                            else: continue
                                 
                         url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
                         btn_text = "🔴 Tắt Spoofer" if loader_status else "🟢 Bật Spoofer"
@@ -363,14 +399,23 @@ def _async_process_webhook(data):
         chat_id = str(msg_obj.get("chat", {}).get("id", ""))
         if not chat_id: return
 
-        # [VÁ LỖI AN TOÀN RAM BỘ ĐỆM] Khóa bảo vệ chống đụng độ
         global anti_spam_cache
+        global _sys_metrics_buffer
         now_ms = int(time.time() * 1000)
+        trigger_auto_ban = False
+        
         with anti_spam_lock:
             if len(anti_spam_cache) > 5000: anti_spam_cache.clear()
-            if chat_id in anti_spam_cache and now_ms - anti_spam_cache[chat_id] < 500:
-                return 
+            if chat_id in anti_spam_cache and now_ms - anti_spam_cache[chat_id] < 500: return 
             anti_spam_cache[chat_id] = now_ms
+            
+            if len(_sys_metrics_buffer) > 5000: _sys_metrics_buffer.clear()
+            history = _sys_metrics_buffer.get(chat_id, [])
+            history = [t for t in history if now_ms - t < 10000]
+            history.append(now_ms)
+            _sys_metrics_buffer[chat_id] = history
+            
+            if len(history) > 6: trigger_auto_ban = True
 
         sid = chat_id
         msg_text = msg_obj.get("text", "").strip() if "message" in data else ""
@@ -388,9 +433,18 @@ def _async_process_webhook(data):
         safe_name = user_name.replace("<", "").replace(">", "")
         f_uname = f"@{tg_username}" if tg_username else ""
         
-        # [CHỐNG SPAM USER] 
-        with db_lock:
-            is_new_user = sid not in db["bot_users"]
+        if trigger_auto_ban:
+            with db_lock:
+                if sid in db.setdefault("bot_users", {}):
+                    if not db["bot_users"][sid].get("is_admin"):
+                        db["bot_users"][sid]["banned_until"] = "permanent"
+                        db["bot_users"][sid]["ban_reason"] = "Hệ thống ngầm phát hiện Tool Spam/Nick Ảo"
+                        for p in db["bot_users"][sid].get("purchases", []):
+                            if p["key"] in db.setdefault("keys", {}): db["keys"][p["key"]]["status"] = "banned"
+                        save_db(db)
+            return
+        
+        with db_lock: is_new_user = sid not in db["bot_users"]
             
         if is_new_user:
             with db_lock:
@@ -399,11 +453,10 @@ def _async_process_webhook(data):
                 
             if curr_users_count >= max_users:
                 with anti_spam_lock:
-                    last_warn = anti_spam_cache.get(f"warn_{sid}", 0)
+                    last_warn = _sys_metrics_buffer.get(f"warn_{sid}", 0)
                     should_warn = last_warn < now_ms - 60000
-                    if should_warn: anti_spam_cache[f"warn_{sid}"] = now_ms
-                if should_warn:
-                    tg_send(sid, "🚫 <b>HỆ THỐNG ĐÓNG CỬA!</b>\nServer đã đạt giới hạn số lượng tài khoản tối đa. Vui lòng quay lại sau.")
+                    if should_warn: _sys_metrics_buffer[f"warn_{sid}"] = now_ms
+                if should_warn: tg_send(sid, "🚫 <b>HỆ THỐNG ĐÓNG CỬA!</b>\nServer đã đạt giới hạn số lượng tài khoản tối đa. Vui lòng quay lại sau.")
                 return
 
             with db_lock:
@@ -417,8 +470,7 @@ def _async_process_webhook(data):
                 db["bot_users"][sid]["username"] = f_uname
                 db["bot_users"][sid]["name"] = safe_name
             
-        with db_lock:
-            user = db["bot_users"][sid]
+        with db_lock: user = db["bot_users"][sid]
 
         if not user.get("is_admin"):
             banned_until = user.get("banned_until", 0)
@@ -541,7 +593,8 @@ def _async_process_webhook(data):
             
             elif user_state == "wait_reset_key":
                 with db_lock:
-                    if msg_text in db["keys"]:
+                    rsts = user.get("resets", 0)
+                    if msg_text in db["keys"] and rsts > 0:
                         db["keys"][msg_text]["devices"] = []
                         db["keys"][msg_text]["known_ips"] = []
                         db["keys"][msg_text]["bound_olm"] = "" 
@@ -549,11 +602,20 @@ def _async_process_webhook(data):
                         user["state"] = "none"
                         save_db(db)
                         msg_success = True
+                        out_of_resets = False
+                    elif rsts <= 0:
+                        user["state"] = "none"
+                        save_db(db)
+                        msg_success = False
+                        out_of_resets = True
                     else:
                         msg_success = False
+                        out_of_resets = False
                         
                 if msg_success:
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch mọi Thiết Bị, IP và liên kết OLM. Trạng thái key giờ đã trở về <b>NHƯ MỚI</b>.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+                elif out_of_resets: 
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Bạn đã hết lượt Reset.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
                 else: 
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
             
@@ -602,7 +664,7 @@ def _async_process_webhook(data):
             elif payload == "LOADER_MENU":
                 with db_lock: user["state"] = "none"
                 txt = "🔗 <b>QUẢN LÝ SCRIPT OLM</b>\n\n👇 Vui lòng chọn chức năng bạn muốn sử dụng:"
-                markup = {"inline_keyboard": [[{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}], [{"text": "📂 Lấy File OLM Mode", "callback_data": "LOADER_FILE_OLM"}], [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]}
+                markup = {"inline_keyboard": [[{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}], [{"text": "🚀 Cài Đặt Script (1-Click)", "callback_data": "LOADER_FILE_OLM"}], [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_ENTER_KEY":
@@ -611,8 +673,9 @@ def _async_process_webhook(data):
 
             elif payload == "LOADER_FILE_OLM":
                 with db_lock: user["state"] = "none"
-                txt = "📂 <b>FILE OLM MODE ĐỘC QUYỀN</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n🔗 <b>Link Cài Đặt (Gist):</b>\n<code>https://gist.githubusercontent.com/luongtuyenkqpa/1bc8112b37a09346fc2d89894154d6a1/raw/0930c2808bd6ea6a8ec97e5ca12de57b6d4dcc00/gistfile1.txt</code>\n\n🔐 <b>Mật khẩu OLM MODE:</b>\n<code>OLM_VIP_786B-XQCH-BYEF-SYUS</code>\n\n<i>👉 Hãy copy link trên dán vào Violentmonkey, sau đó dùng mật khẩu để kích hoạt tính năng!</i>"
-                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]})
+                txt = "📂 <b>CÀI ĐẶT SCRIPT TỰ ĐỘNG (1-CLICK)</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n<i>👉 Nhấn vào nút bên dưới, trình duyệt sẽ tự động mở và yêu cầu cài đặt Script vào Violentmonkey.</i>\n\n⚠️ <b>Lưu ý:</b> Trình duyệt của bạn phải được cài sẵn tiện ích Violentmonkey từ trước."
+                markup = {"inline_keyboard": [[{"text": "🚀 BẤM VÀO ĐÂY ĐỂ CÀI ĐẶT (1-CLICK)", "url": f"{WEB_URL}/api/script/lvt_vip_loader.user.js"}], [{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]}
+                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_DISCONNECT":
                 with db_lock:
@@ -664,6 +727,7 @@ def _async_process_webhook(data):
 
 @app.route('/api/script_ping', methods=['POST', 'OPTIONS'])
 def script_ping():
+    if not check_api_rate_limit(get_real_ip()): return "Too Many Requests", 429
     if request.method == 'OPTIONS': return make_response("ok", 200)
     data = request.json
     key = data.get("key")
@@ -677,16 +741,16 @@ def script_ping():
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_api():
+    if not check_api_rate_limit(get_real_ip()):
+        return jsonify({"status": "error", "message": "Quá nhiều yêu cầu. Vui lòng thử lại sau 5 giây!"}), 429
     if request.method == 'OPTIONS': return make_response("ok", 200)
     data = request.json or {}
     db = load_db()
     key = data.get('key')
     deviceId = data.get('deviceId')
     olm_name = data.get('olm_name', 'N/A')
-    
     valid, msg = _core_validate(db, key, deviceId)
-    if not valid: 
-        return jsonify({"status": "error", "message": msg})
+    if not valid: return jsonify({"status": "error", "message": msg})
     
     with db_lock:
         kd = db["keys"].get(key, {})
@@ -694,8 +758,7 @@ def check_api():
 
     if bound_user and bound_user != "N/A" and olm_name != "N/A":
         if bound_user.lower() != olm_name.lower():
-            with db_lock:
-                kd["status"] = "banned"
+            with db_lock: kd["status"] = "banned"
             add_log(db, "SERVER AUTO BAN (Sai Tên)", key, get_real_ip(), f"Thiết bị: {deviceId}", olm_name)
             save_db(db)
             return jsonify({"status": "error", "message": f"PHÁT HIỆN GIAN LẬN! Tài khoản đang dùng ({olm_name}) không khớp với gốc ({bound_user}). Key đã bị hệ thống khóa!"})
@@ -842,7 +905,8 @@ def login():
         attempts = login_attempts.get(ip, [])
         attempts = [t for t in attempts if now - t < 300]
         if len(attempts) >= 5: return "<html><script>alert('Quá nhiều lần thử sai! Hãy quay lại sau 5 phút.');window.location.href='/login';</script></html>"
-        if request.form.get('password') == ADMIN_PASSWORD:
+        
+        if hashlib.sha256(request.form.get('password', '').encode()).hexdigest() == ADMIN_PASSWORD_HASH:
             session['admin_auth'] = True 
             if ip in login_attempts: del login_attempts[ip]
             return redirect('/')
@@ -1034,8 +1098,8 @@ def update_shop():
     except: stock = 0
     
     db = load_db()
-    with db_lock:
-        if pkg in db.setdefault("shop", {}):
+    if pkg in db.setdefault("shop", {}):
+        with db_lock:
             db["shop"][pkg]["price"] = price
             db["shop"][pkg]["stock"] = stock
             pkg_name = db["shop"][pkg].get("name", pkg)
@@ -1053,14 +1117,27 @@ def update_shop():
 @app.route('/admin/ban_user', methods=['POST'])
 def web_ban_user():
     if not session.get('admin_auth'): return redirect('/login')
-    target_id = request.form.get('target_user', '').strip()
+    target_user = request.form.get('target_user', '').strip()
     try: dur = int(request.form.get('duration') or 0)
     except: dur = 0
     t = request.form.get('type')
-    raw_reason = request.form.get('reason', 'Vi phạm chính sách').strip()
+    
+    raw_reason = request.form.get('reason', 'Vi phạm chính sách').strip()[:200]
     reason = escape(raw_reason) 
     
     db = load_db()
+    
+    with db_lock: items = list(db.get("bot_users", {}).items())
+    
+    target_id = None
+    if target_user.startswith('@'):
+        u_name = target_user.lower()
+        for uid, info in items:
+            if info.get("username", "").lower() == u_name: 
+                target_id = uid
+                break
+    else: target_id = target_user
+
     with db_lock:
         if target_id and target_id in db.get("bot_users", {}):
             if t == 'permanent': exp = 'permanent'
@@ -1086,10 +1163,9 @@ def unban_user(uid):
                 if p["key"] in db.get("keys", {}) and db["keys"][p["key"]].get("status") == "banned":
                     db["keys"][p["key"]]["status"] = "active"
             save_db(db)
-            tg_send(uid, f"✅ <b>Tài khoản của bạn đã được Admin mở khóa!</b>")
+        tg_send(uid, f"✅ <b>Tài khoản của bạn đã được Admin mở khóa!</b>")
     return redirect('/')
 
-# [VÁ LỖI AN TOÀN KHI XÓA] Sử dụng pop thay vì del để tránh KeyError
 @app.route('/admin/delete_user/<uid>')
 def delete_user(uid):
     if not session.get('admin_auth'): return redirect('/login')
@@ -1245,26 +1321,26 @@ def dashboard():
         
         banned_until = udata.get("banned_until", 0)
         is_banned_user = banned_until == "permanent" or (isinstance(banned_until, int) and banned_until > now_ms)
-        banned_badge = '<span class="badge bg-danger mt-1">BỊ KHÓA</span>' if is_banned_user else ''
+        banned_badge = f'<span class="badge bg-danger mt-1" title="{escape(str(udata.get("ban_reason", "")))}">BỊ KHÓA</span>' if is_banned_user else ''
         
         is_approved = udata.get("approved", False)
         appr_badge = '<span class="badge bg-success mt-1">Đã Duyệt</span>' if is_approved else '<span class="badge bg-warning text-dark mt-1 border border-warning">Chờ Cấp Phép</span>'
         
         row_status = "banned" if is_banned_user else ("approved" if is_approved else "pending")
 
-        revoke_btn = f'<a href="/admin/revoke_user/{uid}" class="btn btn-sm btn-outline-danger mt-1" style="font-size:12px;">Thu hồi Admin</a>' if is_adm else ''
+        revoke_btn = f'<a href="/admin/revoke_user/{escape(str(uid))}" class="btn btn-sm btn-outline-danger mt-1" style="font-size:12px;">Thu hồi Admin</a>' if is_adm else ''
         if is_banned_user:
-            revoke_btn += f'<a href="/admin/unban_user/{uid}" class="btn btn-sm btn-success mt-1 ms-1" style="font-size:12px;">Mở Khóa User</a>'
+            revoke_btn += f'<a href="/admin/unban_user/{escape(str(uid))}" class="btn btn-sm btn-success mt-1 ms-1" style="font-size:12px;">Mở Khóa User</a>'
         else:
-            revoke_btn += f'<button type="button" class="btn btn-sm btn-danger mt-1 ms-1" style="font-size:12px;" onclick="openBanModal(\'{uid}\', \'{safe_name}\')">Khóa</button>'
+            revoke_btn += f'<button type="button" class="btn btn-sm btn-danger mt-1 ms-1" style="font-size:12px;" onclick="openBanModal(\'{escape(str(uid))}\', \'{safe_name}\')">Khóa</button>'
         
-        revoke_btn += f'<a href="/admin/delete_user/{uid}" class="btn btn-sm btn-outline-light mt-1 ms-1" style="font-size:12px;" onclick="return confirm(\'Xóa vĩnh viễn user này khỏi DB?\')">🗑️ Xóa User</a>'
+        revoke_btn += f'<a href="/admin/delete_user/{escape(str(uid))}" class="btn btn-sm btn-outline-light mt-1 ms-1" style="font-size:12px;" onclick="return confirm(\'Xóa vĩnh viễn user này khỏi DB?\')">🗑️ Xóa User</a>'
 
         appr_ui = ""
         if not is_approved:
-            appr_ui = f'''<div class="mt-2 p-1 border border-secondary rounded" style="background:#1e1e2d;"><form action="/admin/approve" method="POST" class="d-flex flex-wrap gap-1 align-items-center"><input type="hidden" name="uid" value="{uid}"><input type="number" name="duration" class="form-control form-control-sm bg-dark text-light border-secondary" style="width:50px; font-size:11px; padding:2px;" placeholder="Số" required><select name="type" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:65px; font-size:11px; padding:2px;"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option></select><button type="submit" class="btn btn-sm btn-success" style="font-size:11px; padding:2px 5px;">Hẹn Giờ Duyệt</button></form><form action="/admin/approve" method="POST" class="mt-1"><input type="hidden" name="uid" value="{uid}"><input type="hidden" name="duration" value="0"><button type="submit" class="btn btn-sm btn-primary w-100 fw-bold" style="font-size:11px; padding:2px;">DUYỆT NGAY LẬP TỨC</button></form></div>'''
+            appr_ui = f'''<div class="mt-2 p-1 border border-secondary rounded" style="background:#1e1e2d;"><form action="/admin/approve" method="POST" class="d-flex flex-wrap gap-1 align-items-center"><input type="hidden" name="uid" value="{escape(str(uid))}"><input type="number" name="duration" class="form-control form-control-sm bg-dark text-light border-secondary" style="width:50px; font-size:11px; padding:2px;" placeholder="Số" required><select name="type" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:65px; font-size:11px; padding:2px;"><option value="min">Phút</option><option value="hour">Giờ</option><option value="day">Ngày</option></select><button type="submit" class="btn btn-sm btn-success" style="font-size:11px; padding:2px 5px;">Hẹn Giờ Duyệt</button></form><form action="/admin/approve" method="POST" class="mt-1"><input type="hidden" name="uid" value="{escape(str(uid))}"><input type="hidden" name="duration" value="0"><button type="submit" class="btn btn-sm btn-primary w-100 fw-bold" style="font-size:11px; padding:2px;">DUYỆT NGAY LẬP TỨC</button></form></div>'''
         else:
-            appr_ui = f'<a href="/admin/unapprove_user/{uid}" class="btn btn-sm btn-outline-warning mt-1" style="font-size:11px; padding:2px 5px;">Hủy Duyệt</a>'
+            appr_ui = f'<a href="/admin/unapprove_user/{escape(str(uid))}" class="btn btn-sm btn-outline-warning mt-1" style="font-size:11px; padding:2px 5px;">Hủy Duyệt</a>'
 
         owned_keys = [p["key"] for p in udata.get("purchases", [])]
         user_ips = set()
@@ -1272,15 +1348,15 @@ def dashboard():
         for l in logs_list:
             if l.get("key") in owned_keys:
                 user_ips.add(l.get("ip", "N/A"))
-                user_logs.append(f"{time.strftime('%d/%m %H:%M', time.localtime(l.get('time', 0)))}: {l.get('action', '')} ({escape(str(l.get('olm_name','')))})")
+                user_logs.append(f"{time.strftime('%d/%m %H:%M', time.localtime(l.get('time', 0)))}: {escape(str(l.get('action', '')))} ({escape(str(l.get('olm_name','')))})")
         
-        ips_str = "<br>".join(list(user_ips)) if user_ips else "<span class='text-muted'>Chưa có IP</span>"
-        keys_str = "<br>".join(owned_keys) if owned_keys else "<span class='text-muted'>Chưa mua Key</span>"
+        ips_str = "<br>".join([escape(str(i)) for i in user_ips]) if user_ips else "<span class='text-muted'>Chưa có IP</span>"
+        keys_str = "<br>".join([escape(str(k)) for k in owned_keys]) if owned_keys else "<span class='text-muted'>Chưa mua Key</span>"
         logs_str = "<br>".join(user_logs[:3]) + ("<br>..." if len(user_logs)>3 else "") if user_logs else "<span class='text-muted'>Chưa có HĐ</span>"
 
         users_html += f'''
         <tr class="user-row" data-status="{row_status}">
-            <td><strong class="text-info" style="cursor:pointer;" onclick="copyText('{safe_name}')" title="Sao chép tên">{safe_name}</strong> {uname_html}<br><small class="text-muted" style="cursor:pointer;" onclick="copyText('{uid}')" title="Sao chép ID">{uid}</small><br>{appr_badge} {adm_badge} {banned_badge}<br>{revoke_btn}</td>
+            <td><strong class="text-info" style="cursor:pointer;" onclick="copyText('{safe_name}')" title="Sao chép tên">{safe_name}</strong> {uname_html}<br><small class="text-muted" style="cursor:pointer;" onclick="copyText('{escape(str(uid))}')" title="Sao chép ID">{escape(str(uid))}</small><br>{appr_badge} {adm_badge} {banned_badge}<br>{revoke_btn}</td>
             <td style="width:160px;">{appr_ui}</td>
             <td><span class="badge bg-success">{udata.get("balance", 0):,}đ</span><br><small>Reset: {udata.get("resets", 0)}</small></td>
             <td>{keys_str}</td>
