@@ -54,7 +54,7 @@ def load_db():
             if not os.path.exists(DB_FILE) and os.path.exists(DB_BACKUP):
                 shutil.copy2(DB_BACKUP, DB_FILE)
             if not os.path.exists(DB_FILE):
-                GLOBAL_DB = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}}
+                GLOBAL_DB = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}, "shop": {}}
                 return GLOBAL_DB
             
             with open(DB_FILE, 'r', encoding='utf-8') as f:
@@ -64,6 +64,14 @@ def load_db():
                     data.setdefault("keys", {})
                     data.setdefault("logs", [])
                     data.setdefault("active_scripts", {})
+                    # NÂNG CẤP: Thêm kho dữ liệu SHOP tự động tạo nếu chưa có
+                    data.setdefault("shop", {
+                        "V_1H": {"price": 7000, "stock": 999, "dur_ms": 3600000, "name": "1 Giờ"},
+                        "V_7D": {"price": 30000, "stock": 999, "dur_ms": 604800000, "name": "7 Ngày"},
+                        "V_30D": {"price": 85000, "stock": 999, "dur_ms": 2592000000, "name": "30 Ngày"},
+                        "V_1Y": {"price": 200000, "stock": 999, "dur_ms": 31536000000, "name": "1 Năm"}
+                    })
+                    
                     if "global_notice" in data: del data["global_notice"]
                     for uid in data["bot_users"]:
                         u = data["bot_users"][uid]
@@ -78,6 +86,9 @@ def load_db():
                         u.setdefault("is_admin", False)
                         u.setdefault("admin_exp", 0)
                         u.setdefault("admin_key", "")
+                        # NÂNG CẤP: Chức năng Ban User
+                        u.setdefault("banned_until", 0)
+                        u.setdefault("ban_reason", "")
                     for k in data["keys"]:
                         data["keys"][k].setdefault("bound_olm", "") 
                         data["keys"][k].setdefault("loader_enabled", True)
@@ -85,7 +96,7 @@ def load_db():
                     GLOBAL_DB = data
                     _last_db_mtime = current_mtime
                 except Exception as e:
-                    if not GLOBAL_DB: GLOBAL_DB = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}}
+                    if not GLOBAL_DB: GLOBAL_DB = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}, "shop": {}}
         return GLOBAL_DB
 
 def save_db(db=None):
@@ -335,6 +346,7 @@ def live_timer_updater():
                                 [{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}],
                                 [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}],
                                 [{"text": "👑 Cấp Quyền Admin", "callback_data": "ADM_GRANT_ADMIN"}, {"text": "💬 Gửi Tin Khách Riêng", "callback_data": "ADM_BN_PRIV"}],
+                                [{"text": "📦 Quản Lý Kho & Giá", "callback_data": "ADM_SHOP"}, {"text": "🚫 Ban User", "callback_data": "ADM_BAN_USER"}],
                                 [{"text": "📜 Theo Dõi Radar", "callback_data": "ADM_LOGS"}],
                                 [{"text": "❌ Đăng Xuất Admin", "callback_data": "ADM_LOGOUT"}]
                             ]}
@@ -392,13 +404,21 @@ def _async_process_webhook(data):
         now_ms = int(time.time() * 1000)
         
         if sid not in db["bot_users"]:
-            db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": ""}
+            db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": 0, "ban_reason": ""}
             for uid, uinfo in list(db["bot_users"].items()):
                 if uinfo.get("is_admin"): tg_send(uid, f"🚨 <b>CÓ KHÁCH HÀNG MỚI!</b>\n👤 Tên: {safe_name} {f_uname}\n🆔 ID: <code>{sid}</code>")
         else:
             db["bot_users"][sid]["username"] = f_uname
             
         user = db["bot_users"][sid]
+
+        # [VÁ BẢO MẬT & NÂNG CẤP BAN] Kiểm tra tình trạng khóa tài khoản của khách
+        if not user.get("is_admin"):
+            banned_until = user.get("banned_until", 0)
+            if banned_until == "permanent" or (isinstance(banned_until, int) and banned_until > now_ms):
+                if msg_text:
+                    tg_send(sid, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {user.get('ban_reason', 'Vi phạm chính sách')}\n⏳ Thời hạn: {'Vĩnh viễn' if banned_until == 'permanent' else format_time(banned_until, now_ms)}\n\n<i>Toàn bộ kết nối Tool và Web OLM của bạn đã bị ngắt.</i>")
+                return
 
         if msg_text:
             requests.post(f"{TELEGRAM_API_URL}/deleteMessage", json={"chat_id": sid, "message_id": msg_id}, timeout=5)
@@ -467,33 +487,52 @@ def _async_process_webhook(data):
                 pkg = user["state"].replace("wait_qty_", "")
                 if msg_text.isdigit() and int(msg_text) > 0:
                     qty = int(msg_text)
-                    prices = {"V_1H": (7000, 3600000, "1 Giờ"), "V_7D": (30000, 604800000, "7 Ngày"), "V_30D": (85000, 2592000000, "30 Ngày"), "V_1Y": (200000, 31536000000, "1 Năm")}
-                    cost, dur_ms, name = prices.get(pkg, (0,0,""))
-                    if user["balance"] >= (cost * qty):
-                        user["balance"] -= (cost * qty)
-                        gen_keys = []
-                        for _ in range(qty):
-                            # [VÁ LỖI BẢO MẬT KEY] Sử dụng mã Hex ngẫu nhiên tuyệt đối
-                            nk = f"OLM-{secrets.token_hex(4).upper()}"
-                            db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
-                            user["purchases"].insert(0, {"key": nk, "type": f"VIP {name}", "time": now_ms})
-                            add_log(db, "MUA KEY", nk, "Telegram", f"Khách: {safe_name}", "N/A")
-                            gen_keys.append(nk)
-                        user["state"] = "none"
-                        k_str = "\n".join([f"🔑 <code>{k}</code>" for k in gen_keys])
-                        txt = f"🎊 <b>CHÚC MỪNG BẠN ĐÃ MUA KEY THÀNH CÔNG!</b>\n➖➖➖➖➖➖➖➖\n{k_str}\n\n📱 Thiết bị cho phép: <b>1 Máy</b>\n⏳ Thời gian sử dụng: <b>{name}</b>\n\n<i>(Key sẽ bắt đầu tính giờ khi bạn nhập vào Loader)</i>"
-                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔗 Khởi Tạo Script Ngay", "callback_data": "LOADER_MENU"}]]})
-                    else:
-                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Số dư không đủ!", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]})
+                    # [VÁ LỖI BẢO MẬT CỰC KỲ QUAN TRỌNG: RACE CONDITION CHỐNG SPAM]
+                    with db_lock: 
+                        shop_info = db["shop"].get(pkg, {"price": 0, "stock": 0, "dur_ms": 0, "name": ""})
+                        cost = shop_info["price"]
+                        dur_ms = shop_info["dur_ms"]
+                        name = shop_info["name"]
+                        stock = shop_info["stock"]
+                        
+                        if stock < qty:
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>Kho Key Không Đủ!</b>\nGói {name} hiện tại trong kho bot chỉ còn lại <b>{stock}</b> Key. Vui lòng mua số lượng nhỏ hơn.", {"inline_keyboard": [[{"text": "🔙 Quay Lại Mua", "callback_data": "BUY_VIP"}]]})
+                        elif db["bot_users"][sid]["balance"] >= (cost * qty):
+                            db["bot_users"][sid]["balance"] -= (cost * qty)
+                            db["shop"][pkg]["stock"] -= qty # Trừ kho
+                            gen_keys = []
+                            for _ in range(qty):
+                                nk = f"OLM-{secrets.token_hex(4).upper()}"
+                                db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
+                                db["bot_users"][sid]["purchases"].insert(0, {"key": nk, "type": f"VIP {name}", "time": now_ms})
+                                add_log(db, "MUA KEY", nk, "Telegram", f"Khách: {safe_name}", "N/A")
+                                gen_keys.append(nk)
+                            user["state"] = "none"
+                            k_str = "\n".join([f"🔑 <code>{k}</code>" for k in gen_keys])
+                            
+                            # [NÂNG CẤP THÔNG BÁO CHI TIẾT THEO YÊU CẦU]
+                            txt = f"🎊 <b>CHÚC MỪNG MUA KEY THÀNH CÔNG!</b>\n➖➖➖➖➖➖➖➖\n{k_str}\n\n"
+                            txt += f"📱 Thiết bị hỗ trợ: <b>1 Máy</b>\n"
+                            txt += f"💎 Loại Key: <b>VIP Cao Cấp</b>\n"
+                            txt += f"⏳ Thời gian sử dụng: <b>{name}</b>\n"
+                            txt += f"📦 Kho bot chỉ còn lại: <b>{db['shop'][pkg]['stock']} Key</b> gói này.\n\n"
+                            txt += f"<i>(Key sẽ chính thức bắt đầu trừ giờ khi bạn dán vào Tool lần đầu tiên)</i>"
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔗 Khởi Tạo Script Ngay", "callback_data": "LOADER_MENU"}]]})
+                        else:
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Số dư không đủ!", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]})
+                else:
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Vui lòng nhập số lượng hợp lệ!", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "BUY_VIP"}]]})
             
             elif user["state"] == "wait_reset_key":
                 if msg_text in db["keys"]:
+                    # [NÂNG CẤP RESET KEY TRỞ VỀ NHƯ MỚI]
                     db["keys"][msg_text]["devices"] = []
                     db["keys"][msg_text]["known_ips"] = []
+                    db["keys"][msg_text]["bound_olm"] = "" 
                     user["resets"] -= 1
                     user["state"] = "none"
                     save_db(db)
-                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch mọi Thiết Bị, IP và liên kết OLM. Trạng thái key giờ đã trở về <b>NHƯ MỚI</b>.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
                 else: 
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
             
@@ -562,6 +601,45 @@ def _async_process_webhook(data):
                         else:
                             user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Không tìm thấy User!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                     
+                    # [NÂNG CẤP] Tùy chỉnh kho và giá
+                    elif user["state"] == "adm_shop":
+                        if len(parts) == 3 and parts[0].upper() in db["shop"]:
+                            pkg = parts[0].upper()
+                            price = int(parts[1])
+                            stock = int(parts[2])
+                            db["shop"][pkg]["price"] = price
+                            db["shop"][pkg]["stock"] = stock
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Cập nhật thành công gói {pkg}!\n💰 Giá mới: {price}đ\n📦 Kho mới: {stock} Key", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                        else:
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Cú pháp sai! Vui lòng nhập đúng: `MãGói Giá Kho`\nVD: `V_1H 7000 100`", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                    
+                    # [NÂNG CẤP] Ban và quét chặn sạch tài khoản khách
+                    elif user["state"] == "adm_ban":
+                        if len(parts) >= 2:
+                            t_user = parts[0]
+                            dur = parse_duration(parts[1])
+                            reason = " ".join(parts[2:]) if len(parts) > 2 else "Vi phạm quy định hệ thống"
+                            t_id = get_user_id_by_username(db, t_user) if t_user.startswith('@') else t_user
+                            
+                            if t_id and t_id in db["bot_users"]:
+                                db["bot_users"][t_id]["banned_until"] = "permanent" if dur == 'permanent' else now_ms + dur
+                                db["bot_users"][t_id]["ban_reason"] = reason
+                                
+                                # Quét và khóa (Ban) toàn bộ key mà khách này đang sở hữu để chặn IP script
+                                count_banned_keys = 0
+                                for p in db["bot_users"][t_id].get("purchases", []):
+                                    if p["key"] in db["keys"]:
+                                        db["keys"][p["key"]]["status"] = "banned"
+                                        count_banned_keys += 1
+                                        
+                                txt = f"✅ <b>ĐÃ TRỪNG PHẠT THÀNH CÔNG!</b>\n👤 User: {t_user}\n🚫 Khóa truy cập Bot Telegram: {'Vĩnh viễn' if dur == 'permanent' else parts[1]}\n🛑 Đã khóa ngay lập tức <b>{count_banned_keys} Key</b> của khách này để chặn Script/IP."
+                                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                                tg_send(t_id, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {reason}\n<i>Toàn bộ kết nối Tool và Web OLM của bạn đã bị ngắt.</i>")
+                            else:
+                                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Không tìm thấy User!", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                        else:
+                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Nhập sai cú pháp! VD: `@luongtuyen20 7d Spam Bot`", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+
                     elif user["state"] == "adm_bn_priv":
                         t_user, dur_str, msg = msg_text.split(maxsplit=2)
                         dur = parse_duration(dur_str)
@@ -579,7 +657,8 @@ def _async_process_webhook(data):
                         t_id = get_user_id_by_username(db, t_user) if t_user.startswith('@') else t_user
                         if t_id and t_id in db["bot_users"]:
                             uinfo = db["bot_users"][t_id]
-                            txt = f"👤 <b>HỒ SƠ KHÁCH HÀNG:</b> {uinfo['name']} ({uinfo.get('username','')})\n🆔 ID: <code>{t_id}</code>\n\n💰 Dư: <b>{uinfo['balance']}đ</b> | 🔄 Reset: <b>{uinfo['resets']}</b>\n\n🛒 <b>LỊCH SỬ MUA:</b>\n"
+                            ban_st = "🟢 Bình Thường" if uinfo.get('banned_until', 0) == 0 or (isinstance(uinfo.get('banned_until', 0), int) and uinfo.get('banned_until', 0) < now_ms) else "🔴 ĐANG BỊ KHÓA"
+                            txt = f"👤 <b>HỒ SƠ KHÁCH HÀNG:</b> {uinfo['name']} ({uinfo.get('username','')})\n🆔 ID: <code>{t_id}</code>\n⚠️ Trạng thái: {ban_st}\n\n💰 Dư: <b>{uinfo['balance']}đ</b> | 🔄 Reset: <b>{uinfo['resets']}</b>\n\n🛒 <b>LỊCH SỬ MUA:</b>\n"
                             user_keys = [p["key"] for p in uinfo.get("purchases", [])]
                             for p in uinfo.get("purchases", [])[:5]: txt += f"- <code>{p['key']}</code> | {time.strftime('%d/%m', time.localtime(p['time']/1000))}\n"
                             txt += "\n📜 <b>LOG HOẠT ĐỘNG:</b>\n"
@@ -694,7 +773,13 @@ def _async_process_webhook(data):
             elif payload == "BUY_NOR":
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🛠 <b>Tính năng Mua Key Thường đang bảo trì.</b>", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]})
             elif payload == "BUY_VIP":
-                txt = "🛒 <b>BẢNG GIÁ KEY VIP:</b>\n🕒 1 Giờ: <b>7,000đ</b>\n📅 7 Ngày: <b>30,000đ</b>\n📆 30 Ngày: <b>85,000đ</b>\n🏆 1 Năm: <b>200,000đ</b>\n\n👇 Chọn gói:"
+                # [NÂNG CẤP] Tự động hiển thị giá và kho từ Shop DB
+                s = db.get("shop", {})
+                txt = "🛒 <b>BẢNG GIÁ & KHO KEY VIP:</b>\n"
+                txt += f"🕒 1 Giờ: <b>{s.get('V_1H',{}).get('price',7000):,}đ</b> (Kho còn: {s.get('V_1H',{}).get('stock',0)})\n"
+                txt += f"📅 7 Ngày: <b>{s.get('V_7D',{}).get('price',30000):,}đ</b> (Kho còn: {s.get('V_7D',{}).get('stock',0)})\n"
+                txt += f"📆 30 Ngày: <b>{s.get('V_30D',{}).get('price',85000):,}đ</b> (Kho còn: {s.get('V_30D',{}).get('stock',0)})\n"
+                txt += f"🏆 1 Năm: <b>{s.get('V_1Y',{}).get('price',200000):,}đ</b> (Kho còn: {s.get('V_1Y',{}).get('stock',0)})\n\n👇 Chọn gói:"
                 markup = {"inline_keyboard": [[{"text": "🕒 1 Giờ", "callback_data": "V_1H"},{"text": "📅 7 Ngày", "callback_data": "V_7D"}], [{"text": "📆 30 Ngày", "callback_data": "V_30D"},{"text": "🏆 1 Năm", "callback_data": "V_1Y"}], [{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
             elif payload.startswith("V_"):
@@ -728,6 +813,8 @@ def _async_process_webhook(data):
                     [{"text": "➕ Tạo Key Tool", "callback_data": "ADM_W_CREATE"}, {"text": "💰 Nạp Tiền Bank", "callback_data": "ADM_W_BAL"}],
                     [{"text": "👤 Soi Info Khách", "callback_data": "ADM_USER"}, {"text": "🛠 Quản Lý Mọi Key", "callback_data": "ADM_MANAGE"}],
                     [{"text": "👑 Cấp Quyền Admin", "callback_data": "ADM_GRANT_ADMIN"}, {"text": "💬 Gửi Tin Khách Riêng", "callback_data": "ADM_BN_PRIV"}],
+                    # [NÂNG CẤP] Tích hợp hàng nút mới
+                    [{"text": "📦 Quản Lý Kho & Giá", "callback_data": "ADM_SHOP"}, {"text": "🚫 Ban User", "callback_data": "ADM_BAN_USER"}],
                     [{"text": "📜 Theo Dõi Radar", "callback_data": "ADM_LOGS"}],
                     [{"text": "❌ Đăng Xuất Admin", "callback_data": "ADM_LOGOUT"}]
                 ]}
@@ -755,6 +842,17 @@ def _async_process_webhook(data):
                 elif payload == "ADM_MANAGE":
                     user["state"] = "adm_manage_input"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🛠 <b>QUẢN LÝ KEY / USER</b>\n\n📝 Nhập:\n- <b>Mã Key</b> (Sửa/xóa/Gia hạn/Ghim tài khoản)\n- <b>@username</b> (Xóa sạch mọi Key của khách đó)", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                # [NÂNG CẤP] Chức năng quản lý cấu hình Shop và Kho
+                elif payload == "ADM_SHOP":
+                    user["state"] = "adm_shop"
+                    txt = "📦 <b>CẤU HÌNH KHO & GIÁ TIỀN GÓI</b>\n\nCú pháp: <code>MãGói GiáTiền SốLượngKho</code>\nMã gói hợp lệ: <b>V_1H, V_7D, V_30D, V_1Y</b>\n\nVD: Cài gói 1 Giờ giá 7k, cho phép kho bán 100 Key:\n👉 <code>V_1H 7000 100</code>"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                # [NÂNG CẤP] Chức năng Ban User mạnh mẽ
+                elif payload == "ADM_BAN_USER":
+                    user["state"] = "adm_ban"
+                    txt = "🚫 <b>KHÓA TÀI KHOẢN VÀ CHẶN IP</b>\n\nCú pháp: <code>@username Thời_gian Lý_do</code>\n(Lệnh này sẽ tự động thu hồi/khóa luôn toàn bộ Key mà khách đang có để cắt đứt Script trên Web).\n\nVD: Khóa tài khoản 7 ngày vì Spam Bot:\n👉 <code>@luongtuyen20 7d Spam Bot</code>"
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MENU"}]]})
+                
                 elif payload == "ADM_LOGOUT":
                     user["is_admin"] = False
                     user["admin_key"] = ""
@@ -770,7 +868,8 @@ def _async_process_webhook(data):
                     if k in db["keys"]:
                         db["keys"][k]["devices"] = []
                         db["keys"][k]["known_ips"] = []
-                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã Gỡ sạch TB/IP của Key: <code>{k}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
+                        db["keys"][k]["bound_olm"] = ""
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Đã Gỡ sạch TB/IP/OLM của Key: <code>{k}</code>", {"inline_keyboard": [[{"text": "🔙 Về Admin", "callback_data": "ADM_MENU"}]]})
                 elif payload.startswith("K_DEL_"):
                     k = payload.replace("K_DEL_", "")
                     if k in db["keys"]:
@@ -1243,6 +1342,7 @@ def key_actions(action, key):
         elif action == 'reset-dev':
             db["keys"][key]['devices'] = []
             db["keys"][key]['known_ips'] = []
+            db["keys"][key]["bound_olm"] = "" # Reset về OLM mode gốc
         elif action == 'toggle_vip': db["keys"][key]['vip'] = not db["keys"][key].get('vip', False)
         save_db(db)
     return redirect('/')
@@ -1310,6 +1410,7 @@ def dashboard():
         </tr>'''
 
     users_html = ''
+    now_ms = int(time.time() * 1000)
     for uid, udata in list(db.get("bot_users", {}).items()):
         uname = udata.get("username", "")
         safe_uname = escape(str(uname))
@@ -1317,6 +1418,11 @@ def dashboard():
         uname_html = f'<span class="text-warning">{safe_uname}</span>' if safe_uname else ''
         is_adm = udata.get("is_admin", False)
         adm_badge = '<span class="badge bg-danger ms-2">Admin</span>' if is_adm else ''
+        
+        banned_until = udata.get("banned_until", 0)
+        is_banned_user = banned_until == "permanent" or (isinstance(banned_until, int) and banned_until > now_ms)
+        banned_badge = '<span class="badge bg-danger mt-1">BANNED</span>' if is_banned_user else ''
+        
         revoke_btn = f'<a href="/admin/revoke_user/{uid}" class="btn btn-sm btn-outline-danger mt-1">Thu hồi</a>' if is_adm else ''
         
         owned_keys = [p["key"] for p in udata.get("purchases", [])]
@@ -1333,7 +1439,7 @@ def dashboard():
 
         users_html += f'''
         <tr>
-            <td><strong class="text-info" style="cursor:pointer;" onclick="copyText('{safe_name}')" title="Sao chép tên">{safe_name}</strong> {uname_html} {adm_badge}<br><small class="text-muted" style="cursor:pointer;" onclick="copyText('{uid}')" title="Sao chép ID">{uid}</small><br>{revoke_btn}</td>
+            <td><strong class="text-info" style="cursor:pointer;" onclick="copyText('{safe_name}')" title="Sao chép tên">{safe_name}</strong> {uname_html} {adm_badge} {banned_badge}<br><small class="text-muted" style="cursor:pointer;" onclick="copyText('{uid}')" title="Sao chép ID">{uid}</small><br>{revoke_btn}</td>
             <td><span class="badge bg-success">{udata["balance"]}đ</span><br><small>Reset: {udata["resets"]}</small></td>
             <td>{keys_str}</td>
             <td style="font-size:12px;">{logs_str}</td>
