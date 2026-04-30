@@ -64,12 +64,12 @@ def load_db():
                     data.setdefault("logs", [])
                     data.setdefault("active_scripts", {})
                     data.setdefault("settings", {"max_users": 500}) # [CHỐNG SPAM]
-                    data.setdefault("shop", {
-                        "V_1H": {"price": 7000, "stock": 999, "dur_ms": 3600000, "name": "1 Giờ"},
-                        "V_7D": {"price": 30000, "stock": 999, "dur_ms": 604800000, "name": "7 Ngày"},
-                        "V_30D": {"price": 85000, "stock": 999, "dur_ms": 2592000000, "name": "30 Ngày"},
-                        "V_1Y": {"price": 200000, "stock": 999, "dur_ms": 31536000000, "name": "1 Năm"}
-                    })
+                    
+                    shop_data = data.setdefault("shop", {})
+                    shop_data.setdefault("V_1H", {"price": 7000, "stock": 999, "dur_ms": 3600000, "name": "1 Giờ"})
+                    shop_data.setdefault("V_7D", {"price": 30000, "stock": 999, "dur_ms": 604800000, "name": "7 Ngày"})
+                    shop_data.setdefault("V_30D", {"price": 85000, "stock": 999, "dur_ms": 2592000000, "name": "30 Ngày"})
+                    shop_data.setdefault("V_1Y", {"price": 200000, "stock": 999, "dur_ms": 31536000000, "name": "1 Năm"})
                     
                     if "global_notice" in data: del data["global_notice"]
                     for uid in list(data["bot_users"].keys()):
@@ -87,6 +87,7 @@ def load_db():
                         u.setdefault("admin_key", "")
                         u.setdefault("banned_until", 0)
                         u.setdefault("ban_reason", "")
+                        u.setdefault("name", "Khách") 
                         
                         if "approved" not in u:
                             if u.get("is_admin") or u.get("balance", 0) > 0 or len(u.get("purchases", [])) > 0:
@@ -361,6 +362,7 @@ def _async_process_webhook(data):
                 if uinfo.get("is_admin"): tg_send(uid, f"🚨 <b>CÓ KHÁCH HÀNG MỚI (CHỜ DUYỆT)!</b>\n👤 Tên: {safe_name} {f_uname}\n🆔 ID: <code>{sid}</code>\n👉 <i>Vào Web Admin để phê duyệt cho khách nhé!</i>")
         else:
             db["bot_users"][sid]["username"] = f_uname
+            db["bot_users"][sid]["name"] = safe_name # Luôn cập nhật tên mới nhất để tránh lỗi
             
         user = db["bot_users"][sid]
 
@@ -440,14 +442,15 @@ def _async_process_webhook(data):
                     qty = int(msg_text)
                     with db_lock: 
                         shop_info = db["shop"].get(pkg, {"price": 0, "stock": 0, "dur_ms": 0, "name": ""})
-                        cost = shop_info["price"]
-                        dur_ms = shop_info["dur_ms"]
-                        name = shop_info["name"]
-                        stock = shop_info["stock"]
+                        cost = shop_info.get("price", 0)
+                        dur_ms = shop_info.get("dur_ms", 0)
+                        name = shop_info.get("name", "")
+                        stock = shop_info.get("stock", 0)
                         
                         if stock < qty: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>Kho Key Không Đủ!</b>\nGói {name} hiện tại trong kho bot chỉ còn lại <b>{stock}</b> Key. Vui lòng mua số lượng nhỏ hơn.", {"inline_keyboard": [[{"text": "🔙 Quay Lại Mua", "callback_data": "BUY_VIP"}]]})
-                        elif db["bot_users"][sid]["balance"] >= (cost * qty):
+                        elif db["bot_users"][sid].get("balance", 0) >= (cost * qty):
                             db["bot_users"][sid]["balance"] -= (cost * qty)
+                            db["shop"].setdefault(pkg, {"stock": stock})
                             db["shop"][pkg]["stock"] -= qty
                             gen_keys = []
                             for _ in range(qty):
@@ -497,7 +500,7 @@ def _async_process_webhook(data):
             user["live_msg_type"] = None
             if payload == "MENU_MAIN":
                 txt = "🎉 <b>Chào mừng bạn đến với AutoKey (Admin @luongtuyen20)</b>\n➖➖➖➖➖➖➖➖\n\n"
-                txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user['balance']}đ</b>\n└ 🔄 Reset Key: <b>{user['resets']}/3</b>\n\n👇 Chọn dịch vụ:"
+                txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user.get('balance', 0)}đ</b>\n└ 🔄 Reset Key: <b>{user.get('resets', 0)}/3</b>\n\n👇 Chọn dịch vụ:"
                 markup = {"inline_keyboard": [[{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}], [{"text": "🔗 Quản Lý Script OLM", "callback_data": "LOADER_MENU"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
@@ -535,19 +538,24 @@ def _async_process_webhook(data):
             elif payload == "BUY_NOR":
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🛠 <b>Tính năng Mua Key Thường đang bảo trì.</b>", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]})
             elif payload == "BUY_VIP":
-                s = db.get("shop", {})
+                s = db.get("shop") or {}
+                v1h = s.get('V_1H') or {"price": 7000, "stock": 0}
+                v7d = s.get('V_7D') or {"price": 30000, "stock": 0}
+                v30d = s.get('V_30D') or {"price": 85000, "stock": 0}
+                v1y = s.get('V_1Y') or {"price": 200000, "stock": 0}
+                
                 txt = "🛒 <b>BẢNG GIÁ & KHO KEY VIP:</b>\n"
-                txt += f"🕒 1 Giờ: <b>{s.get('V_1H',{}).get('price',7000):,}đ</b> (Kho còn: {s.get('V_1H',{}).get('stock',0)})\n"
-                txt += f"📅 7 Ngày: <b>{s.get('V_7D',{}).get('price',30000):,}đ</b> (Kho còn: {s.get('V_7D',{}).get('stock',0)})\n"
-                txt += f"📆 30 Ngày: <b>{s.get('V_30D',{}).get('price',85000):,}đ</b> (Kho còn: {s.get('V_30D',{}).get('stock',0)})\n"
-                txt += f"🏆 1 Năm: <b>{s.get('V_1Y',{}).get('price',200000):,}đ</b> (Kho còn: {s.get('V_1Y',{}).get('stock',0)})\n\n👇 Chọn gói:"
+                txt += f"🕒 1 Giờ: <b>{v1h.get('price', 0):,}đ</b> (Kho còn: {v1h.get('stock', 0)})\n"
+                txt += f"📅 7 Ngày: <b>{v7d.get('price', 0):,}đ</b> (Kho còn: {v7d.get('stock', 0)})\n"
+                txt += f"📆 30 Ngày: <b>{v30d.get('price', 0):,}đ</b> (Kho còn: {v30d.get('stock', 0)})\n"
+                txt += f"🏆 1 Năm: <b>{v1y.get('price', 0):,}đ</b> (Kho còn: {v1y.get('stock', 0)})\n\n👇 Chọn gói:"
                 markup = {"inline_keyboard": [[{"text": "🕒 1 Giờ", "callback_data": "V_1H"},{"text": "📅 7 Ngày", "callback_data": "V_7D"}], [{"text": "📆 30 Ngày", "callback_data": "V_30D"},{"text": "🏆 1 Năm", "callback_data": "V_1Y"}], [{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
             elif payload.startswith("V_"):
                 user["state"] = f"wait_qty_{payload}"
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🔢 Nhập <b>SỐ LƯỢNG</b> Key muốn mua:")
             elif payload == "RESET":
-                if user["resets"] <= 0: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Bạn đã hết lượt Reset.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
+                if user.get("resets", 0) <= 0: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Bạn đã hết lượt Reset.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
                 else:
                     user["state"] = "wait_reset_key"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
@@ -792,8 +800,8 @@ def add_balance():
     db = load_db()
     target_id = get_user_id_by_username(db, target_user) if target_user.startswith('@') else target_user
     if target_id and target_id in db["bot_users"]:
-        db["bot_users"][target_id]["balance"] += amount
-        db["bot_users"][target_id]["resets"] += resets
+        db["bot_users"][target_id]["balance"] = db["bot_users"][target_id].get("balance", 0) + amount
+        db["bot_users"][target_id]["resets"] = db["bot_users"][target_id].get("resets", 0) + resets
         save_db(db)
         msg = f"🎉 <b>Admin vừa cập nhật tài khoản của bạn!</b>\n"
         if amount > 0: msg += f"💰 Nạp tiền: <b>+{amount}đ</b>\n"
@@ -977,19 +985,25 @@ def dashboard():
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
     
-    # [NÂNG CẤP UI SHOP]
-    s = db.get("shop", {})
+    # [NÂNG CẤP UI SHOP AN TOÀN TUYỆT ĐỐI CHỐNG LỖI 500]
+    s = db.get("shop") or {}
+    v1h = s.get("V_1H") or {"price": 7000, "stock": 999}
+    v7d = s.get("V_7D") or {"price": 30000, "stock": 999}
+    v30d = s.get("V_30D") or {"price": 85000, "stock": 999}
+    v1y = s.get("V_1Y") or {"price": 200000, "stock": 999}
+
     shop_status = f"""
     <ul class="list-group list-group-flush mb-2" style="font-size:12px;">
-      <li class="list-group-item bg-dark text-light border-secondary p-1">🕒 1 Giờ: <b class="text-warning">{s.get('V_1H',{{}}).get('price')}đ</b> | Kho: <b class="text-info">{s.get('V_1H',{{}}).get('stock')}</b></li>
-      <li class="list-group-item bg-dark text-light border-secondary p-1">📅 7 Ngày: <b class="text-warning">{s.get('V_7D',{{}}).get('price')}đ</b> | Kho: <b class="text-info">{s.get('V_7D',{{}}).get('stock')}</b></li>
-      <li class="list-group-item bg-dark text-light border-secondary p-1">📆 30 Ngày: <b class="text-warning">{s.get('V_30D',{{}}).get('price')}đ</b> | Kho: <b class="text-info">{s.get('V_30D',{{}}).get('stock')}</b></li>
-      <li class="list-group-item bg-dark text-light border-secondary p-1">🏆 1 Năm: <b class="text-warning">{s.get('V_1Y',{{}}).get('price')}đ</b> | Kho: <b class="text-info">{s.get('V_1Y',{{}}).get('stock')}</b></li>
+      <li class="list-group-item bg-dark text-light border-secondary p-1">🕒 1 Giờ: <b class="text-warning">{v1h.get('price', 0):,}đ</b> | Kho: <b class="text-info">{v1h.get('stock', 0)}</b></li>
+      <li class="list-group-item bg-dark text-light border-secondary p-1">📅 7 Ngày: <b class="text-warning">{v7d.get('price', 0):,}đ</b> | Kho: <b class="text-info">{v7d.get('stock', 0)}</b></li>
+      <li class="list-group-item bg-dark text-light border-secondary p-1">📆 30 Ngày: <b class="text-warning">{v30d.get('price', 0):,}đ</b> | Kho: <b class="text-info">{v30d.get('stock', 0)}</b></li>
+      <li class="list-group-item bg-dark text-light border-secondary p-1">🏆 1 Năm: <b class="text-warning">{v1y.get('price', 0):,}đ</b> | Kho: <b class="text-info">{v1y.get('stock', 0)}</b></li>
     </ul>
     """
 
     # [NÂNG CẤP UI ANTI SPAM]
-    max_u = db.get("settings", {}).get("max_users", 500)
+    settings = db.get("settings") or {}
+    max_u = settings.get("max_users", 500)
     curr_u = len(db.get("bot_users", {}))
     anti_spam_html = f'''
     <div class="card p-3 mb-4" style="border-color: #00ffcc;">
@@ -1042,8 +1056,8 @@ def dashboard():
     now_ms = int(time.time() * 1000)
     for uid, udata in list(db.get("bot_users", {}).items()):
         uname = udata.get("username", "")
-        safe_uname = escape(str(uname))
-        safe_name = escape(str(udata["name"]))
+        safe_uname = escape(str(uname)) if uname else ""
+        safe_name = escape(str(udata.get("name", "Khách")))
         uname_html = f'<span class="text-warning">{safe_uname}</span>' if safe_uname else ''
         is_adm = udata.get("is_admin", False)
         adm_badge = '<span class="badge bg-danger mt-1">Admin Bot</span>' if is_adm else ''
@@ -1077,7 +1091,7 @@ def dashboard():
         user_logs = []
         for l in list(db.get("logs", [])):
             if l["key"] in owned_keys:
-                user_ips.add(l["ip"])
+                user_ips.add(l.get("ip", "N/A"))
                 user_logs.append(f"{time.strftime('%d/%m %H:%M', time.localtime(l['time']))}: {l['action']} ({escape(str(l.get('olm_name','')))})")
         
         ips_str = "<br>".join(list(user_ips)) if user_ips else "<span class='text-muted'>Chưa có IP</span>"
@@ -1088,7 +1102,7 @@ def dashboard():
         <tr class="user-row" data-status="{row_status}">
             <td><strong class="text-info" style="cursor:pointer;" onclick="copyText('{safe_name}')" title="Sao chép tên">{safe_name}</strong> {uname_html}<br><small class="text-muted" style="cursor:pointer;" onclick="copyText('{uid}')" title="Sao chép ID">{uid}</small><br>{appr_badge} {adm_badge} {banned_badge}<br>{revoke_btn}</td>
             <td style="width:160px;">{appr_ui}</td>
-            <td><span class="badge bg-success">{udata["balance"]}đ</span><br><small>Reset: {udata["resets"]}</small></td>
+            <td><span class="badge bg-success">{udata.get("balance", 0)}đ</span><br><small>Reset: {udata.get("resets", 0)}</small></td>
             <td>{keys_str}</td>
             <td style="font-size:12px;">{logs_str}</td>
             <td style="font-size:12px;" class="text-secondary">{ips_str}</td>
