@@ -1,4 +1,5 @@
 import os, json, time, random, hashlib, threading, requests, re, shutil, base64, secrets
+from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session
 
@@ -29,9 +30,14 @@ DB_BACKUP = './database.backup.json'
 ADMIN_PASSWORD = 'admin120510'
 WEBHOOK_SECRET = "LVT_SECURE_TOKEN_2026"
 
-db_lock = threading.Lock()
+db_lock = threading.RLock()
+anti_spam_lock = threading.Lock() # [VÁ BẢO MẬT] Ổ khóa bảo vệ bộ đệm chống Spam
+
 active_sessions = {}
 login_attempts = {}
+anti_spam_cache = {} 
+
+webhook_executor = ThreadPoolExecutor(max_workers=50)
 
 GLOBAL_DB = {}
 _last_db_mtime = 0
@@ -52,58 +58,68 @@ def load_db():
         if current_mtime > _last_db_mtime or not GLOBAL_DB:
             if not os.path.exists(DB_FILE) and os.path.exists(DB_BACKUP):
                 shutil.copy2(DB_BACKUP, DB_FILE)
-            if not os.path.exists(DB_FILE):
-                GLOBAL_DB = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}, "shop": {}, "settings": {"max_users": 500}}
-                return GLOBAL_DB
-            
-            with open(DB_FILE, 'r', encoding='utf-8') as f:
+                
+            data = None
+            if os.path.exists(DB_FILE):
                 try:
-                    data = json.load(f)
-                    data.setdefault("bot_users", {})
-                    data.setdefault("keys", {})
-                    data.setdefault("logs", [])
-                    data.setdefault("active_scripts", {})
-                    data.setdefault("settings", {"max_users": 500}) # [CHỐNG SPAM]
+                    with open(DB_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
+                except Exception: pass
+            
+            if not data and os.path.exists(DB_BACKUP):
+                try:
+                    with open(DB_BACKUP, 'r', encoding='utf-8') as f: data = json.load(f)
+                except Exception: pass
+                
+            if not data:
+                data = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}, "shop": {}, "settings": {"max_users": 500}}
+                
+            try:
+                data.setdefault("bot_users", {})
+                data.setdefault("keys", {})
+                data.setdefault("logs", [])
+                data.setdefault("active_scripts", {})
+                data.setdefault("settings", {"max_users": 500})
+                
+                shop_data = data.setdefault("shop", {})
+                shop_data.setdefault("V_1H", {"price": 7000, "stock": 999, "dur_ms": 3600000, "name": "1 Giờ"})
+                shop_data.setdefault("V_7D", {"price": 30000, "stock": 999, "dur_ms": 604800000, "name": "7 Ngày"})
+                shop_data.setdefault("V_30D", {"price": 85000, "stock": 999, "dur_ms": 2592000000, "name": "30 Ngày"})
+                shop_data.setdefault("V_1Y", {"price": 200000, "stock": 999, "dur_ms": 31536000000, "name": "1 Năm"})
+                
+                if "global_notice" in data: del data["global_notice"]
+                for uid in list(data["bot_users"].keys()):
+                    u = data["bot_users"][uid]
+                    u.setdefault("purchases", [])
+                    u.setdefault("notices", [])
+                    u.setdefault("loader_active", False)
+                    u.setdefault("loader_key", "")
+                    u.setdefault("loader_olm", "")
+                    u.setdefault("live_msg_id", None)
+                    u.setdefault("live_msg_type", None)
+                    u.setdefault("main_menu_id", None)
+                    u.setdefault("is_admin", False)
+                    u.setdefault("admin_exp", 0)
+                    u.setdefault("admin_key", "")
+                    u.setdefault("banned_until", 0)
+                    u.setdefault("ban_reason", "")
+                    u.setdefault("name", "Khách") 
+                    u.setdefault("temp_key", "")
                     
-                    shop_data = data.setdefault("shop", {})
-                    shop_data.setdefault("V_1H", {"price": 7000, "stock": 999, "dur_ms": 3600000, "name": "1 Giờ"})
-                    shop_data.setdefault("V_7D", {"price": 30000, "stock": 999, "dur_ms": 604800000, "name": "7 Ngày"})
-                    shop_data.setdefault("V_30D", {"price": 85000, "stock": 999, "dur_ms": 2592000000, "name": "30 Ngày"})
-                    shop_data.setdefault("V_1Y", {"price": 200000, "stock": 999, "dur_ms": 31536000000, "name": "1 Năm"})
+                    if "approved" not in u:
+                        if u.get("is_admin") or u.get("balance", 0) > 0 or len(u.get("purchases", [])) > 0:
+                            u["approved"] = True
+                        else:
+                            u["approved"] = False
+                    u.setdefault("approval_time", 0)
                     
-                    if "global_notice" in data: del data["global_notice"]
-                    for uid in list(data["bot_users"].keys()):
-                        u = data["bot_users"][uid]
-                        u.setdefault("purchases", [])
-                        u.setdefault("notices", [])
-                        u.setdefault("loader_active", False)
-                        u.setdefault("loader_key", "")
-                        u.setdefault("loader_olm", "")
-                        u.setdefault("live_msg_id", None)
-                        u.setdefault("live_msg_type", None)
-                        u.setdefault("main_menu_id", None)
-                        u.setdefault("is_admin", False)
-                        u.setdefault("admin_exp", 0)
-                        u.setdefault("admin_key", "")
-                        u.setdefault("banned_until", 0)
-                        u.setdefault("ban_reason", "")
-                        u.setdefault("name", "Khách") 
-                        
-                        if "approved" not in u:
-                            if u.get("is_admin") or u.get("balance", 0) > 0 or len(u.get("purchases", [])) > 0:
-                                u["approved"] = True
-                            else:
-                                u["approved"] = False
-                        u.setdefault("approval_time", 0)
-                        
-                    for k in data["keys"]:
-                        data["keys"][k].setdefault("bound_olm", "") 
-                        data["keys"][k].setdefault("loader_enabled", True)
-                        data["keys"][k].setdefault("devices", [])
-                    GLOBAL_DB = data
-                    _last_db_mtime = current_mtime
-                except Exception as e:
-                    if not GLOBAL_DB: GLOBAL_DB = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}, "shop": {}, "settings": {"max_users": 500}}
+                for k in list(data["keys"].keys()):
+                    data["keys"][k].setdefault("bound_olm", "") 
+                    data["keys"][k].setdefault("loader_enabled", True)
+                    data["keys"][k].setdefault("devices", [])
+                GLOBAL_DB = data
+                _last_db_mtime = current_mtime
+            except Exception as e:
+                pass
         return GLOBAL_DB
 
 def save_db(db=None):
@@ -158,7 +174,7 @@ def session_monitor():
         time.sleep(15) 
         try:
             now = time.time()
-            to_remove = [did for did, info in list(active_sessions.items()) if now - info['last_seen'] > 35]
+            to_remove = [did for did, info in list(active_sessions.copy().items()) if now - info['last_seen'] > 35]
             if to_remove:
                 db = load_db()
                 for did in to_remove:
@@ -186,60 +202,65 @@ def add_log(db, action, key, ip, device, olm_name="N/A"):
         db["logs"] = db["logs"][:500] 
 
 def get_real_ip():
-    if request.headers.getlist("X-Forwarded-For"): raw_ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
-    else: raw_ip = request.remote_addr
-    return re.sub(r'[^0-9a-fA-F:.]', '', str(raw_ip))[:45]
+    try:
+        if request.headers.getlist("X-Forwarded-For"): raw_ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
+        else: raw_ip = request.remote_addr
+        return re.sub(r'[^0-9a-fA-F:.]', '', str(raw_ip))[:45]
+    except:
+        return "Unknown_IP"
 
 def _core_validate(db, key, deviceId=None):
     now = int(time.time() * 1000)
-    if key not in db["keys"]: return False, "Key không tồn tại hoặc đã bị xóa!"
-    kd = db["keys"][key]
-    if kd.get('status') == 'banned': return False, "Key của bạn đã bị Admin khóa!"
-    
-    db_changed = False
-    if kd.get('exp') == 'pending': 
-        kd['exp'] = now + kd.get('durationMs', 0)
-        db_changed = True
+    with db_lock:
+        if key not in db["keys"]: return False, "Key không tồn tại hoặc đã bị xóa!"
+        kd = db["keys"][key]
+        if kd.get('status') == 'banned': return False, "Key của bạn đã bị Admin khóa!"
         
-    if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): 
-        return False, "Key của bạn đã hết hạn sử dụng!"
-    
-    if deviceId:
-        devices = kd.setdefault("devices", [])
-        if deviceId not in devices:
-            if len(devices) >= kd.get("maxDevices", 1): return False, "Key đã đạt giới hạn thiết bị tối đa!"
-            devices.append(deviceId)
+        db_changed = False
+        if kd.get('exp') == 'pending': 
+            kd['exp'] = now + kd.get('durationMs', 0)
             db_changed = True
-    
-    if db_changed: save_db(db)
-    return True, "Success"
+            
+        if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): 
+            return False, "Key của bạn đã hết hạn sử dụng!"
+        
+        if deviceId:
+            devices = kd.setdefault("devices", [])
+            if deviceId not in devices:
+                if len(devices) >= kd.get("maxDevices", 1): return False, "Key đã đạt giới hạn thiết bị tối đa!"
+                devices.append(deviceId)
+                db_changed = True
+        
+        if db_changed: save_db(db)
+        return True, "Success"
 
 def is_admin_valid(db, uid):
-    user = db["bot_users"].get(uid)
-    if not user or not user.get("is_admin"): return False, "⚠️ <b>BẠN CẦN ADMIN CẤP QUYỀN!</b>\nVui lòng nhập <code>Key Admin</code> để mở khóa:"
-    adm_key = user.get("admin_key", "")
-    now_ms = int(time.time() * 1000)
-    
-    if adm_key and adm_key in db["keys"]:
-        kd = db["keys"][adm_key]
-        if kd.get("status") == "banned":
-            user["is_admin"] = False
-            return False, "🚫 <b>Key Admin của bạn đã bị BAN!</b>\nVui lòng nhập Key mới:"
-        if kd.get("exp") != "permanent" and kd.get("exp") != "pending":
-            if int(kd.get("exp", 0)) < now_ms:
-                user["is_admin"] = False
-                return False, "⏳ <b>Key Admin của bạn đã HẾT HẠN!</b>\nVui lòng nhập Key mới:"
-        return True, ""
+    with db_lock:
+        user = db["bot_users"].get(uid)
+        if not user or not user.get("is_admin"): return False, "⚠️ <b>BẠN CẦN ADMIN CẤP QUYỀN!</b>\nVui lòng nhập <code>Key Admin</code> để mở khóa:"
+        adm_key = user.get("admin_key", "")
+        now_ms = int(time.time() * 1000)
         
-    elif user.get("admin_exp"):
-        exp = user.get("admin_exp")
-        if exp == "permanent" or (isinstance(exp, int) and exp > now_ms): return True, ""
-        else:
-            user["is_admin"] = False
-            return False, "⏳ <b>Quyền Admin của bạn đã HẾT HẠN!</b>\nVui lòng nhờ cấp lại quyền:"
+        if adm_key and adm_key in db["keys"]:
+            kd = db["keys"][adm_key]
+            if kd.get("status") == "banned":
+                user["is_admin"] = False
+                return False, "🚫 <b>Key Admin của bạn đã bị BAN!</b>\nVui lòng nhập Key mới:"
+            if kd.get("exp") != "permanent" and kd.get("exp") != "pending":
+                if int(kd.get("exp", 0)) < now_ms:
+                    user["is_admin"] = False
+                    return False, "⏳ <b>Key Admin của bạn đã HẾT HẠN!</b>\nVui lòng nhập Key mới:"
+            return True, ""
             
-    user["is_admin"] = False
-    return False, "⚠️ <b>BẠN CẦN ADMIN CẤP QUYỀN!</b>\nVui lòng nhập <code>Key Admin</code>:"
+        elif user.get("admin_exp"):
+            exp = user.get("admin_exp")
+            if exp == "permanent" or (isinstance(exp, int) and exp > now_ms): return True, ""
+            else:
+                user["is_admin"] = False
+                return False, "⏳ <b>Quyền Admin của bạn đã HẾT HẠN!</b>\nVui lòng nhờ cấp lại quyền:"
+                
+        user["is_admin"] = False
+        return False, "⚠️ <b>BẠN CẦN ADMIN CẤP QUYỀN!</b>\nVui lòng nhập <code>Key Admin</code>:"
 
 def tg_send(chat_id, text, markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
@@ -264,7 +285,9 @@ def tg_edit(chat_id, msg_id, text, markup=None):
 
 def get_user_id_by_username(db, username):
     username = username.strip().lower()
-    for uid, info in list(db["bot_users"].items()):
+    with db_lock:
+        items = list(db["bot_users"].items())
+    for uid, info in items:
         if info.get("username", "").lower() == username: return uid
     return None
 
@@ -286,7 +309,10 @@ def live_timer_updater():
         try:
             db = load_db()
             now_ms = int(time.time() * 1000)
-            for uid, user in list(db.get("bot_users", {}).items()):
+            with db_lock:
+                users_items = list(db.get("bot_users", {}).items())
+            
+            for uid, user in users_items:
                 if user.get("live_msg_id") and user.get("live_msg_type"):
                     msg_id = user["live_msg_id"]
                     m_type = user["live_msg_type"]
@@ -294,19 +320,23 @@ def live_timer_updater():
                     if m_type == "loader" and user.get("loader_active"):
                         k = user.get("loader_key")
                         olm_name = user.get("loader_olm")
-                        if k in db["keys"]:
-                            kd = db["keys"][k]
-                            t_left = format_time(kd["exp"], now_ms)
-                            st = "🟢 ĐANG HOẠT ĐỘNG" if kd["status"] == "active" else "🔴 BỊ KHÓA"
-                            devs = len(kd.get("devices", []))
-                            max_devs = kd.get("maxDevices", 1)
-                            url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
-                            loader_status = kd.get("loader_enabled", True)
-                            btn_text = "🔴 Tắt Spoofer" if loader_status else "🟢 Bật Spoofer"
-                            st_spoofer = "🟢 ĐANG BẬT" if loader_status else "🔴 ĐÃ TẮT"
-                            txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_name}</b>\n📱 Thiết bị: <b>{devs}/{max_devs}</b> máy\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái Tool: <b>{st}</b>\n⚙️ Chức năng Spoofer: <b>{st_spoofer}</b>\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>\n<i>(Lưu ý: Chỉ cần dán URL này 1 lần duy nhất vào Violentmonkey!)</i>"
-                            markup = {"inline_keyboard": [[{"text": btn_text, "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]}
-                            tg_edit(uid, msg_id, txt, markup)
+                        with db_lock:
+                            if k in db["keys"]:
+                                kd = db["keys"][k]
+                                t_left = format_time(kd["exp"], now_ms)
+                                st = "🟢 ĐANG HOẠT ĐỘNG" if kd["status"] == "active" else "🔴 BỊ KHÓA"
+                                devs = len(kd.get("devices", []))
+                                max_devs = kd.get("maxDevices", 1)
+                                loader_status = kd.get("loader_enabled", True)
+                            else:
+                                continue
+                                
+                        url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
+                        btn_text = "🔴 Tắt Spoofer" if loader_status else "🟢 Bật Spoofer"
+                        st_spoofer = "🟢 ĐANG BẬT" if loader_status else "🔴 ĐÃ TẮT"
+                        txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_name}</b>\n📱 Thiết bị: <b>{devs}/{max_devs}</b> máy\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái Tool: <b>{st}</b>\n⚙️ Chức năng Spoofer: <b>{st_spoofer}</b>\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>\n<i>(Lưu ý: Chỉ cần dán URL này 1 lần duy nhất vào Violentmonkey!)</i>"
+                        markup = {"inline_keyboard": [[{"text": btn_text, "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]}
+                        tg_edit(uid, msg_id, txt, markup)
         except: pass
 threading.Thread(target=live_timer_updater, daemon=True).start()
 
@@ -316,7 +346,7 @@ def telegram_webhook():
     if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != WEBHOOK_SECRET: return "Unauthorized", 401
     try:
         data = request.json
-        if data: threading.Thread(target=_async_process_webhook, args=(data,), daemon=True).start()
+        if data: webhook_executor.submit(_async_process_webhook, data)
     except: pass
     return "OK", 200
 
@@ -333,6 +363,16 @@ def _async_process_webhook(data):
         chat_id = str(msg_obj.get("chat", {}).get("id", ""))
         if not chat_id: return
 
+        # [VÁ LỖI AN TOÀN RAM BỘ ĐỆM] Khóa bảo vệ chống đụng độ
+        global anti_spam_cache
+        now_ms = int(time.time() * 1000)
+        with anti_spam_lock:
+            if len(anti_spam_cache) > 5000: anti_spam_cache.clear()
+            if chat_id in anti_spam_cache and now_ms - anti_spam_cache[chat_id] < 500:
+                return 
+            anti_spam_cache[chat_id] = now_ms
+
+        sid = chat_id
         msg_text = msg_obj.get("text", "").strip() if "message" in data else ""
         payload = data.get("callback_query", {}).get("data", "")
         msg_id = msg_obj.get("message_id")
@@ -345,31 +385,45 @@ def _async_process_webhook(data):
             except: pass
 
         db = load_db()
-        sid = chat_id
         safe_name = user_name.replace("<", "").replace(">", "")
         f_uname = f"@{tg_username}" if tg_username else ""
-        now_ms = int(time.time() * 1000)
         
         # [CHỐNG SPAM USER] 
-        if sid not in db["bot_users"]:
-            max_users = db.get("settings", {}).get("max_users", 500)
-            if len(db["bot_users"]) >= max_users:
-                tg_send(sid, "🚫 <b>HỆ THỐNG ĐÓNG CỬA!</b>\nServer đã đạt giới hạn số lượng tài khoản tối đa. Vui lòng quay lại sau.")
+        with db_lock:
+            is_new_user = sid not in db["bot_users"]
+            
+        if is_new_user:
+            with db_lock:
+                max_users = db.get("settings", {}).get("max_users", 500)
+                curr_users_count = len(db["bot_users"])
+                
+            if curr_users_count >= max_users:
+                with anti_spam_lock:
+                    last_warn = anti_spam_cache.get(f"warn_{sid}", 0)
+                    should_warn = last_warn < now_ms - 60000
+                    if should_warn: anti_spam_cache[f"warn_{sid}"] = now_ms
+                if should_warn:
+                    tg_send(sid, "🚫 <b>HỆ THỐNG ĐÓNG CỬA!</b>\nServer đã đạt giới hạn số lượng tài khoản tối đa. Vui lòng quay lại sau.")
                 return
 
-            db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": 0, "ban_reason": "", "approved": False, "approval_time": 0}
-            for uid, uinfo in list(db["bot_users"].items()):
-                if uinfo.get("is_admin"): tg_send(uid, f"🚨 <b>CÓ KHÁCH HÀNG MỚI (CHỜ DUYỆT)!</b>\n👤 Tên: {safe_name} {f_uname}\n🆔 ID: <code>{sid}</code>\n👉 <i>Vào Web Admin để phê duyệt cho khách nhé!</i>")
+            with db_lock:
+                db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": 0, "ban_reason": "", "approved": False, "approval_time": 0, "temp_key": ""}
+                admin_items = list(db["bot_users"].items())
+                
+            for uid, uinfo in admin_items:
+                if uinfo.get("is_admin"): tg_send(uid, f"🚨 <b>CÓ KHÁCH HÀNG MỚI (CHỜ DUYỆT)!</b>\n👤 Tên: {escape(safe_name)} {escape(f_uname)}\n🆔 ID: <code>{sid}</code>\n👉 <i>Vào Web Admin để phê duyệt cho khách nhé!</i>")
         else:
-            db["bot_users"][sid]["username"] = f_uname
-            db["bot_users"][sid]["name"] = safe_name # Luôn cập nhật tên mới nhất để tránh lỗi
+            with db_lock:
+                db["bot_users"][sid]["username"] = f_uname
+                db["bot_users"][sid]["name"] = safe_name
             
-        user = db["bot_users"][sid]
+        with db_lock:
+            user = db["bot_users"][sid]
 
         if not user.get("is_admin"):
             banned_until = user.get("banned_until", 0)
             if banned_until == "permanent" or (isinstance(banned_until, int) and banned_until > now_ms):
-                if msg_text: tg_send(sid, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {user.get('ban_reason', 'Vi phạm chính sách')}\n⏳ Thời hạn: {'Vĩnh viễn' if banned_until == 'permanent' else format_time(banned_until, now_ms)}")
+                if msg_text: tg_send(sid, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {escape(user.get('ban_reason', 'Vi phạm chính sách'))}\n⏳ Thời hạn: {'Vĩnh viễn' if banned_until == 'permanent' else format_time(banned_until, now_ms)}")
                 return
             
             if not user.get("approved", False):
@@ -380,7 +434,8 @@ def _async_process_webhook(data):
                         rem_str = format_time(appr_time, now_ms)
                         tg_send(sid, f"⏳ <b>ĐANG CHỜ VÀO BOT</b>\n\nAdmin đã xác nhận. Bot đang tải tài nguyên. Bạn sẽ được truy cập vào Bot sau:\n👉 <b>{rem_str}</b>")
                     else:
-                        user["approved"] = True
+                        with db_lock:
+                            user["approved"] = True
                         tg_send(sid, "🎉 <b>PHÊ DUYỆT THÀNH CÔNG!</b>\nBạn đã có thể sử dụng Bot bình thường. Hãy gõ /start để bắt đầu.")
                         save_db(db)
                 return 
@@ -389,57 +444,67 @@ def _async_process_webhook(data):
             requests.post(f"{TELEGRAM_API_URL}/deleteMessage", json={"chat_id": sid, "message_id": msg_id}, timeout=5)
 
         if msg_text.startswith("/"):
-            user["state"] = "none"
-            user["live_msg_type"] = None
-            user["main_menu_id"] = None 
+            with db_lock:
+                user["state"] = "none"
+                user["live_msg_type"] = None
+                user["main_menu_id"] = None 
 
             if msg_text.upper().startswith("/START"): payload = "MENU_MAIN"
             elif msg_text.upper().startswith("/LOADERKEY"): payload = "LOADER_MENU"
             elif msg_text.upper().startswith("/ADMIN"):
-                # CHỈ GIỮ LẠI LỆNH ĐỂ CHECK ADMIN VÀ THÔNG BÁO - XÓA MENU ADMIN Ở BOT
                 is_valid_admin = False
-                if user.get("is_admin"):
-                    exp = user.get("admin_exp", 0)
-                    if exp == "permanent" or (isinstance(exp, int) and exp > now_ms): is_valid_admin = True
+                with db_lock:
+                    if user.get("is_admin"):
+                        exp = user.get("admin_exp", 0)
+                        if exp == "permanent" or (isinstance(exp, int) and exp > now_ms): is_valid_admin = True
                 
                 if is_valid_admin:
                     tg_send(sid, "👑 <b>XÁC THỰC ADMIN THÀNH CÔNG!</b>\nTính năng quản lý đã được chuyển 100% sang trang Web Admin để bảo mật. Hãy truy cập link Web Admin để thao tác nhé.")
                 else:
-                    user["state"] = "wait_admin_key"
+                    with db_lock: user["state"] = "wait_admin_key"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🔐 <b>BẢO MẬT SERVER</b>\nBạn chưa có quyền Admin. Vui lòng nhập <code>Key Admin</code> để mở khóa:")
                 save_db(db)
                 return
 
-        if msg_text and not msg_text.startswith("/") and user["state"] != "none":
-            if user["state"] == "wait_loader_key":
+        with db_lock: user_state = user["state"]
+
+        if msg_text and not msg_text.startswith("/") and user_state != "none":
+            if user_state == "wait_loader_key":
                 k = msg_text
                 valid, msg = _core_validate(db, k)
                 if valid: 
-                    user["temp_key"] = k
-                    user["state"] = "wait_loader_olm"
+                    with db_lock:
+                        user["temp_key"] = k
+                        user["state"] = "wait_loader_olm"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ Key Hợp Lệ!\n\n👤 Nhập <b>Tài khoản OLM</b> bạn muốn cho phép hoạt động (Ví dụ: <code>hp_luongvantuyen</code>):")
                 else: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>{msg}</b>\n\n🔑 Vui lòng nhập lại Key khác:")
             
-            elif user["state"] == "wait_loader_olm":
+            elif user_state == "wait_loader_olm":
                 olm_target = msg_text
-                k = user["temp_key"]
-                if not db["keys"][k].get("bound_olm"): db["keys"][k]["bound_olm"] = olm_target
-                user["state"] = "none"
-                user["loader_active"] = True
-                user["loader_key"] = k
-                user["loader_olm"] = olm_target
-                user["live_msg_type"] = "loader"
+                with db_lock:
+                    k = user.get("temp_key")
+                    if k and k in db["keys"] and not db["keys"][k].get("bound_olm"): 
+                        db["keys"][k]["bound_olm"] = olm_target
+                    user["state"] = "none"
+                    user["loader_active"] = True
+                    user["loader_key"] = k
+                    user["loader_olm"] = olm_target
+                    user["live_msg_type"] = "loader"
                 
                 url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
                 txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_target}</b>\n⚡ Trạng thái: Đang kết nối URL\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>\n<i>(Lưu ý: Chỉ cần dán URL này 1 lần duy nhất vào Violentmonkey!)</i>"
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔴 Tắt Spoofer" if db["keys"][k].get("loader_enabled", True) else "🟢 Bật Spoofer", "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]})
-                user["live_msg_id"] = user["main_menu_id"]
+                with db_lock: user["live_msg_id"] = user["main_menu_id"]
                 add_log(db, "ĐĂNG KÝ OLM", k, "Telegram", "Bot Setup", olm_target)
             
-            elif user["state"].startswith("wait_qty_V_"):
-                pkg = user["state"].replace("wait_qty_", "")
+            elif user_state.startswith("wait_qty_V_"):
+                pkg = user_state.replace("wait_qty_", "")
                 if msg_text.isdigit() and int(msg_text) > 0:
                     qty = int(msg_text)
+                    tg_msg_content = ""
+                    tg_markup = None
+                    gen_keys = []
+                    
                     with db_lock: 
                         shop_info = db["shop"].get(pkg, {"price": 0, "stock": 0, "dur_ms": 0, "name": ""})
                         cost = shop_info.get("price", 0)
@@ -447,90 +512,122 @@ def _async_process_webhook(data):
                         name = shop_info.get("name", "")
                         stock = shop_info.get("stock", 0)
                         
-                        if stock < qty: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>Kho Key Không Đủ!</b>\nGói {name} hiện tại trong kho bot chỉ còn lại <b>{stock}</b> Key. Vui lòng mua số lượng nhỏ hơn.", {"inline_keyboard": [[{"text": "🔙 Quay Lại Mua", "callback_data": "BUY_VIP"}]]})
+                        if stock < qty: 
+                            tg_msg_content = f"❌ <b>Kho Key Không Đủ!</b>\nGói {name} hiện tại trong kho bot chỉ còn lại <b>{stock}</b> Key. Vui lòng mua số lượng nhỏ hơn."
+                            tg_markup = {"inline_keyboard": [[{"text": "🔙 Quay Lại Mua", "callback_data": "BUY_VIP"}]]}
                         elif db["bot_users"][sid].get("balance", 0) >= (cost * qty):
                             db["bot_users"][sid]["balance"] -= (cost * qty)
                             db["shop"].setdefault(pkg, {"stock": stock})
                             db["shop"][pkg]["stock"] -= qty
-                            gen_keys = []
                             for _ in range(qty):
                                 nk = f"OLM-{secrets.token_hex(4).upper()}"
                                 db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
                                 db["bot_users"][sid]["purchases"].insert(0, {"key": nk, "type": f"VIP {name}", "time": now_ms})
-                                add_log(db, "MUA KEY", nk, "Telegram", f"Khách: {safe_name}", "N/A")
                                 gen_keys.append(nk)
                             user["state"] = "none"
                             k_str = "\n".join([f"🔑 <code>{k}</code>" for k in gen_keys])
-                            txt = f"🎊 <b>CHÚC MỪNG MUA KEY THÀNH CÔNG!</b>\n➖➖➖➖➖➖➖➖\n{k_str}\n\n📱 Thiết bị hỗ trợ: <b>1 Máy</b>\n💎 Loại Key: <b>VIP Cao Cấp</b>\n⏳ Thời gian sử dụng: <b>{name}</b>\n📦 Kho bot chỉ còn lại: <b>{db['shop'][pkg]['stock']} Key</b> gói này.\n\n<i>(Key sẽ chính thức bắt đầu trừ giờ khi bạn dán vào Tool lần đầu tiên)</i>"
-                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔗 Khởi Tạo Script Ngay", "callback_data": "LOADER_MENU"}]]})
-                        else: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Số dư không đủ!", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]})
+                            tg_msg_content = f"🎊 <b>CHÚC MỪNG MUA KEY THÀNH CÔNG!</b>\n➖➖➖➖➖➖➖➖\n{k_str}\n\n📱 Thiết bị hỗ trợ: <b>1 Máy</b>\n💎 Loại Key: <b>VIP Cao Cấp</b>\n⏳ Thời gian sử dụng: <b>{name}</b>\n📦 Kho bot chỉ còn lại: <b>{db['shop'][pkg]['stock']} Key</b> gói này.\n\n<i>(Key sẽ chính thức bắt đầu trừ giờ khi bạn dán vào Tool lần đầu tiên)</i>"
+                            tg_markup = {"inline_keyboard": [[{"text": "🔗 Khởi Tạo Script Ngay", "callback_data": "LOADER_MENU"}]]}
+                        else: 
+                            tg_msg_content = "❌ Số dư không đủ!"
+                            tg_markup = {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]}
+
+                    if tg_msg_content:
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], tg_msg_content, tg_markup)
+                        
+                    for gk in gen_keys: add_log(db, "MUA KEY", gk, "Telegram", f"Khách: {safe_name}", "N/A")
+
                 else: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Vui lòng nhập số lượng hợp lệ!", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "BUY_VIP"}]]})
             
-            elif user["state"] == "wait_reset_key":
-                if msg_text in db["keys"]:
-                    db["keys"][msg_text]["devices"] = []
-                    db["keys"][msg_text]["known_ips"] = []
-                    db["keys"][msg_text]["bound_olm"] = "" 
-                    user["resets"] -= 1
-                    user["state"] = "none"
-                    save_db(db)
-                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch mọi Thiết Bị, IP và liên kết OLM. Trạng thái key giờ đã trở về <b>NHƯ MỚI</b>.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
-                else: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
-            
-            elif user["state"] == "wait_admin_key":
-                if msg_text in db["keys"] and db["keys"][msg_text].get("target") == "admin_bot":
-                    kd = db["keys"][msg_text]
-                    if kd.get("status") == "banned": user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🚫 <b>Key Admin này đã bị BAN!</b>\nVui lòng thử Key khác:", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
-                    else:
-                        if kd.get("exp") == "pending": kd["exp"] = int(time.time() * 1000) + kd.get("durationMs", 0)
-                        elif kd.get("exp") != "permanent" and int(kd.get("exp")) < now_ms:
-                            user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "⏳ <b>Key Admin này đã HẾT HẠN!</b>\nVui lòng thử Key khác:", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
-                            save_db(db)
-                            return
-                        user["is_admin"] = True
-                        user["approved"] = True
-                        user["admin_key"] = msg_text
+            elif user_state == "wait_reset_key":
+                with db_lock:
+                    if msg_text in db["keys"]:
+                        db["keys"][msg_text]["devices"] = []
+                        db["keys"][msg_text]["known_ips"] = []
+                        db["keys"][msg_text]["bound_olm"] = "" 
+                        user["resets"] -= 1
                         user["state"] = "none"
+                        save_db(db)
+                        msg_success = True
+                    else:
+                        msg_success = False
+                        
+                if msg_success:
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"✅ <b>Reset thành công!</b>\nKey <code>{msg_text}</code> đã được gỡ sạch mọi Thiết Bị, IP và liên kết OLM. Trạng thái key giờ đã trở về <b>NHƯ MỚI</b>.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+                else: 
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Key không tồn tại!", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
+            
+            elif user_state == "wait_admin_key":
+                with db_lock:
+                    kd = db["keys"].get(msg_text)
+                    is_valid_target = kd and kd.get("target") == "admin_bot"
+                    
+                if is_valid_target:
+                    with db_lock:
+                        status = kd.get("status")
+                        exp_val = kd.get("exp")
+                        dur_val = kd.get("durationMs", 0)
+                        
+                    if status == "banned": 
+                        user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🚫 <b>Key Admin này đã bị BAN!</b>\nVui lòng thử Key khác:", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
+                    else:
+                        with db_lock:
+                            if exp_val == "pending": 
+                                db["keys"][msg_text]["exp"] = int(time.time() * 1000) + dur_val
+                            elif exp_val != "permanent" and int(exp_val) < now_ms:
+                                user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "⏳ <b>Key Admin này đã HẾT HẠN!</b>\nVui lòng thử Key khác:", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
+                                save_db(db)
+                                return
+                            user["is_admin"] = True
+                            user["approved"] = True
+                            user["admin_key"] = msg_text
+                            user["state"] = "none"
                         tg_send(sid, "👑 <b>XÁC THỰC ADMIN THÀNH CÔNG!</b>\nTính năng quản lý đã được chuyển 100% sang trang Web Admin để bảo mật. Hãy truy cập link Web Admin để thao tác nhé.")
-                else: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>SAI KEY HOẶC KHÔNG PHẢI KEY ADMIN!</b>\nVui lòng thử lại:", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
+                else: 
+                    user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], f"❌ <b>SAI KEY HOẶC KHÔNG PHẢI KEY ADMIN!</b>\nVui lòng thử lại:", {"inline_keyboard": [[{"text": "🏠 Về Menu Khách", "callback_data": "MENU_MAIN"}]]})
             
             save_db(db)
 
         if payload:
-            user["live_msg_type"] = None
+            with db_lock: user["live_msg_type"] = None
             if payload == "MENU_MAIN":
+                with db_lock: 
+                    bal = user.get('balance', 0)
+                    rst = user.get('resets', 0)
                 txt = "🎉 <b>Chào mừng bạn đến với AutoKey (Admin @luongtuyen20)</b>\n➖➖➖➖➖➖➖➖\n\n"
-                txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{user.get('balance', 0)}đ</b>\n└ 🔄 Reset Key: <b>{user.get('resets', 0)}/3</b>\n\n👇 Chọn dịch vụ:"
+                txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{bal:,}đ</b>\n└ 🔄 Reset Key: <b>{rst}/3</b>\n\n👇 Chọn dịch vụ:"
                 markup = {"inline_keyboard": [[{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}], [{"text": "🔗 Quản Lý Script OLM", "callback_data": "LOADER_MENU"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_MENU":
-                user["state"] = "none"
+                with db_lock: user["state"] = "none"
                 txt = "🔗 <b>QUẢN LÝ SCRIPT OLM</b>\n\n👇 Vui lòng chọn chức năng bạn muốn sử dụng:"
                 markup = {"inline_keyboard": [[{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}], [{"text": "📂 Lấy File OLM Mode", "callback_data": "LOADER_FILE_OLM"}], [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_ENTER_KEY":
-                user["state"] = "wait_loader_key"
+                with db_lock: user["state"] = "wait_loader_key"
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🔗 <b>TẠO KẾT NỐI SCRIPT OLM</b>\n\n🔑 Vui lòng dán <b>Mã Key</b> của bạn vào đây:", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]})
 
             elif payload == "LOADER_FILE_OLM":
-                user["state"] = "none"
+                with db_lock: user["state"] = "none"
                 txt = "📂 <b>FILE OLM MODE ĐỘC QUYỀN</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n🔗 <b>Link Cài Đặt (Gist):</b>\n<code>https://gist.githubusercontent.com/luongtuyenkqpa/1bc8112b37a09346fc2d89894154d6a1/raw/0930c2808bd6ea6a8ec97e5ca12de57b6d4dcc00/gistfile1.txt</code>\n\n🔐 <b>Mật khẩu OLM MODE:</b>\n<code>OLM_VIP_786B-XQCH-BYEF-SYUS</code>\n\n<i>👉 Hãy copy link trên dán vào Violentmonkey, sau đó dùng mật khẩu để kích hoạt tính năng!</i>"
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]})
 
             elif payload == "LOADER_DISCONNECT":
-                user["state"] = "none"
-                user["loader_active"] = False
+                with db_lock:
+                    user["state"] = "none"
+                    user["loader_active"] = False
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "✅ <b>ĐÃ ĐÓNG CỬA SỔ LIVE.</b>\nCửa sổ theo dõi trạng thái đã được ẩn đi.", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
             
             elif payload == "TOGGLE_LOADER":
-                k = user.get("loader_key")
+                with db_lock: k = user.get("loader_key")
                 if k and k in db["keys"]:
-                    db["keys"][k]["loader_enabled"] = not db["keys"][k].get("loader_enabled", True)
-                    st_txt = "BẬT 🟢" if db["keys"][k]["loader_enabled"] else "TẮT 🔴"
+                    with db_lock:
+                        db["keys"][k]["loader_enabled"] = not db["keys"][k].get("loader_enabled", True)
+                        user["live_msg_type"] = "loader"
+                        st_txt = "BẬT 🟢" if db["keys"][k]["loader_enabled"] else "TẮT 🔴"
                     tg_send(sid, f"⚙️ Đã {st_txt} Script Spoofer trên Web OLM!")
-                    user["live_msg_type"] = "loader"
 
             elif payload == "BUY":
                 markup = {"inline_keyboard": [[{"text": "👑 Mua Key VIP", "callback_data": "BUY_VIP"}, {"text": "👤 Mua Key Thường", "callback_data": "BUY_NOR"}],[{"text": "🔙 Quay Lại", "callback_data": "MENU_MAIN"}]]}
@@ -538,11 +635,12 @@ def _async_process_webhook(data):
             elif payload == "BUY_NOR":
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🛠 <b>Tính năng Mua Key Thường đang bảo trì.</b>", {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]})
             elif payload == "BUY_VIP":
-                s = db.get("shop") or {}
-                v1h = s.get('V_1H') or {"price": 7000, "stock": 0}
-                v7d = s.get('V_7D') or {"price": 30000, "stock": 0}
-                v30d = s.get('V_30D') or {"price": 85000, "stock": 0}
-                v1y = s.get('V_1Y') or {"price": 200000, "stock": 0}
+                with db_lock:
+                    s = db.get("shop") or {}
+                    v1h = s.get('V_1H') or {"price": 7000, "stock": 0}
+                    v7d = s.get('V_7D') or {"price": 30000, "stock": 0}
+                    v30d = s.get('V_30D') or {"price": 85000, "stock": 0}
+                    v1y = s.get('V_1Y') or {"price": 200000, "stock": 0}
                 
                 txt = "🛒 <b>BẢNG GIÁ & KHO KEY VIP:</b>\n"
                 txt += f"🕒 1 Giờ: <b>{v1h.get('price', 0):,}đ</b> (Kho còn: {v1h.get('stock', 0)})\n"
@@ -552,12 +650,13 @@ def _async_process_webhook(data):
                 markup = {"inline_keyboard": [[{"text": "🕒 1 Giờ", "callback_data": "V_1H"},{"text": "📅 7 Ngày", "callback_data": "V_7D"}], [{"text": "📆 30 Ngày", "callback_data": "V_30D"},{"text": "🏆 1 Năm", "callback_data": "V_1Y"}], [{"text": "🔙 Quay Lại", "callback_data": "BUY"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
             elif payload.startswith("V_"):
-                user["state"] = f"wait_qty_{payload}"
+                with db_lock: user["state"] = f"wait_qty_{payload}"
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "🔢 Nhập <b>SỐ LƯỢNG</b> Key muốn mua:")
             elif payload == "RESET":
-                if user.get("resets", 0) <= 0: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Bạn đã hết lượt Reset.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
+                with db_lock: rsts = user.get("resets", 0)
+                if rsts <= 0: user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "❌ Bạn đã hết lượt Reset.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "MENU_MAIN"}]]})
                 else:
-                    user["state"] = "wait_reset_key"
+                    with db_lock: user["state"] = "wait_reset_key"
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
 
             save_db(db)
@@ -570,9 +669,10 @@ def script_ping():
     key = data.get("key")
     olm_name = data.get("olm_name")
     db = load_db()
-    if key in db.get("keys", {}):
-        active_sessions[key] = {"ip": get_real_ip(), "olm_name": olm_name, "key": key, "last_seen": time.time()}
-        return "ok", 200
+    with db_lock:
+        if key in db.get("keys", {}):
+            active_sessions[key] = {"ip": get_real_ip(), "olm_name": olm_name, "key": key, "last_seen": time.time()}
+            return "ok", 200
     return "invalid", 403
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
@@ -588,12 +688,14 @@ def check_api():
     if not valid: 
         return jsonify({"status": "error", "message": msg})
     
-    kd = db["keys"].get(key, {})
-    bound_user = kd.get("bound_olm", "")
+    with db_lock:
+        kd = db["keys"].get(key, {})
+        bound_user = kd.get("bound_olm", "")
 
     if bound_user and bound_user != "N/A" and olm_name != "N/A":
         if bound_user.lower() != olm_name.lower():
-            kd["status"] = "banned"
+            with db_lock:
+                kd["status"] = "banned"
             add_log(db, "SERVER AUTO BAN (Sai Tên)", key, get_real_ip(), f"Thiết bị: {deviceId}", olm_name)
             save_db(db)
             return jsonify({"status": "error", "message": f"PHÁT HIỆN GIAN LẬN! Tài khoản đang dùng ({olm_name}) không khớp với gốc ({bound_user}). Key đã bị hệ thống khóa!"})
@@ -730,6 +832,10 @@ def serve_dynamic_script():
 # ========================================================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    global login_attempts
+    if len(login_attempts) > 1000:
+        login_attempts.clear()
+        
     if request.method == 'POST':
         ip = get_real_ip()
         now = time.time()
@@ -753,60 +859,88 @@ def logout():
 @app.route('/admin/create', methods=['POST'])
 def create_key():
     if not session.get('admin_auth'): return redirect('/login')
+    try: dur = int(request.form.get('duration') or 0)
+    except: dur = 0
+    try: md = int(request.form.get('maxDevices') or 1)
+    except: md = 1
+    try: qty = int(request.form.get('quantity') or 1)
+    except: qty = 1
+    
     target_app = request.form.get('target_app', 'tool')
-    dur = request.form.get('duration')
     t = request.form.get('type')
-    md = int(request.form.get('maxDevices', 1))
-    qty = int(request.form.get('quantity', 1))
     vip = request.form.get('is_vip') == 'on'
     pfx = request.form.get('prefix', '').strip()
     if not pfx: pfx = "OLM"
+    
     db = load_db()
-    for _ in range(qty):
-        nk = f"{pfx}-{secrets.token_hex(4).upper()}"
-        db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": [], "status": "active", "vip": vip, "target": target_app, "bound_olm": "", "loader_enabled": True}
-        if t != 'permanent': db["keys"][nk]["durationMs"] = int(dur) * multipliers_web.get(t, 86400000)
-        else: db["keys"][nk]["exp"] = "permanent"
-    save_db(db)
+    with db_lock:
+        for _ in range(qty):
+            nk = f"{pfx}-{secrets.token_hex(4).upper()}"
+            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": [], "status": "active", "vip": vip, "target": target_app, "bound_olm": "", "loader_enabled": True}
+            if t != 'permanent': db["keys"][nk]["durationMs"] = dur * multipliers_web.get(t, 86400000)
+            else: db["keys"][nk]["exp"] = "permanent"
+        save_db(db)
     return redirect('/')
 
 @app.route('/admin/delete_all', methods=['POST'])
 def delete_all_keys():
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
-    db["keys"] = {}
-    save_db(db)
+    with db_lock:
+        db["keys"] = {}
+        save_db(db)
     return redirect('/')
 
 @app.route('/admin/extend', methods=['POST'])
 def extend_key():
     if not session.get('admin_auth'): return redirect('/login')
+    try: dur = int(request.form.get('duration') or 0)
+    except: dur = 0
     key = request.form.get('key')
-    dur = request.form.get('duration')
     t = request.form.get('type')
     db = load_db()
-    if key in db["keys"] and db["keys"][key].get('exp') not in ['permanent', 'pending']:
-        db["keys"][key]['exp'] = (db["keys"][key]['exp'] if db["keys"][key]['exp'] > int(time.time() * 1000) else int(time.time() * 1000)) + int(dur) * multipliers_web.get(t, 86400000)
-        save_db(db)
+    with db_lock:
+        if key in db["keys"] and db["keys"][key].get('exp') not in ['permanent', 'pending']:
+            db["keys"][key]['exp'] = (db["keys"][key]['exp'] if db["keys"][key]['exp'] > int(time.time() * 1000) else int(time.time() * 1000)) + dur * multipliers_web.get(t, 86400000)
+            save_db(db)
     return redirect('/')
 
 @app.route('/admin/add_balance', methods=['POST'])
 def add_balance():
     if not session.get('admin_auth'): return redirect('/login')
     target_user = request.form.get('target_user', '').strip()
-    amount = int(request.form.get('amount', 0))
-    resets = int(request.form.get('resets', 0))
+    try: amount = int(request.form.get('amount') or 0)
+    except: amount = 0
+    try: resets = int(request.form.get('resets') or 0)
+    except: resets = 0
+        
     if not target_user: return redirect('/')
     db = load_db()
-    target_id = get_user_id_by_username(db, target_user) if target_user.startswith('@') else target_user
-    if target_id and target_id in db["bot_users"]:
-        db["bot_users"][target_id]["balance"] = db["bot_users"][target_id].get("balance", 0) + amount
-        db["bot_users"][target_id]["resets"] = db["bot_users"][target_id].get("resets", 0) + resets
-        save_db(db)
-        msg = f"🎉 <b>Admin vừa cập nhật tài khoản của bạn!</b>\n"
-        if amount > 0: msg += f"💰 Nạp tiền: <b>+{amount}đ</b>\n"
-        if resets > 0: msg += f"🔄 Lượt Reset: <b>+{resets} lượt</b>\n"
-        msg += f"\n📊 Số dư mới: {db['bot_users'][target_id]['balance']}đ\n🔄 Reset hiện tại: {db['bot_users'][target_id]['resets']}"
+    
+    with db_lock:
+        items = list(db.get("bot_users", {}).items())
+    
+    target_id = None
+    if target_user.startswith('@'):
+        u_name = target_user.lower()
+        for uid, info in items:
+            if info.get("username", "").lower() == u_name: 
+                target_id = uid
+                break
+    else:
+        target_id = target_user
+
+    if target_id and target_id in db.get("bot_users", {}):
+        with db_lock:
+            db["bot_users"][target_id]["balance"] = db["bot_users"][target_id].get("balance", 0) + amount
+            db["bot_users"][target_id]["resets"] = db["bot_users"][target_id].get("resets", 0) + resets
+            save_db(db)
+            
+            msg = f"🎉 <b>Admin vừa cập nhật tài khoản của bạn!</b>\n"
+            if amount > 0: msg += f"💰 Nạp tiền: <b>+{amount}đ</b>\n"
+            if resets > 0: msg += f"🔄 Lượt Reset: <b>+{resets} lượt</b>\n"
+            msg += f"\n📊 Số dư mới: {db['bot_users'][target_id]['balance']}đ\n🔄 Reset hiện tại: {db['bot_users'][target_id]['resets']}"
+            
         tg_send(target_id, msg, {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
     return redirect('/')
 
@@ -814,17 +948,32 @@ def add_balance():
 def grant_admin():
     if not session.get('admin_auth'): return redirect('/login')
     username = request.form.get('username', '').strip()
-    dur = request.form.get('duration')
+    try: dur = int(request.form.get('duration') or 0)
+    except: dur = 0
     t = request.form.get('type')
     db = load_db()
-    target_id = get_user_id_by_username(db, username) if username.startswith('@') else username
-    if target_id and target_id in db["bot_users"]:
+    
+    with db_lock:
+        items = list(db.get("bot_users", {}).items())
+    
+    target_id = None
+    if username.startswith('@'):
+        u_name = username.lower()
+        for uid, info in items:
+            if info.get("username", "").lower() == u_name: 
+                target_id = uid
+                break
+    else:
+        target_id = username
+
+    if target_id and target_id in db.get("bot_users", {}):
         if t == 'permanent': exp = 'permanent'
-        else: exp = int(time.time() * 1000) + int(dur) * multipliers_web.get(t, 86400000)
-        db["bot_users"][target_id]["is_admin"] = True
-        db["bot_users"][target_id]["approved"] = True
-        db["bot_users"][target_id]["admin_exp"] = exp
-        save_db(db)
+        else: exp = int(time.time() * 1000) + dur * multipliers_web.get(t, 86400000)
+        with db_lock:
+            db["bot_users"][target_id]["is_admin"] = True
+            db["bot_users"][target_id]["approved"] = True
+            db["bot_users"][target_id]["admin_exp"] = exp
+            save_db(db)
         msg = "🎉 <b>CHÚC MỪNG!</b>\nBạn đã được cấp quyền Admin Server.\nHãy gõ lệnh /admin để vào Bảng Điều Khiển nhé."
         tg_send(target_id, msg)
     return redirect('/')
@@ -834,127 +983,155 @@ def update_settings():
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
     try:
-        max_u = int(request.form.get('max_users', 500))
-        db.setdefault("settings", {})["max_users"] = max_u
-        save_db(db)
+        max_u = int(request.form.get('max_users') or 500)
+        with db_lock:
+            db.setdefault("settings", {})["max_users"] = max_u
+            save_db(db)
     except: pass
     return redirect('/')
 
-# [HỆ THỐNG PHÊ DUYỆT]
 @app.route('/admin/approve', methods=['POST'])
 def approve_user():
     if not session.get('admin_auth'): return redirect('/login')
     uid = request.form.get('uid')
-    dur = request.form.get('duration')
+    try: dur = int(request.form.get('duration') or 0)
+    except: dur = 0
     t = request.form.get('type')
     db = load_db()
-    if uid in db.get("bot_users", {}):
-        if not dur or dur == "0":
-            db["bot_users"][uid]["approved"] = True
-            db["bot_users"][uid]["approval_time"] = 0
-            tg_send(uid, "🎉 <b>PHÊ DUYỆT THÀNH CÔNG!</b>\nAdmin đã phê duyệt tài khoản của bạn. Vui lòng gõ /start để sử dụng.")
-        else:
-            dur_ms = int(dur) * multipliers_web.get(t, 60000)
-            db["bot_users"][uid]["approval_time"] = int(time.time() * 1000) + dur_ms
-            db["bot_users"][uid]["approved"] = False
-            tg_send(uid, f"⏳ <b>THÔNG BÁO TỪ ADMIN:</b>\nTài khoản của bạn đã được nhận diện. Bạn sẽ được phép truy cập Bot sau: <b>{dur} {t}</b> nữa.")
-        save_db(db)
+    with db_lock:
+        if uid in db.get("bot_users", {}):
+            if not dur or dur == 0:
+                db["bot_users"][uid]["approved"] = True
+                db["bot_users"][uid]["approval_time"] = 0
+                tg_send(uid, "🎉 <b>PHÊ DUYỆT THÀNH CÔNG!</b>\nAdmin đã phê duyệt tài khoản của bạn. Vui lòng gõ /start để sử dụng.")
+            else:
+                dur_ms = dur * multipliers_web.get(t, 60000)
+                db["bot_users"][uid]["approval_time"] = int(time.time() * 1000) + dur_ms
+                db["bot_users"][uid]["approved"] = False
+                tg_send(uid, f"⏳ <b>THÔNG BÁO TỪ ADMIN:</b>\nTài khoản của bạn đã được nhận diện. Bạn sẽ được phép truy cập Bot sau: <b>{dur} {t}</b> nữa.")
+            save_db(db)
     return redirect('/')
 
 @app.route('/admin/unapprove_user/<uid>')
 def unapprove_user(uid):
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
-    if uid in db.get("bot_users", {}):
-        db["bot_users"][uid]["approved"] = False
-        db["bot_users"][uid]["approval_time"] = 0
-        save_db(db)
-        tg_send(uid, "🚫 <b>Tài khoản của bạn đã bị Admin thu hồi quyền truy cập Bot.</b>")
+    with db_lock:
+        if uid in db.get("bot_users", {}):
+            db["bot_users"][uid]["approved"] = False
+            db["bot_users"][uid]["approval_time"] = 0
+            save_db(db)
+            tg_send(uid, "🚫 <b>Tài khoản của bạn đã bị Admin thu hồi quyền truy cập Bot.</b>")
     return redirect('/')
 
 @app.route('/admin/update_shop', methods=['POST'])
 def update_shop():
     if not session.get('admin_auth'): return redirect('/login')
     pkg = request.form.get('package')
-    price = int(request.form.get('price', 0))
-    stock = int(request.form.get('stock', 0))
+    try: price = int(request.form.get('price') or 0)
+    except: price = 0
+    try: stock = int(request.form.get('stock') or 0)
+    except: stock = 0
+    
     db = load_db()
-    if pkg in db.setdefault("shop", {}):
-        db["shop"][pkg]["price"] = price
-        db["shop"][pkg]["stock"] = stock
-        save_db(db)
+    with db_lock:
+        if pkg in db.setdefault("shop", {}):
+            db["shop"][pkg]["price"] = price
+            db["shop"][pkg]["stock"] = stock
+            pkg_name = db["shop"][pkg].get("name", pkg)
+            save_db(db)
+            
+            msg = f"🛒 <b>CẬP NHẬT SHOP THÀNH CÔNG!</b>\nĐã cập nhật gói <b>{pkg_name}</b>:\n💰 Giá mới: <b>{price:,}đ</b>\n📦 Số lượng kho: <b>{stock}</b> Key"
+            admin_uids = [u for u, i in db["bot_users"].items() if i.get("is_admin")]
+            
+    try:
+        for admin_id in admin_uids: tg_send(admin_id, msg)
+    except: pass
+                
     return redirect('/')
 
 @app.route('/admin/ban_user', methods=['POST'])
 def web_ban_user():
     if not session.get('admin_auth'): return redirect('/login')
     target_id = request.form.get('target_user', '').strip()
-    dur = request.form.get('duration')
+    try: dur = int(request.form.get('duration') or 0)
+    except: dur = 0
     t = request.form.get('type')
-    reason = request.form.get('reason', 'Vi phạm chính sách').strip()
+    raw_reason = request.form.get('reason', 'Vi phạm chính sách').strip()
+    reason = escape(raw_reason) 
+    
     db = load_db()
-    if target_id and target_id in db["bot_users"]:
-        if t == 'permanent': exp = 'permanent'
-        else: exp = int(time.time() * 1000) + int(dur) * multipliers_web.get(t, 86400000)
-        db["bot_users"][target_id]["banned_until"] = exp
-        db["bot_users"][target_id]["ban_reason"] = reason
-        for p in db["bot_users"][target_id].get("purchases", []):
-            if p["key"] in db["keys"]: db["keys"][p["key"]]["status"] = "banned"
-        save_db(db)
-        tg_send(target_id, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {reason}\n<i>Toàn bộ kết nối Tool và Web OLM của bạn đã bị ngắt.</i>")
+    with db_lock:
+        if target_id and target_id in db.get("bot_users", {}):
+            if t == 'permanent': exp = 'permanent'
+            else: exp = int(time.time() * 1000) + dur * multipliers_web.get(t, 86400000)
+            
+            db["bot_users"][target_id]["banned_until"] = exp
+            db["bot_users"][target_id]["ban_reason"] = raw_reason 
+            for p in db["bot_users"][target_id].get("purchases", []):
+                if p["key"] in db.get("keys", {}): db["keys"][p["key"]]["status"] = "banned"
+            save_db(db)
+            tg_send(target_id, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {reason}\n<i>Toàn bộ kết nối Tool và Web OLM của bạn đã bị ngắt.</i>")
     return redirect('/')
 
 @app.route('/admin/unban_user/<uid>')
 def unban_user(uid):
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
-    if uid in db["bot_users"]:
-        db["bot_users"][uid]["banned_until"] = 0
-        db["bot_users"][uid]["ban_reason"] = ""
-        for p in db["bot_users"][uid].get("purchases", []):
-            if p["key"] in db["keys"] and db["keys"][p["key"]]["status"] == "banned":
-                db["keys"][p["key"]]["status"] = "active"
-        save_db(db)
-        tg_send(uid, f"✅ <b>Tài khoản của bạn đã được Admin mở khóa!</b>")
+    with db_lock:
+        if uid in db.get("bot_users", {}):
+            db["bot_users"][uid]["banned_until"] = 0
+            db["bot_users"][uid]["ban_reason"] = ""
+            for p in db["bot_users"][uid].get("purchases", []):
+                if p["key"] in db.get("keys", {}) and db["keys"][p["key"]].get("status") == "banned":
+                    db["keys"][p["key"]]["status"] = "active"
+            save_db(db)
+            tg_send(uid, f"✅ <b>Tài khoản của bạn đã được Admin mở khóa!</b>")
     return redirect('/')
 
-# [NÚT XÓA VĨNH VIỄN]
+# [VÁ LỖI AN TOÀN KHI XÓA] Sử dụng pop thay vì del để tránh KeyError
 @app.route('/admin/delete_user/<uid>')
 def delete_user(uid):
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
-    if uid in db.get("bot_users", {}):
-        del db["bot_users"][uid]
-        save_db(db)
+    with db_lock:
+        if uid in db.get("bot_users", {}):
+            purchases = db["bot_users"][uid].get("purchases", [])
+            for p in purchases:
+                db.get("keys", {}).pop(p["key"], None)
+            db["bot_users"].pop(uid, None)
+            save_db(db)
     return redirect('/')
 
 @app.route('/admin/revoke_user/<uid>')
 def revoke_user(uid):
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
-    if uid in db["bot_users"]:
-        db["bot_users"][uid]["is_admin"] = False
-        db["bot_users"][uid]["admin_key"] = ""
-        db["bot_users"][uid]["admin_exp"] = 0
-        save_db(db)
+    with db_lock:
+        if uid in db.get("bot_users", {}):
+            db["bot_users"][uid]["is_admin"] = False
+            db["bot_users"][uid]["admin_key"] = ""
+            db["bot_users"][uid]["admin_exp"] = 0
+            save_db(db)
     return redirect('/')
 
 @app.route('/admin/action/<action>/<key>')
 def key_actions(action, key):
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
-    if key in db["keys"]:
-        if action == 'add-dev': db["keys"][key]['maxDevices'] += 1
-        elif action == 'sub-dev' and db["keys"][key].get('maxDevices', 1) > 1: db["keys"][key]['maxDevices'] -= 1
-        elif action == 'ban': db["keys"][key]['status'] = 'banned'
-        elif action == 'unban': db["keys"][key]['status'] = 'active'
-        elif action == 'delete': del db["keys"][key]
-        elif action == 'reset-dev':
-            db["keys"][key]['devices'] = []
-            db["keys"][key]['known_ips'] = []
-            db["keys"][key]["bound_olm"] = ""
-        elif action == 'toggle_vip': db["keys"][key]['vip'] = not db["keys"][key].get('vip', False)
-        save_db(db)
+    with db_lock:
+        if key in db.get("keys", {}):
+            if action == 'add-dev': db["keys"][key]['maxDevices'] = db["keys"][key].get('maxDevices', 1) + 1
+            elif action == 'sub-dev' and db["keys"][key].get('maxDevices', 1) > 1: db["keys"][key]['maxDevices'] -= 1
+            elif action == 'ban': db["keys"][key]['status'] = 'banned'
+            elif action == 'unban': db["keys"][key]['status'] = 'active'
+            elif action == 'delete': db["keys"].pop(key, None)
+            elif action == 'reset-dev':
+                db["keys"][key]['devices'] = []
+                db["keys"][key]['known_ips'] = []
+                db["keys"][key]["bound_olm"] = ""
+            elif action == 'toggle_vip': db["keys"][key]['vip'] = not db["keys"][key].get('vip', False)
+            save_db(db)
     return redirect('/')
 
 @app.route('/admin/bind_olm', methods=['POST'])
@@ -963,20 +1140,21 @@ def web_bind_olm():
     key = request.form.get('key', '').strip()
     olm = request.form.get('olm_name', '').strip()
     db = load_db()
-    if key in db["keys"]:
-        db["keys"][key]["bound_olm"] = olm
-        save_db(db)
+    with db_lock:
+        if key in db.get("keys", {}):
+            db["keys"][key]["bound_olm"] = olm
+            save_db(db)
     return redirect('/')
 
 @app.route('/admin/online')
 def online_ips():
     if not session.get('admin_auth'): return redirect('/login')
     html_rows = ""
-    for k_id, info in list(active_sessions.items()):
+    for k_id, info in list(active_sessions.copy().items()):
         onl_time = time.strftime('%H:%M:%S', time.localtime(info["last_seen"]))
-        safe_ip = escape(str(info['ip']))
-        safe_name = escape(str(info['olm_name']))
-        safe_key = escape(str(info['key']))
+        safe_ip = escape(str(info.get('ip', '')))
+        safe_name = escape(str(info.get('olm_name', '')))
+        safe_key = escape(str(info.get('key', '')))
         html_rows += f"<tr><td>{safe_ip}</td><td class='text-warning'>{safe_name}</td><td class='text-info'>{safe_key}</td><td>Cố định: /api/script/lvt_vip_loader.user.js</td><td>{onl_time}</td><td><a href='/admin/action/ban/{safe_key}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
     return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Giám Sát Online - LVT</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>body{{background:#0a0a12;color:white;}}</style></head><body class="p-4"><div class="container"><div class="d-flex justify-content-between mb-4"><h2>📡 RADAR GIÁM SÁT OLM ONLINE</h2><a href="/" class="btn btn-secondary">Quay lại Dashboard</a></div><div class="card bg-dark p-3"><table class="table table-dark table-hover"><thead><tr><th>IP Máy</th><th>Tên OLM</th><th>Key Đang Dùng</th><th>Loại Kết Nối</th><th>Tín Hiệu Cuối</th><th>Thao Tác</th></tr></thead><tbody>{html_rows if html_rows else "<tr><td colspan='6' class='text-center text-muted'>Hiện không có ai đang làm OLM.</td></tr>"}</tbody></table></div></div><script>setInterval(() => location.reload(), 10000);</script></body></html>'''
 
@@ -985,8 +1163,13 @@ def dashboard():
     if not session.get('admin_auth'): return redirect('/login')
     db = load_db()
     
-    # [NÂNG CẤP UI SHOP AN TOÀN TUYỆT ĐỐI CHỐNG LỖI 500]
-    s = db.get("shop") or {}
+    with db_lock:
+        s = db.get("shop", {}).copy()
+        settings = db.get("settings", {}).copy()
+        keys_items = list(db.get("keys", {}).items())
+        users_items = list(db.get("bot_users", {}).items())
+        logs_list = list(db.get("logs", []))
+
     v1h = s.get("V_1H") or {"price": 7000, "stock": 999}
     v7d = s.get("V_7D") or {"price": 30000, "stock": 999}
     v30d = s.get("V_30D") or {"price": 85000, "stock": 999}
@@ -1001,10 +1184,8 @@ def dashboard():
     </ul>
     """
 
-    # [NÂNG CẤP UI ANTI SPAM]
-    settings = db.get("settings") or {}
     max_u = settings.get("max_users", 500)
-    curr_u = len(db.get("bot_users", {}))
+    curr_u = len(users_items)
     anti_spam_html = f'''
     <div class="card p-3 mb-4" style="border-color: #00ffcc;">
         <h4><i class="fas fa-shield-alt"></i> Chống Spam Bot</h4>
@@ -1020,7 +1201,7 @@ def dashboard():
     '''
 
     keys_html = ''
-    for k, data in list(db["keys"].items()):
+    for k, data in keys_items:
         is_banned = data.get('status') == 'banned'
         is_vip = data.get('vip', False)
         sys_target = data.get('target', 'tool')
@@ -1054,7 +1235,7 @@ def dashboard():
 
     users_html = ''
     now_ms = int(time.time() * 1000)
-    for uid, udata in list(db.get("bot_users", {}).items()):
+    for uid, udata in users_items:
         uname = udata.get("username", "")
         safe_uname = escape(str(uname)) if uname else ""
         safe_name = escape(str(udata.get("name", "Khách")))
@@ -1077,7 +1258,6 @@ def dashboard():
         else:
             revoke_btn += f'<button type="button" class="btn btn-sm btn-danger mt-1 ms-1" style="font-size:12px;" onclick="openBanModal(\'{uid}\', \'{safe_name}\')">Khóa</button>'
         
-        # [NÚT XÓA VĨNH VIỄN USER]
         revoke_btn += f'<a href="/admin/delete_user/{uid}" class="btn btn-sm btn-outline-light mt-1 ms-1" style="font-size:12px;" onclick="return confirm(\'Xóa vĩnh viễn user này khỏi DB?\')">🗑️ Xóa User</a>'
 
         appr_ui = ""
@@ -1089,10 +1269,10 @@ def dashboard():
         owned_keys = [p["key"] for p in udata.get("purchases", [])]
         user_ips = set()
         user_logs = []
-        for l in list(db.get("logs", [])):
-            if l["key"] in owned_keys:
+        for l in logs_list:
+            if l.get("key") in owned_keys:
                 user_ips.add(l.get("ip", "N/A"))
-                user_logs.append(f"{time.strftime('%d/%m %H:%M', time.localtime(l['time']))}: {l['action']} ({escape(str(l.get('olm_name','')))})")
+                user_logs.append(f"{time.strftime('%d/%m %H:%M', time.localtime(l.get('time', 0)))}: {l.get('action', '')} ({escape(str(l.get('olm_name','')))})")
         
         ips_str = "<br>".join(list(user_ips)) if user_ips else "<span class='text-muted'>Chưa có IP</span>"
         keys_str = "<br>".join(owned_keys) if owned_keys else "<span class='text-muted'>Chưa mua Key</span>"
@@ -1102,13 +1282,12 @@ def dashboard():
         <tr class="user-row" data-status="{row_status}">
             <td><strong class="text-info" style="cursor:pointer;" onclick="copyText('{safe_name}')" title="Sao chép tên">{safe_name}</strong> {uname_html}<br><small class="text-muted" style="cursor:pointer;" onclick="copyText('{uid}')" title="Sao chép ID">{uid}</small><br>{appr_badge} {adm_badge} {banned_badge}<br>{revoke_btn}</td>
             <td style="width:160px;">{appr_ui}</td>
-            <td><span class="badge bg-success">{udata.get("balance", 0)}đ</span><br><small>Reset: {udata.get("resets", 0)}</small></td>
+            <td><span class="badge bg-success">{udata.get("balance", 0):,}đ</span><br><small>Reset: {udata.get("resets", 0)}</small></td>
             <td>{keys_str}</td>
             <td style="font-size:12px;">{logs_str}</td>
             <td style="font-size:12px;" class="text-secondary">{ips_str}</td>
         </tr>'''
 
-    # [BỘ LỌC TÌM KIẾM MỚI]
     user_filter_html = '''
     <div class="d-flex justify-content-between align-items-center mb-2">
         <select id="statusUserFilter" class="form-select form-select-sm bg-dark text-light border-info w-auto" onchange="filterUsers()">
