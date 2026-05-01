@@ -25,13 +25,8 @@ RAW_ADMIN_PASS = os.environ.get('ADMIN_PASSWORD', 'admin120510')
 DEFAULT_ADMIN_PASSWORD_HASH = hashlib.sha256(RAW_ADMIN_PASS.encode()).hexdigest()
 WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', "LVT_SECURE_TOKEN_2026")
 
-# KHÔI PHỤC API SECRET ĐỂ KHỚP VỚI SCRIPT GỐC CỦA BẠN
-API_SECRET = os.environ.get('API_SECRET', "LVT_API_SECRET_2026") 
-
-# Chống văng Session khi Cloud Server khởi động lại
 app.secret_key = os.environ.get('SECRET_KEY', hashlib.sha256(f"LVT_SECURE_{RAW_ADMIN_PASS}".encode()).hexdigest())
 
-# Chống DDoS Payload khổng lồ
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -64,6 +59,12 @@ _last_db_mtime = 0
 _last_mtime_check = 0 
 
 # ========================================================
+# [CẤU HÌNH BOT MESSENGER FACEBOOK] - THÊM MỚI
+# ========================================================
+FB_PAGE_TOKEN = os.environ.get('FB_PAGE_TOKEN', 'EAAVZBVODIGsYBRVhjcsp9PNaiCjMASMQRGQd20JEqPbxuEJ3WnrZBqtVY5DQ9xOZBj4wDwU6KwpHGOuJnHESEkXMKZAGUdCIzlFJAPUPUaDnJa8t3VnOhQxZBTxEum4NOXm9IKINCes2ES07u6Xg1TSxHH7FemiVPRRL4upPPT7vORRVpRPZBiUmZCZAd7CWZBxSHKTlINT1C5QZDZD')
+FB_VERIFY_TOKEN = WEBHOOK_SECRET
+
+# ========================================================
 # HỆ THỐNG BẢO VỆ LAYER 7 & FIREWALL & IPS
 # ========================================================
 def get_real_ip():
@@ -85,7 +86,7 @@ def firewall_and_csrf():
 
     ua = request.headers.get('User-Agent', '').lower()
     blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
-    if any(bot in ua for bot in blocked_bots) and not request.path.startswith("/webhook") and not request.path.startswith("/admin_webhook"):
+    if any(bot in ua for bot in blocked_bots) and not request.path.startswith("/webhook") and not request.path.startswith("/admin_webhook") and not request.path.startswith("/fb_webhook"):
         return "Firewall Blocked Suspicious Bot/Scanner.", 403
         
     if request.path.startswith("/admin/") or request.path == "/":
@@ -98,7 +99,6 @@ def firewall_and_csrf():
         origin = request.headers.get("Origin")
         referer = request.headers.get("Referer")
         host = request.headers.get("Host")
-        
         req_host = host.split(':')[0] if host else ""
         if origin:
             orig_host = urlparse(origin).netloc.split(':')[0]
@@ -137,7 +137,7 @@ def report_bad_signature(ip):
         with db_lock:
             if ip not in db.setdefault("banned_ips", []):
                 db["banned_ips"].append(ip)
-                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "user": "Unknown Hacker/Scanner", "id": ip, "reason": "Spam API/Dò Pass"})
+                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "user": "Unknown Hacker/Scanner", "id": ip, "reason": "Spam API sai chữ ký/Dò thư mục ẩn"})
                 save_db(db)
 
 def notify_master_admin(db, message, actor_name="@luongtuyen20"):
@@ -270,25 +270,18 @@ def save_db(db=None):
         except Exception as e: 
             if os.path.exists(temp_file): os.remove(temp_file)
 
-# [NÂNG CẤP PRO] Quản lý Database & Backup 5 Lớp
 def __hidden_bot_guardian__():
     while True:
-        time.sleep(3600) 
+        time.sleep(15)
         with db_lock:
             if os.path.exists(DB_FILE):
-                try:
-                    for i in range(4, 0, -1):
-                        old_bk = f"{DB_BACKUP}.{i}"
-                        new_bk = f"{DB_BACKUP}.{i+1}"
-                        if os.path.exists(old_bk): shutil.copy2(old_bk, new_bk)
-                    if os.path.exists(DB_BACKUP): shutil.copy2(DB_BACKUP, f"{DB_BACKUP}.1")
-                    shutil.copy2(DB_FILE, DB_BACKUP)
+                try: shutil.copy2(DB_FILE, DB_BACKUP)
                 except: pass
 
 def garbage_collector():
     global used_signatures
     while True:
-        time.sleep(1800) 
+        time.sleep(3600) 
         now_ms = int(time.time() * 1000)
         
         with api_rate_lock:
@@ -321,15 +314,10 @@ def after_request(response):
         response.headers.add('Access-Control-Allow-Origin', '*')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
         response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
-        
-    # [NÂNG CẤP PRO] Security Headers chống XSS & Clickjacking
-    response.headers.add('X-Content-Type-Options', 'nosniff')
-    response.headers.add('X-Frame-Options', 'SAMEORIGIN')
-    response.headers.add('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     return response
 
 # ========================================================
-# CẤU HÌNH BOT TELEGRAM (MAIN & ADMIN BOT)
+# CẤU HÌNH BOT TELEGRAM
 # ========================================================
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', "8621133442:AAFhgCT-rpiR-Ahp1gXKZVjMwm-kfyoSIaE")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
@@ -351,6 +339,9 @@ except:
 
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
+# ========================================================
+# UTILS CHUNG & FACEBOOK API
+# ========================================================
 def send_discord_webhook(url, title, desc, color=5814783):
     if not url: return
     data = {"embeds": [{"title": title, "description": desc, "color": color}]}
@@ -373,6 +364,50 @@ def has_weird_name(name):
 
 multipliers_web = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
 
+# === CÁC HÀM GỬI TIN NHẮN MESSENGER ===
+def fb_send_api(recipient_id, message_data):
+    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={FB_PAGE_TOKEN}"
+    payload = {"recipient": {"id": recipient_id}, "message": message_data}
+    try: requests.post(url, json=payload, timeout=5)
+    except Exception as e: print(f"Lỗi FB API: {e}")
+
+def fb_get_user_name(psid):
+    try:
+        res = requests.get(f"https://graph.facebook.com/{psid}?fields=first_name,last_name&access_token={FB_PAGE_TOKEN}", timeout=3).json()
+        return (res.get("last_name", "") + " " + res.get("first_name", "")).strip() or "Khách"
+    except: return "Khách"
+
+def fb_send_text(recipient_id, text):
+    fb_send_api(recipient_id, {"text": text})
+
+def fb_send_quick_replies(recipient_id, text, buttons):
+    # buttons = [{"title": "Btn", "payload": "DATA"}]
+    qr = [{"content_type": "text", "title": b["title"][:20], "payload": b["payload"]} for b in buttons[:13]]
+    fb_send_api(recipient_id, {"text": text, "quick_replies": qr})
+
+def fb_send_button_template(recipient_id, text, buttons):
+    if not buttons: return fb_send_text(recipient_id, text)
+    btn_arr = [{"type": "postback", "title": b["title"][:20], "payload": b["payload"]} for b in buttons[:3]]
+    msg_data = {"attachment": {"type": "template", "payload": {"template_type": "button", "text": text[:640], "buttons": btn_arr}}}
+    fb_send_api(recipient_id, msg_data)
+
+def fb_send_shop(recipient_id, db_shop):
+    elements = []
+    for pkg, info in db_shop.items():
+        elements.append({
+            "title": f"🎁 Gói {info['name']}",
+            "subtitle": f"💰 Giá: {info['price']:,}đ\n📦 Kho: {info['stock']} Key",
+            "image_url": "https://images.unsplash.com/photo-1614064641913-a53b15c80764?w=500&q=80",
+            "buttons": [{"type": "postback", "title": "💳 Mua Ngay", "payload": f"FB_BUY_{pkg}"}]
+        })
+    if elements:
+        fb_send_api(recipient_id, {"attachment": {"type": "template", "payload": {"template_type": "generic", "elements": elements[:10]}}})
+    else:
+        fb_send_text(recipient_id, "Kho hiện đang trống!")
+
+# ========================================================
+# CORE FUNCTIONS
+# ========================================================
 def session_monitor():
     while True:
         time.sleep(15) 
@@ -431,8 +466,7 @@ def verify_request_signature(data):
             if sig in used_signatures: return False
             used_signatures[sig] = int(time.time() * 1000)
 
-        # Trả lại mã hóa chuẩn của file Script cũ
-        expected = hashlib.sha256(f"{key}{ts}{API_SECRET}".encode()).hexdigest()
+        expected = hashlib.sha256(f"{key}{ts}{key}".encode()).hexdigest()
         return hmac.compare_digest(sig, expected)
     except: return False
 
@@ -465,7 +499,7 @@ def safe_tg_request(url, payload):
     for i in range(3):
         try:
             res = requests.post(url, json=payload, timeout=5)
-            if res.status_code == 429:
+            if res.status_code == 429: # Rate Limited
                 time.sleep(int(res.headers.get("Retry-After", 1)))
                 continue
             return res.json()
@@ -514,53 +548,16 @@ def format_time(exp_ms, now_ms):
         return f"{m} phút {s} giây"
     except: return "Lỗi thời gian"
 
-def live_timer_updater():
-    while True:
-        time.sleep(10)
-        try:
-            db = load_db()
-            now_ms = int(time.time() * 1000)
-            with db_lock:
-                users_items = list(db.get("bot_users", {}).items())
-            
-            for uid, user in users_items:
-                if user.get("live_msg_id") and user.get("live_msg_type"):
-                    msg_id = user["live_msg_id"]
-                    m_type = user["live_msg_type"]
-                    
-                    if m_type == "loader" and user.get("loader_active"):
-                        k = user.get("loader_key")
-                        olm_name = user.get("loader_olm")
-                        with db_lock:
-                            if k in db["keys"]:
-                                kd = db["keys"][k]
-                                t_left = format_time(kd["exp"], now_ms)
-                                st = "🟢 ĐANG HOẠT ĐỘNG" if kd["status"] == "active" else "🔴 BỊ KHÓA"
-                                devs = len(kd.get("devices", []))
-                                max_devs = kd.get("maxDevices", 1)
-                                loader_status = kd.get("loader_enabled", True)
-                            else: continue
-                                
-                        btn_text = "🔴 Tắt Spoofer" if loader_status else "🟢 Bật Spoofer"
-                        st_spoofer = "🟢 ĐANG BẬT" if loader_status else "🔴 ĐÃ TẮT"
-                        txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER (LIVE)</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_name}</b>\n📱 Thiết bị: <b>{devs}/{max_devs}</b> máy\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái Tool: <b>{st}</b>\n⚙️ Chức năng Spoofer: <b>{st_spoofer}</b>\n\n📥 <b>URL CÀI ĐẶT SCRIPT:</b>\n<code>{GITHUB_SCRIPT_URL}</code>\n🔐 <b>Mật khẩu:</b> <code>{SCRIPT_PASSWORD}</code>"
-                        markup = {"inline_keyboard": [[{"text": btn_text, "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]}
-                        webhook_executor.submit(tg_edit, uid, msg_id, txt, markup)
-        except: pass
-threading.Thread(target=live_timer_updater, daemon=True).start()
-
 # ========================================================
-# WEBHOOK ADMIN BOT (CONTROL PANEL RIÊNG)
+# WEBHOOK ADMIN BOT TELEGRAM (GIỮ NGUYÊN)
 # ========================================================
 @app.route('/admin_webhook', methods=['POST', 'GET'])
 def admin_telegram_webhook():
     if request.method == 'GET': return "OK", 200
-    
     token = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
     if not hmac.compare_digest(token, WEBHOOK_SECRET):
         report_bad_signature(get_real_ip())
         return "Unauthorized", 401
-        
     try:
         data = request.json
         if data:
@@ -660,7 +657,12 @@ def _async_process_admin_webhook(data):
                             user["admin_state"] = "none"
                             log_admin_action(db, f"Nạp {amt}đ cho ID {t_id} qua Bot", safe_name)
                             save_db(db)
-                            tg_send(t_id, f"🎉 <b>Admin vừa nạp cho bạn +{amt:,}đ vào tài khoản!</b>")
+                            
+                            # Cảnh báo nạp tiền: Dùng tg_send cho Tele, fb_send cho Messenger
+                            is_fb = not t_id.isdigit()
+                            if is_fb: fb_send_text(t_id, f"🎉 <b>Admin vừa nạp cho bạn +{amt:,}đ vào tài khoản!</b>")
+                            else: tg_send(t_id, f"🎉 <b>Admin vừa nạp cho bạn +{amt:,}đ vào tài khoản!</b>")
+                            
                             user["main_menu_id"] = admin_tg_edit(chat_id, user["main_menu_id"], f"✅ Nạp thành công <b>{amt:,}đ</b> cho <code>{t_id}</code>.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "ADM_MAIN"}]]})
                         else:
                             user["main_menu_id"] = admin_tg_edit(chat_id, user["main_menu_id"], f"❌ ID {t_id} không tồn tại. Nhập lại:", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MAIN"}]]})
@@ -676,7 +678,11 @@ def _async_process_admin_webhook(data):
                         user["admin_state"] = "none"
                         log_admin_action(db, f"BAN vĩnh viễn {t_id} qua Bot", safe_name)
                         save_db(db)
-                        tg_send(t_id, "🚫 <b>TÀI KHOẢN BỊ KHÓA!</b>\nBạn đã bị Admin cấm vĩnh viễn khỏi hệ thống.")
+                        
+                        is_fb = not t_id.isdigit()
+                        if is_fb: fb_send_text(t_id, "🚫 <b>TÀI KHOẢN BỊ KHÓA!</b>\nBạn đã bị Admin cấm vĩnh viễn khỏi hệ thống.")
+                        else: tg_send(t_id, "🚫 <b>TÀI KHOẢN BỊ KHÓA!</b>\nBạn đã bị Admin cấm vĩnh viễn khỏi hệ thống.")
+                        
                         user["main_menu_id"] = admin_tg_edit(chat_id, user["main_menu_id"], f"✅ Đã trảm ID <code>{t_id}</code> thành công.", {"inline_keyboard": [[{"text": "🔙 Menu", "callback_data": "ADM_MAIN"}]]})
                     else:
                         user["main_menu_id"] = admin_tg_edit(chat_id, user["main_menu_id"], "❌ ID không tồn tại. Nhập lại:", {"inline_keyboard": [[{"text": "🔙 Hủy", "callback_data": "ADM_MAIN"}]]})
@@ -730,8 +736,11 @@ def _async_process_admin_webhook(data):
                                 db["bot_users"][t_id]["purchases"].insert(0, {"key": nk, "type": "🎁 Quà Tặng Admin", "time": now_ms})
                                 db["bot_users"][t_id].setdefault("gifts", {})[gift_id] = {"key": nk, "name": f"Key VIP {days} Ngày"}
                                 save_db(db)
-                                markup = {"inline_keyboard": [[{"text": "🎁 Mở Quà Ngay", "callback_data": f"OPEN_GIFT_{gift_id}"}]]}
-                                tg_send(t_id, f"🎁 <b>BẠN VỪA NHẬN ĐƯỢC QUÀ TỪ ADMIN!</b>\nHãy nhấn nút bên dưới để mở hộp quà nhé.", markup)
+                                
+                                is_fb = not t_id.isdigit()
+                                msg_gift = f"🎁 <b>BẠN VỪA NHẬN ĐƯỢC QUÀ TỪ ADMIN!</b>\nHãy nhấn nút bên dưới để mở hộp quà nhé."
+                                if is_fb: fb_send_button_template(t_id, msg_gift, [{"title": "🎁 Mở Quà", "payload": f"OPEN_GIFT_{gift_id}"}])
+                                else: tg_send(t_id, msg_gift, {"inline_keyboard": [[{"text": "🎁 Mở Quà Ngay", "callback_data": f"OPEN_GIFT_{gift_id}"}]]})
                     
                     with db_lock: 
                         user["admin_state"] = "none"
@@ -749,8 +758,8 @@ def _async_process_admin_webhook(data):
                         [{"text": "📊 Thống Kê Server", "callback_data": "ADM_STATS"}],
                         [{"text": "🔑 Tạo Key Nhanh", "callback_data": "ADM_CREATE"}, {"text": "🎁 Phát Quà (Túi Đồ)", "callback_data": "ADM_GIFT"}],
                         [{"text": "💰 Nạp Tiền User", "callback_data": "ADM_ADD_BAL"}, {"text": "🚫 Trảm User (BAN)", "callback_data": "ADM_BAN"}],
-                        [{"text": "⚙️ Đổi Pass Web", "callback_data": "ADM_PASS"}, {"text": "🛑 Blacklist IP", "callback_data": "ADM_BLACKLIST"}],
-                        [{"text": "☁️ Backup DB", "callback_data": "ADM_BACKUP"}]
+                        [{"text": "⚙️ Đổi Pass Web Admin", "callback_data": "ADM_PASS"}],
+                        [{"text": "🛑 Blacklist IP", "callback_data": "ADM_BLACKLIST"}, {"text": "☁️ Backup DB", "callback_data": "ADM_BACKUP"}]
                     ]
                 }
                 user["main_menu_id"] = admin_tg_edit(chat_id, user["main_menu_id"], txt, markup)
@@ -810,13 +819,298 @@ def _async_process_admin_webhook(data):
                 except: pass
     except Exception as e: pass
 
+
 # ========================================================
-# WEBHOOK MAIN BOT (KHÁCH HÀNG)
+# WEBHOOK MESSENGER FACEBOOK MAIN BOT
+# ========================================================
+@app.route('/fb_webhook', methods=['POST', 'GET'])
+def facebook_webhook():
+    if request.method == 'GET':
+        mode = request.args.get('hub.mode')
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        if mode and token:
+            if mode == 'subscribe' and token == FB_VERIFY_TOKEN:
+                return challenge, 200
+            else:
+                return 'Forbidden', 403
+        return 'OK', 200
+        
+    if request.method == 'POST':
+        data = request.json
+        if data and data.get('object') == 'page':
+            for entry in data.get('entry', []):
+                for event in entry.get('messaging', []):
+                    sender_id = event['sender']['id']
+                    
+                    now_ms = int(time.time() * 1000)
+                    with anti_spam_lock:
+                        if sender_id in anti_spam_cache and now_ms - anti_spam_cache[sender_id] < 500: continue
+                        anti_spam_cache[sender_id] = now_ms
+
+                    if event.get('message') and event['message'].get('text'):
+                        webhook_executor.submit(_async_process_fb_webhook, sender_id, event['message']['text'], None)
+                    elif event.get('postback') and event['postback'].get('payload'):
+                        webhook_executor.submit(_async_process_fb_webhook, sender_id, "", event['postback']['payload'])
+                    elif event.get('message') and event['message'].get('quick_reply'):
+                        webhook_executor.submit(_async_process_fb_webhook, sender_id, "", event['message']['quick_reply']['payload'])
+        return 'EVENT_RECEIVED', 200
+
+def _async_process_fb_webhook(sender_id, msg_text, payload):
+    try:
+        global anti_spam_cache
+        global _sys_metrics_buffer
+        now_ms = int(time.time() * 1000)
+        
+        db = load_db()
+        msg_text = msg_text.strip()
+        cmd_lower = msg_text.lower()
+        
+        if db.get("settings", {}).get("maintenance_mode", False):
+            is_admin = False
+            with db_lock:
+                if str(sender_id) in db["bot_users"] and db["bot_users"][str(sender_id)].get("is_admin"): is_admin = True
+            if not is_admin:
+                if msg_text: fb_send_text(sender_id, "⚙️ <b>HỆ THỐNG ĐANG BẢO TRÌ NÂNG CẤP!</b>\nVui lòng quay lại sau ít phút nữa nhé. Xin lỗi vì sự bất tiện này!")
+                return
+        
+        with anti_spam_lock:
+            if len(_sys_metrics_buffer) > 5000: _sys_metrics_buffer.clear()
+            history = _sys_metrics_buffer.get(sender_id, [])
+            history = [t for t in history if now_ms - t < 10000]
+            history.append(now_ms)
+            _sys_metrics_buffer[sender_id] = history
+            trigger_auto_ban = len(history) > 6
+
+        with db_lock: is_new_user = sender_id not in db["bot_users"]
+            
+        if is_new_user:
+            safe_name = fb_get_user_name(sender_id)
+            with db_lock:
+                max_users = db.get("settings", {}).get("max_users", 500)
+                if len(db["bot_users"]) >= max_users:
+                    fb_send_text(sender_id, "🚫 <b>HỆ THỐNG ĐÓNG CỬA!</b>\nServer đã đạt giới hạn số lượng tài khoản. Vui lòng quay lại sau.")
+                    return
+
+                db["bot_users"][sender_id] = {"name": safe_name, "username": "", "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "gifts": {}, "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": 0, "ban_reason": "", "approved": False, "approval_time": 0, "temp_key": "", "referred_by": "", "admin_state": "none"}
+                admin_items = list(db["bot_users"].items())
+                webhook_url = db.get("settings", {}).get("discord_webhook", "")
+                save_db(db)
+                
+            webhook_executor.submit(send_discord_webhook, webhook_url, "Khách FB Mới 🎉", f"Tên: {safe_name}\nID: {sender_id}")
+            for uid, uinfo in admin_items:
+                if uinfo.get("is_admin"): admin_tg_send(uid, f"🚨 <b>CÓ KHÁCH FB MỚI (CHỜ DUYỆT)!</b>\n👤 Tên: {escape(safe_name)}\n🆔 ID: <code>{sender_id}</code>")
+            
+            fb_send_text(sender_id, "👋 <b>CHÀO MỪNG BẠN ĐẾN VỚI HỆ THỐNG AUTO OLM!</b>\n\nTài khoản của bạn đang chờ Admin duyệt hoặc bạn có thể mua Key để sử dụng ngay.\nHãy gõ lệnh /start để mở Menu nhé!")
+            return
+
+        with db_lock: user = db["bot_users"][sender_id]
+        safe_name = user.get("name", "Khách")
+
+        if trigger_auto_ban and not user.get("is_admin"):
+            with db_lock:
+                db["bot_users"][sender_id]["banned_until"] = "permanent"
+                db["bot_users"][sender_id]["ban_reason"] = "Spam lệnh liên tục (Auto Ban FB)"
+                save_db(db)
+            return
+
+        if not user.get("is_admin"):
+            banned_until = user.get("banned_until", 0)
+            if banned_until == "permanent" or (isinstance(banned_until, int) and banned_until > now_ms):
+                if msg_text: fb_send_text(sender_id, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {user.get('ban_reason', 'Vi phạm chính sách')}")
+                return
+            
+            if not user.get("approved", False):
+                if msg_text or payload:
+                    appr_time = user.get("approval_time", 0)
+                    if appr_time == 0: fb_send_text(sender_id, "⏳ <b>HỆ THỐNG BẢO MẬT ADMIN</b>\n\nTài khoản FB của bạn đang chờ duyệt. Vui lòng kiên nhẫn!")
+                    elif appr_time > now_ms: fb_send_text(sender_id, f"⏳ <b>ĐANG CHỜ VÀO BOT</b>\nBạn sẽ được vào Bot sau: {format_time(appr_time, now_ms)}")
+                    else:
+                        with db_lock: user["approved"] = True
+                        save_db(db)
+                        fb_send_text(sender_id, "🎉 <b>PHÊ DUYỆT THÀNH CÔNG!</b>\nBạn đã có thể sử dụng Bot bình thường. Gõ /start để bắt đầu.")
+                return 
+
+        if cmd_lower in ['/start', 'menu', 'bắt đầu', 'hello', 'hi', 'get started']:
+            payload = "MENU_MAIN"
+            with db_lock: user["state"] = "none"
+
+        if msg_text.startswith("/"):
+            with db_lock: user["state"] = "none"
+
+        with db_lock: user_state = user["state"]
+
+        # XỬ LÝ NHẬP TEXT TỪ KHÁCH HÀNG FB
+        if msg_text and not msg_text.startswith("/") and user_state != "none":
+            if user_state == "wait_loader_key":
+                k = msg_text
+                valid, msg = _core_validate(db, k)
+                if valid: 
+                    with db_lock:
+                        user["temp_key"] = k
+                        user["state"] = "wait_loader_olm"
+                        save_db(db)
+                    fb_send_text(sender_id, f"✅ Key Hợp Lệ!\n\n👤 Nhập Tên OLM bạn muốn cho phép hoạt động (Ví dụ: hp_luongvantuyen):")
+                else: 
+                    fb_send_button_template(sender_id, f"❌ {msg}\n\n🔑 Vui lòng nhập lại Key khác hoặc thoát:", [{"title": "🔙 Quay Lại", "payload": "LOADER_MENU"}])
+            
+            elif user_state == "wait_loader_olm":
+                olm_target = msg_text
+                with db_lock:
+                    k = user.get("temp_key")
+                    if k and k in db["keys"] and not db["keys"][k].get("bound_olm"): db["keys"][k]["bound_olm"] = olm_target
+                    user["state"] = "none"
+                    save_db(db)
+                fb_send_text(sender_id, f"🟢 ĐÃ GHIM THÀNH CÔNG!\nKey {k} hiện tại chỉ hoạt động trên OLM: {olm_target}.")
+                add_log(db, "ĐĂNG KÝ OLM", k, "Messenger", f"Khách: {safe_name}", olm_target)
+            
+            elif user_state.startswith("wait_qty_V_"):
+                pkg = user_state.replace("wait_qty_", "")
+                if msg_text.isdigit() and int(msg_text) > 0:
+                    qty = int(msg_text)
+                    gen_keys = []
+                    
+                    with db_lock: 
+                        shop_info = db["shop"].get(pkg, {"price": 0, "stock": 0, "dur_ms": 0, "name": ""})
+                        cost = shop_info.get("price", 0)
+                        dur_ms = shop_info.get("dur_ms", 0)
+                        name = shop_info.get("name", "")
+                        stock = shop_info.get("stock", 0)
+                        total_cost = cost * qty
+                        
+                        if stock < qty: 
+                            fb_send_button_template(sender_id, f"❌ Kho Key Không Đủ! Kho chỉ còn lại {stock} Key. Vui lòng mua ít hơn.", [{"title": "🔙 Mua Lại", "payload": "BUY_VIP"}])
+                        elif db["bot_users"][sender_id].get("balance", 0) >= total_cost:
+                            db["bot_users"][sender_id]["balance"] -= total_cost
+                            db["shop"].setdefault(pkg, {"stock": stock})
+                            db["shop"][pkg]["stock"] -= qty
+                            db.setdefault("revenue_logs", []).append({"time": now_ms, "amount": total_cost})
+                            
+                            for _ in range(qty):
+                                nk = f"OLM-{secrets.token_hex(4).upper()}"
+                                db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": {}, "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
+                                db["bot_users"][sender_id]["purchases"].insert(0, {"key": nk, "type": f"VIP {name}", "time": now_ms})
+                                gen_keys.append(nk)
+                            user["state"] = "none"
+                            save_db(db)
+                            
+                            # Thông báo Admin Telegram
+                            for u_id, u_info in db["bot_users"].items():
+                                if u_info.get("username", "").lower() in ["@luongtuyen20", "luongtuyen20"]:
+                                    webhook_executor.submit(admin_tg_send, u_id, f"💸 <b>CÓ ĐƠN FB MỚI!</b>\n👤 Khách: {safe_name}\n📦 SP: {qty} x {name}\n💰 Thu: <b>+{total_cost:,}đ</b>")
+                                    break
+
+                            k_str = "\n".join([f"🔑 {k}" for k in gen_keys])
+                            fb_send_button_template(sender_id, f"🎊 MUA THÀNH CÔNG!\n{k_str}\n\nTB hỗ trợ: 1 Máy\nGói: {name}", [{"title": "🔗 Cài Đặt Spoofer", "payload": "LOADER_MENU"}])
+                            for gk in gen_keys: add_log(db, "MUA KEY (FB)", gk, "Messenger", f"Khách: {safe_name}", "N/A")
+                        else: 
+                            fb_send_button_template(sender_id, "❌ Số dư không đủ! Vui lòng nạp thêm tiền.", [{"title": "🔙 Menu", "payload": "MENU_MAIN"}])
+                else: 
+                    fb_send_quick_replies(sender_id, "❌ Vui lòng nhập số lượng hợp lệ (1, 2, 3...)!", [{"title": "🔙 Hủy Mua", "payload": "BUY_VIP"}])
+            
+            elif user_state == "wait_reset_key":
+                with db_lock:
+                    rsts = user.get("resets", 0)
+                    if msg_text in db["keys"] and rsts > 0:
+                        db["keys"][msg_text]["devices"] = []
+                        db["keys"][msg_text]["known_ips"] = {}
+                        db["keys"][msg_text]["bound_olm"] = "" 
+                        user["resets"] -= 1
+                        user["state"] = "none"
+                        save_db(db)
+                        fb_send_button_template(sender_id, f"✅ Reset thành công! Key {msg_text} đã được gỡ sạch mọi Thiết Bị và liên kết OLM.", [{"title": "🏠 Trang Chủ", "payload": "MENU_MAIN"}])
+                    elif rsts <= 0:
+                        user["state"] = "none"
+                        save_db(db)
+                        fb_send_button_template(sender_id, "❌ Bạn đã hết lượt Reset.", [{"title": "🏠 Trang Chủ", "payload": "MENU_MAIN"}])
+                    else:
+                        fb_send_quick_replies(sender_id, "❌ Key không tồn tại! Vui lòng nhập lại:", [{"title": "🏠 Hủy", "payload": "MENU_MAIN"}])
+
+        # XỬ LÝ PAYLOAD TỪ BUTTONS FB
+        if payload:
+            if payload.startswith("OPEN_GIFT_"):
+                gift_id = payload.split("OPEN_GIFT_")[1]
+                with db_lock:
+                    gift = user.get("gifts", {}).pop(gift_id, None)
+                    if gift:
+                        fb_send_button_template(sender_id, f"🎉 BÙM! MỞ QUÀ THÀNH CÔNG!\nBạn nhận được: {gift['name']}\n🔑 Key của bạn: {gift['key']}", [{"title": "🏠 Menu Chính", "payload": "MENU_MAIN"}])
+                        save_db(db)
+                    else:
+                        fb_send_button_template(sender_id, "❌ Hộp quà này đã mở hoặc không tồn tại!", [{"title": "🏠 Menu Chính", "payload": "MENU_MAIN"}])
+                return
+
+            if payload == "MENU_MAIN":
+                with db_lock: 
+                    bal = user.get('balance', 0)
+                    rst = user.get('resets', 0)
+                txt = f"👋 Chào mừng {safe_name}!\n\n💳 THÔNG TIN:\n🆔 ID FB: {sender_id}\n💰 Số dư: {bal:,}đ\n🔄 Reset Key: {rst}/3\n\n👇 Chọn dịch vụ:"
+                qr_buttons = [
+                    {"title": "🛒 Mua Key VIP", "payload": "BUY_VIP"},
+                    {"title": "🔗 Cài Đặt Spoofer", "payload": "LOADER_MENU"},
+                    {"title": "🔄 Reset Thiết Bị", "payload": "RESET"},
+                    {"title": "🩺 Chẩn Đoán Lỗi", "payload": "DIAGNOSE"}
+                ]
+                fb_send_quick_replies(sender_id, txt, qr_buttons)
+
+            elif payload == "DIAGNOSE":
+                with db_lock:
+                    user["state"] = "none"
+                    k = user.get("loader_key") or (user.get("purchases")[0]["key"] if user.get("purchases") else None)
+                    if not k: txt = "🩺 Bạn chưa nhập Key hoặc chưa mua Key nào để chẩn đoán."
+                    else:
+                        kd = db.get("keys", {}).get(k)
+                        if not kd: txt = f"🩺 Key {k} không tồn tại."
+                        else:
+                            st = kd.get("status")
+                            exp = kd.get("exp")
+                            if st == "banned": txt = "🔴 Bệnh: Key đang bị KHÓA. Liên hệ Admin."
+                            elif exp != "permanent" and exp != "pending" and int(exp) < now_ms: txt = "🔴 Bệnh: Key đã HẾT HẠN."
+                            else: txt = "🟢 Khỏe mạnh: Key hoạt động bình thường trên Server."
+                fb_send_button_template(sender_id, txt, [{"title": "🔙 Menu", "payload": "MENU_MAIN"}])
+
+            elif payload == "LOADER_MENU":
+                with db_lock: user["state"] = "none"
+                fb_send_button_template(sender_id, "🔗 QUẢN LÝ SCRIPT OLM\n\nChọn chức năng:", [
+                    {"title": "🔑 Nhập Key", "payload": "LOADER_ENTER_KEY"},
+                    {"title": "🚀 Lấy File Script", "payload": "LOADER_FILE_OLM"},
+                    {"title": "🏠 Menu", "payload": "MENU_MAIN"}
+                ])
+
+            elif payload == "LOADER_ENTER_KEY":
+                with db_lock: user["state"] = "wait_loader_key"
+                save_db(db)
+                fb_send_text(sender_id, "🔗 KẾT NỐI SCRIPT OLM\n\n🔑 Vui lòng dán Mã Key của bạn vào đây để hệ thống nhận diện:")
+
+            elif payload == "LOADER_FILE_OLM":
+                txt = f"📂 CÀI ĐẶT SCRIPT\n\n📥 Link Script OLM:\n{GITHUB_SCRIPT_URL}\n\n🔐 Mật khẩu giải nén: {SCRIPT_PASSWORD}"
+                fb_send_button_template(sender_id, txt, [{"title": "🔙 Menu", "payload": "MENU_MAIN"}])
+
+            elif payload == "BUY_VIP":
+                with db_lock: s = db.get("shop") or {}
+                fb_send_text(sender_id, "🛒 BẢNG GIÁ KEY VIP: Lướt ngang để xem các gói và bấm Mua.")
+                fb_send_shop(sender_id, s)
+
+            elif payload.startswith("FB_BUY_V_"):
+                pkg = payload.replace("FB_BUY_", "")
+                with db_lock: user["state"] = f"wait_qty_{pkg}"
+                save_db(db)
+                fb_send_quick_replies(sender_id, "🔢 Vui lòng nhắn tin SỐ LƯỢNG bạn muốn mua (Ví dụ: 1 hoặc 2):", [{"title": "🔙 Hủy", "payload": "BUY_VIP"}])
+
+            elif payload == "RESET":
+                with db_lock: rsts = user.get("resets", 0)
+                if rsts <= 0: fb_send_button_template(sender_id, "❌ Bạn đã hết lượt Reset.", [{"title": "🔙 Menu", "payload": "MENU_MAIN"}])
+                else:
+                    with db_lock: user["state"] = "wait_reset_key"
+                    save_db(db)
+                    fb_send_text(sender_id, "📝 Gửi chính xác Mã Key cần Reset thiết bị vào đây:")
+    except Exception as e: pass
+
+# ========================================================
+# WEBHOOK MAIN BOT (TELEGRAM KHÁCH HÀNG GIỮ NGUYÊN)
 # ========================================================
 @app.route('/webhook', methods=['POST', 'GET'])
 def telegram_webhook():
     if request.method == 'GET': return "OK", 200
-    
     token = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
     if not hmac.compare_digest(token, WEBHOOK_SECRET):
         report_bad_signature(get_real_ip())
@@ -1030,8 +1324,7 @@ def _async_process_webhook(data):
                     user["loader_olm"] = olm_target
                     user["live_msg_type"] = "loader"
                 
-                url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
-                txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_target}</b>\n⚡ Trạng thái: Đang kết nối URL\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>"
+                txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_target}</b>\n⚡ Trạng thái: Đang kết nối URL\n\n📥 <b>URL CÀI ĐẶT SCRIPT:</b>\n<code>{GITHUB_SCRIPT_URL}</code>\n🔐 <b>Mật khẩu:</b> <code>{SCRIPT_PASSWORD}</code>"
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔴 Tắt Spoofer" if db["keys"][k].get("loader_enabled", True) else "🟢 Bật Spoofer", "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]})
                 with db_lock: user["live_msg_id"] = user["main_menu_id"]
                 add_log(db, "ĐĂNG KÝ OLM", k, "Telegram", "Bot Setup", olm_target)
@@ -1271,7 +1564,6 @@ def _async_process_webhook(data):
                     user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], "📝 Gửi chính xác <code>Mã Key</code> cần Reset vào đây:")
             save_db(db)
     except Exception as e: pass
-
 @app.route('/api/script_ping', methods=['POST', 'OPTIONS'])
 def script_ping():
     ip = get_real_ip()
@@ -1329,11 +1621,6 @@ def check_api():
     deviceId = data.get('deviceId', '')[:100]
     olm_name = data.get('olm_name', 'N/A')[:100]
     
-    # [FIX BẢO MẬT] Tránh Brute force đoán Key thông qua API Check
-    with db_lock:
-        if key not in db.get("keys", {}):
-            report_bad_signature(ip)
-            
     valid, msg = _core_validate(db, key, deviceId)
     if not valid: return jsonify({"status": "error", "message": msg})
     
@@ -1350,7 +1637,6 @@ def check_api():
 
     return jsonify({"status": "success", "loader_enabled": kd.get("loader_enabled", True), "bound_olm": bound_user})
 
-# ĐÃ KHÔI PHỤC LẠI 100% SCRIPT GỐC CỦA BẠN NHƯ LÚC BAN ĐẦU
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
@@ -1367,17 +1653,45 @@ def serve_dynamic_script():
 
 (function() {{
     'use strict';
+    // [NÂNG CẤP PRO] Bẫy Anti-Debugger cực mạnh
+    setInterval(function(){{
+        const before = new Date();
+        debugger;
+        const after = new Date();
+        if (after - before > 100) {{ window.location.replace("about:blank"); }}
+    }}, 2000);
+
     const SERVER_URL = "{WEB_URL}";
     const VIP_USER = "hp_luongvantuyen";
     const VIP_NAME = "Lương Văn Tuyến";
-    let deviceId = localStorage.getItem('lvt_olm_hwid') || ('OLM-' + Math.random().toString(36).substring(2, 10).toUpperCase());
+    
+    // [NÂNG CẤP PRO] Canvas + WebGL + Screen HWID (Fingerprint siêu chặt)
+    function generateRobustHWID() {{
+        let canvas = document.createElement('canvas');
+        let ctx = canvas.getContext('2d');
+        ctx.textBaseline = "top"; ctx.font = "14px 'Arial'"; ctx.fillStyle = "#f60"; ctx.fillRect(125,1,62,20);
+        ctx.fillStyle = "#069"; ctx.fillText("OLM_LVT", 2, 15); ctx.fillStyle = "rgba(102, 204, 0, 0.7)"; ctx.fillText("OLM_LVT", 4, 17);
+        let b64 = canvas.toDataURL().replace("data:image/png;base64,","");
+        
+        let nav = navigator.userAgent + navigator.hardwareConcurrency + navigator.language + screen.width + screen.height;
+        let combined = b64 + nav;
+        let hash = 0;
+        for(let i=0; i<combined.length; i++) {{
+            let char = combined.charCodeAt(i);
+            hash = ((hash<<5)-hash)+char;
+            hash = hash & hash;
+        }}
+        return "HWID-" + Math.abs(hash).toString(16).toUpperCase();
+    }}
+    
+    let deviceId = localStorage.getItem('lvt_olm_hwid') || generateRobustHWID();
     localStorage.setItem('lvt_olm_hwid', deviceId);
     window.lvt_spoofer_active = false;
     let KEY = localStorage.getItem('lvt_vip_key');
 
     async function secureFetch(path, bodyObj) {{
         let ts = Date.now();
-        let msg = bodyObj.key + ts + "{API_SECRET}";
+        let msg = bodyObj.key + ts + bodyObj.key;
         let encoder = new TextEncoder();
         let data = encoder.encode(msg);
         let hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -1520,6 +1834,7 @@ def login():
         db = load_db()
         current_admin_hash = db.get("settings", {}).get("admin_password_hash", DEFAULT_ADMIN_PASSWORD_HASH)
         
+        # Ngăn chặn Timing Attack khi so sánh mật khẩu Admin
         if hmac.compare_digest(hashlib.sha256(request.form.get('password', '').encode()).hexdigest(), current_admin_hash):
             session['admin_auth'] = True 
             session['admin_ip'] = ip 
@@ -1614,8 +1929,14 @@ def gift_key():
                 else: db["keys"][nk]["exp"] = "permanent"
                 db["bot_users"][target_id]["purchases"].insert(0, {"key": nk, "type": "🎁 Quà Tặng Admin", "time": int(time.time()*1000)})
                 db["bot_users"][target_id].setdefault("gifts", {})[gift_id] = {"key": nk, "name": f"Key {'VIP' if vip else 'Thường'} ({dur} {t})"}
-            markup = {"inline_keyboard": [[{"text": "🎁 Mở Quà Ngay", "callback_data": f"OPEN_GIFT_{gift_id}"}]]}
-            tg_send(target_id, f"🎁 <b>BẠN VỪA NHẬN ĐƯỢC QUÀ TỪ ADMIN!</b>\nHãy nhấn nút bên dưới để mở hộp quà nhé.", markup)
+            
+            is_fb = not target_id.isdigit()
+            msg_gift = f"🎁 <b>BẠN VỪA NHẬN ĐƯỢC QUÀ TỪ ADMIN!</b>\nHãy nhấn nút bên dưới để mở hộp quà nhé."
+            if is_fb:
+                fb_send_button_template(target_id, msg_gift, [{"title": "🎁 Mở Quà Ngay", "payload": f"OPEN_GIFT_{gift_id}"}])
+            else:
+                markup = {"inline_keyboard": [[{"text": "🎁 Mở Quà Ngay", "callback_data": f"OPEN_GIFT_{gift_id}"}]]}
+                tg_send(target_id, msg_gift, markup)
     
     with db_lock:
         log_admin_action(db, f"Tặng Quà cho {len(set(target_ids))} Users ({dur} {t})", "@luongtuyen20")
@@ -1657,6 +1978,8 @@ def gacha_key():
                 name = shop_info.get("name", pkg)
 
             roll = random.randint(1, 100)
+            is_fb = not target_id.isdigit()
+            
             if roll <= win_rate:
                 nk = f"LUCKY-{secrets.token_hex(4).upper()}"
                 gift_id = secrets.token_hex(6)
@@ -1664,10 +1987,14 @@ def gacha_key():
                     db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": {}, "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
                     db["bot_users"][target_id]["purchases"].insert(0, {"key": nk, "type": f"🎰 Trúng {name}", "time": int(time.time()*1000)})
                     db["bot_users"][target_id].setdefault("gifts", {})[gift_id] = {"key": nk, "name": f"Trúng thưởng {name}"}
-                markup = {"inline_keyboard": [[{"text": "🎁 Mở Quà May Mắn", "callback_data": f"OPEN_GIFT_{gift_id}"}]]}
-                tg_send(target_id, f"🎉 <b>CHÚC MỪNG BẠN TRÚNG THƯỞNG!</b>\nBạn đã được hệ thống quay trúng thưởng ngẫu nhiên (Tỉ lệ: {win_rate}%).\nHãy mở quà để nhận mã Key!", markup)
+                
+                msg_win = f"🎉 <b>CHÚC MỪNG BẠN TRÚNG THƯỞNG!</b>\nBạn đã được hệ thống quay trúng thưởng ngẫu nhiên (Tỉ lệ: {win_rate}%).\nHãy mở quà để nhận mã Key!"
+                if is_fb: fb_send_button_template(target_id, msg_win, [{"title": "🎁 Mở Quà May Mắn", "payload": f"OPEN_GIFT_{gift_id}"}])
+                else: tg_send(target_id, msg_win, {"inline_keyboard": [[{"text": "🎁 Mở Quà May Mắn", "callback_data": f"OPEN_GIFT_{gift_id}"}]]})
             else:
-                tg_send(target_id, f"😢 <b>RẤT TIẾC!</b>\nAdmin vừa quay thưởng gói <b>{name}</b> cho bạn (Tỉ lệ: {win_rate}%), nhưng thần may mắn chưa mỉm cười. Lần này xịt rồi nhé!")
+                msg_lose = f"😢 <b>RẤT TIẾC!</b>\nAdmin vừa quay thưởng gói <b>{name}</b> cho bạn (Tỉ lệ: {win_rate}%), nhưng thần may mắn chưa mỉm cười. Lần này xịt rồi nhé!"
+                if is_fb: fb_send_text(target_id, msg_lose)
+                else: tg_send(target_id, msg_lose)
     
     with db_lock:
         log_admin_action(db, f"Quay Gacha cho {len(set(target_ids))} Users (Gói: {pkg}, Tỉ lệ: {win_rate}%)", "@luongtuyen20")
@@ -1732,7 +2059,10 @@ def add_balance():
             if amount > 0: msg += f"💰 Nạp tiền: <b>+{amount}đ</b>\n"
             if resets > 0: msg += f"🔄 Lượt Reset: <b>+{resets} lượt</b>\n"
             msg += f"\n📊 Số dư mới: {db['bot_users'][target_id]['balance']}đ\n🔄 Reset hiện tại: {db['bot_users'][target_id]['resets']}"
-        tg_send(target_id, msg, {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
+            
+        is_fb = not target_id.isdigit()
+        if is_fb: fb_send_button_template(target_id, msg, [{"title": "Về Menu Chính", "payload": "MENU_MAIN"}])
+        else: tg_send(target_id, msg, {"inline_keyboard": [[{"text": "Về Menu Chính", "callback_data": "MENU_MAIN"}]]})
     return redirect('/')
 
 @app.route('/admin/direct_approve', methods=['POST'])
@@ -1761,7 +2091,11 @@ def direct_approve():
             db["bot_users"][target_id]["ban_reason"] = ""
             log_admin_action(db, f"Phê duyệt đặc cách cho User {target_id}", "@luongtuyen20")
             save_db(db)
-        tg_send(target_id, "🎉 <b>PHÊ DUYỆT ĐẶC CÁCH!</b>\nAdmin đã duyệt trực tiếp tài khoản của bạn. Vui lòng gõ /start để sử dụng Bot ngay lập tức.")
+        
+        is_fb = not target_id.isdigit()
+        msg_ok = "🎉 <b>PHÊ DUYỆT ĐẶC CÁCH!</b>\nAdmin đã duyệt trực tiếp tài khoản của bạn. Vui lòng gửi chữ /start để sử dụng Bot."
+        if is_fb: fb_send_text(target_id, msg_ok)
+        else: tg_send(target_id, msg_ok)
     return redirect('/')
 
 @app.route('/admin/grant', methods=['POST'])
@@ -1793,8 +2127,13 @@ def grant_admin():
             db["bot_users"][target_id]["admin_exp"] = exp
             log_admin_action(db, f"Cấp quyền Admin cho User {target_id} ({dur} {t})", "@luongtuyen20")
             save_db(db)
-        msg = f"🎉 <b>CHÚC MỪNG! BẠN ĐÃ ĐƯỢC CẤP QUYỀN ADMIN.</b>\n⏳ Thời hạn: {dur} {t}\n\n👉 Hệ thống đã khởi tạo Bảng Điều Khiển riêng cho bạn tại Bot Admin.\n🔗 Hãy click vào đây để truy cập: @{ADMIN_BOT_USERNAME}\n(Vào bot và gõ /start để điều khiển Server)"
-        tg_send(target_id, msg)
+        
+        is_fb = not target_id.isdigit()
+        msg = f"🎉 <b>CHÚC MỪNG! BẠN ĐÃ ĐƯỢC CẤP QUYỀN ADMIN.</b>\n⏳ Thời hạn: {dur} {t}\n\n👉 Bạn đã có thể dùng các lệnh Quản trị hệ thống."
+        if is_fb: fb_send_text(target_id, msg)
+        else:
+            msg += f"\n🔗 Hãy truy cập Bot Admin: @{ADMIN_BOT_USERNAME}"
+            tg_send(target_id, msg)
     return redirect('/')
 
 @app.route('/admin/update_settings', methods=['POST'])
@@ -1884,17 +2223,22 @@ def approve_user():
     db = load_db()
     with db_lock:
         if uid in db.get("bot_users", {}):
+            is_fb = not uid.isdigit()
             if not dur or dur == 0:
                 db["bot_users"][uid]["approved"] = True
                 db["bot_users"][uid]["approval_time"] = 0
                 log_admin_action(db, f"Phê duyệt trực tiếp User {uid}", "@luongtuyen20")
-                tg_send(uid, "🎉 <b>PHÊ DUYỆT THÀNH CÔNG!</b>\nAdmin đã phê duyệt tài khoản của bạn. Vui lòng gõ /start để sử dụng.")
+                msg_ok = "🎉 <b>PHÊ DUYỆT THÀNH CÔNG!</b>\nAdmin đã phê duyệt tài khoản của bạn. Vui lòng gõ /start để sử dụng."
+                if is_fb: fb_send_text(uid, msg_ok)
+                else: tg_send(uid, msg_ok)
             else:
                 dur_ms = dur * multipliers_web.get(t, 60000)
                 db["bot_users"][uid]["approval_time"] = int(time.time() * 1000) + dur_ms
                 db["bot_users"][uid]["approved"] = False
                 log_admin_action(db, f"Hẹn giờ duyệt User {uid} sau {dur} {t}", "@luongtuyen20")
-                tg_send(uid, f"⏳ <b>THÔNG BÁO TỪ ADMIN:</b>\nTài khoản của bạn đã được nhận diện. Bạn sẽ được phép truy cập Bot sau: <b>{dur} {t}</b> nữa.")
+                msg_wait = f"⏳ <b>THÔNG BÁO TỪ ADMIN:</b>\nTài khoản của bạn đã được nhận diện. Bạn sẽ được truy cập Bot sau: <b>{dur} {t}</b> nữa."
+                if is_fb: fb_send_text(uid, msg_wait)
+                else: tg_send(uid, msg_wait)
             save_db(db)
     return redirect('/')
 
@@ -1908,7 +2252,11 @@ def unapprove_user(uid):
             db["bot_users"][uid]["approval_time"] = 0
             log_admin_action(db, f"Hủy phê duyệt User {uid}", "@luongtuyen20")
             save_db(db)
-            tg_send(uid, "🚫 <b>Tài khoản của bạn đã bị Admin thu hồi quyền truy cập Bot.</b>")
+            
+            is_fb = not uid.isdigit()
+            msg_un = "🚫 <b>Tài khoản của bạn đã bị Admin thu hồi quyền truy cập Bot.</b>"
+            if is_fb: fb_send_text(uid, msg_un)
+            else: tg_send(uid, msg_un)
     return redirect('/')
 
 @app.route('/admin/update_shop', methods=['POST'])
@@ -1972,7 +2320,11 @@ def web_ban_user():
                 if p["key"] in db.get("keys", {}): db["keys"][p["key"]]["status"] = "banned"
             log_admin_action(db, f"Ban User {target_id} - Lý do: {raw_reason}", "@luongtuyen20")
             save_db(db)
-            tg_send(target_id, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {reason}\n<i>Toàn bộ kết nối Tool và Web OLM của bạn đã bị ngắt.</i>")
+            
+            is_fb = not target_id.isdigit()
+            msg_ban = f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {reason}\n<i>Toàn bộ kết nối của bạn đã bị ngắt.</i>"
+            if is_fb: fb_send_text(target_id, msg_ban)
+            else: tg_send(target_id, msg_ban)
     return redirect('/')
 
 @app.route('/admin/unban_user/<uid>')
@@ -1988,7 +2340,11 @@ def unban_user(uid):
                     db["keys"][p["key"]]["status"] = "active"
             log_admin_action(db, f"Mở khóa User {uid}", "@luongtuyen20")
             save_db(db)
-        tg_send(uid, f"✅ <b>Tài khoản của bạn đã được Admin mở khóa!</b>")
+            
+            is_fb = not uid.isdigit()
+            msg_unban = f"✅ <b>Tài khoản của bạn đã được Admin mở khóa!</b>"
+            if is_fb: fb_send_text(uid, msg_unban)
+            else: tg_send(uid, msg_unban)
     return redirect('/')
 
 @app.route('/admin/delete_user/<uid>')
@@ -2424,3 +2780,4 @@ def dashboard():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
+
