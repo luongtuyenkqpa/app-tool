@@ -19,7 +19,22 @@ except:
     __original_hash__ = None
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'LVT_PRO_SECRET_KEY_SUPER_SECURE_2026')
+
+# [NÂNG CẤP BẢO MẬT] Tự động sinh Secret Key chống Session Forgery
+SECRET_FILE = '.flask_secret'
+if os.environ.get('SECRET_KEY'):
+    app.secret_key = os.environ.get('SECRET_KEY')
+elif os.path.exists(SECRET_FILE):
+    with open(SECRET_FILE, 'r') as f: app.secret_key = f.read().strip()
+else:
+    new_secret = secrets.token_hex(64)
+    try:
+        with open(SECRET_FILE, 'w') as f: f.write(new_secret)
+    except: pass
+    app.secret_key = new_secret
+
+# [NÂNG CẤP BẢO MẬT] Chống DDoS Payload khổng lồ (Giới hạn max 2MB/Request)
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -31,7 +46,6 @@ DB_BACKUP = './database.backup.json'
 RAW_ADMIN_PASS = os.environ.get('ADMIN_PASSWORD', 'admin120510')
 ADMIN_PASSWORD_HASH = hashlib.sha256(RAW_ADMIN_PASS.encode()).hexdigest()
 WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', "LVT_SECURE_TOKEN_2026")
-API_SECRET = "LVT_API_SECRET_2026" 
 
 db_lock = threading.RLock()
 anti_spam_lock = threading.Lock() 
@@ -43,7 +57,7 @@ _sys_metrics_buffer = {}
 
 api_rate_lock = threading.Lock()
 api_rate_cache = {}
-banned_ips = set() 
+bad_sig_cache = {} 
 
 webhook_executor = ThreadPoolExecutor(max_workers=50)
 
@@ -51,12 +65,38 @@ GLOBAL_DB = {}
 _last_db_mtime = 0
 _last_mtime_check = 0 
 
+# ========================================================
+# HỆ THỐNG BẢO VỆ LAYER 7 & FIREWALL
+# ========================================================
+def get_real_ip():
+    try:
+        if request.headers.get("CF-Connecting-IP"): return request.headers.get("CF-Connecting-IP")
+        if request.headers.getlist("X-Forwarded-For"): return request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
+        return request.remote_addr
+    except:
+        return "Unknown_IP"
+
 @app.before_request
 def firewall_and_csrf():
+    db = load_db()
+    banned_ips = set(db.get("banned_ips", []))
     ip = get_real_ip()
+    
     if ip in banned_ips:
-        return "You have been banned by the firewall.", 403
+        return "You have been banned by the Firewall (IPS).", 403
+
+    # Anti-Bot Scanner Shield
+    ua = request.headers.get('User-Agent', '').lower()
+    blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib']
+    if any(bot in ua for bot in blocked_bots) and not request.path.startswith("/webhook"):
+        return "Firewall Blocked Suspicious Bot/Scanner.", 403
         
+    if request.path.startswith("/admin/") or request.path == "/":
+        if session.get('admin_auth'):
+            if session.get('admin_ip') and session.get('admin_ip') != ip:
+                session.clear()
+                return redirect('/login')
+                
     if request.method == "POST" and request.path.startswith("/admin/"):
         origin = request.headers.get("Origin")
         referer = request.headers.get("Referer")
@@ -73,9 +113,35 @@ def firewall_and_csrf():
 @app.route('/backup.zip')
 @app.route('/.env')
 @app.route('/wp-admin')
+@app.route('/config.php')
 def honeypot_trap():
-    banned_ips.add(get_real_ip())
+    ip = get_real_ip()
+    db = load_db()
+    with db_lock:
+        if ip not in db.setdefault("banned_ips", []):
+            db["banned_ips"].append(ip)
+            save_db(db)
     return "Forbidden", 403
+
+def report_bad_signature(ip):
+    global bad_sig_cache
+    if len(bad_sig_cache) > 5000: bad_sig_cache.clear()
+    
+    bad_sig_cache[ip] = bad_sig_cache.get(ip, 0) + 1
+    if bad_sig_cache[ip] >= 5:
+        db = load_db()
+        with db_lock:
+            if ip not in db.setdefault("banned_ips", []):
+                db["banned_ips"].append(ip)
+                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "user": "Unknown Hacker", "id": ip, "reason": "Spam API sai chữ ký/Token (Brute Force)"})
+                save_db(db)
+
+def log_admin_action(db, action_text):
+    db.setdefault("admin_logs", []).insert(0, {
+        "time": int(time.time() * 1000),
+        "action": action_text
+    })
+    db["admin_logs"] = db["admin_logs"][:100]
 
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
@@ -108,14 +174,17 @@ def load_db():
                 if os.path.exists(DB_FILE) and os.path.getsize(DB_FILE) > 0:
                     try: shutil.copy2(DB_FILE, DB_FILE + f".corrupted.{int(time.time())}.json")
                     except: pass
-                data = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}, "shop": {}, "settings": {"max_users": 500}, "security_alerts": []}
+                data = {"keys": {}, "logs": [], "bot_users": {}, "active_scripts": {}, "shop": {}, "settings": {"max_users": 500, "discord_webhook": "", "maintenance_mode": False}, "security_alerts": [], "banned_ips": [], "revenue_logs": [], "admin_logs": []}
                 
             try:
                 data.setdefault("bot_users", {})
                 data.setdefault("keys", {})
                 data.setdefault("logs", [])
+                data.setdefault("banned_ips", [])
+                data.setdefault("revenue_logs", [])
+                data.setdefault("admin_logs", [])
                 data.setdefault("active_scripts", {})
-                data.setdefault("settings", {"max_users": 500})
+                data.setdefault("settings", {"max_users": 500, "discord_webhook": "", "maintenance_mode": False})
                 data.setdefault("security_alerts", []) 
                 
                 shop_data = data.setdefault("shop", {})
@@ -128,6 +197,7 @@ def load_db():
                 for uid in list(data["bot_users"].keys()):
                     u = data["bot_users"][uid]
                     u.setdefault("purchases", [])
+                    u.setdefault("gifts", {})
                     u.setdefault("notices", [])
                     u.setdefault("loader_active", False)
                     u.setdefault("loader_key", "")
@@ -142,6 +212,7 @@ def load_db():
                     u.setdefault("ban_reason", "")
                     u.setdefault("name", "Khách") 
                     u.setdefault("temp_key", "")
+                    u.setdefault("referred_by", "")
                     
                     if "approved" not in u:
                         if u.get("is_admin") or u.get("balance", 0) > 0 or len(u.get("purchases", [])) > 0:
@@ -183,13 +254,37 @@ def __hidden_bot_guardian__():
                 try: shutil.copy2(DB_FILE, DB_BACKUP)
                 except: pass
 
+def garbage_collector():
+    while True:
+        time.sleep(3600) 
+        now = int(time.time() * 1000)
+        try:
+            db = load_db()
+            changed = False
+            with db_lock:
+                for k in list(db.get("keys", {}).keys()):
+                    exp = db["keys"][k].get("exp")
+                    if exp != "permanent" and exp != "pending":
+                        if isinstance(exp, int) and (now - exp) > 604800000:
+                            del db["keys"][k]
+                            changed = True
+                
+                if len(db.get("security_alerts", [])) > 100:
+                    db["security_alerts"] = db["security_alerts"][:50]
+                    changed = True
+            if changed: save_db(db)
+        except: pass
+
 threading.Thread(target=__hidden_bot_guardian__, daemon=True).start()
+threading.Thread(target=garbage_collector, daemon=True).start()
 
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    # [BẢO MẬT] Chỉ cho phép CORS đối với một số API cụ thể, không cho phép toàn bộ
+    if request.path.startswith('/api/') and not request.path.startswith('/api/admin'):
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
     return response
 
 # ========================================================
@@ -197,7 +292,18 @@ def after_request(response):
 # ========================================================
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', "8621133442:AAFhgCT-rpiR-Ahp1gXKZVjMwm-kfyoSIaE")
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+try:
+    BOT_INFO = requests.get(f"{TELEGRAM_API_URL}/getMe").json()
+    BOT_USERNAME = BOT_INFO.get("result", {}).get("username", "tool_bot")
+except:
+    BOT_USERNAME = "tool_bot"
 WEB_URL = "https://app-tool-trlp.onrender.com"
+
+def send_discord_webhook(url, title, desc, color=5814783):
+    if not url: return
+    data = {"embeds": [{"title": title, "description": desc, "color": color}]}
+    try: requests.post(url, json=data, timeout=3)
+    except: pass
 
 def is_vietnamese_or_english_letter(char):
     if 'a' <= char.lower() <= 'z': return True
@@ -212,12 +318,6 @@ def has_weird_name(name):
         if char.isalpha() and not is_vietnamese_or_english_letter(char): return True
     if not has_alnum and len(name.strip()) > 0: return True
     return False
-
-def parse_duration(duration_str):
-    if duration_str.lower() in ['vv', 'vinhvien', 'permanent']: return 'permanent'
-    match = re.match(r"(\d+)([a-zA-Z]+)", duration_str.strip())
-    if not match: return 0
-    return int(match.group(1)) * {'s': 1000, 'm': 60000, 'h': 3600000, 'd': 86400000, 'mo': 2592000000, 'y': 31536000000}.get(match.group(2).lower(), 0)
 
 multipliers_web = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
 
@@ -253,14 +353,6 @@ def add_log(db, action, key, ip, device, olm_name="N/A"):
         db.setdefault("logs", []).insert(0, {"time": int(time.time()), "action": action, "key": key, "ip": ip, "device": device, "olm_name": olm_name})
         db["logs"] = db["logs"][:500] 
 
-def get_real_ip():
-    try:
-        if request.headers.getlist("X-Forwarded-For"): raw_ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
-        else: raw_ip = request.remote_addr
-        return re.sub(r'[^0-9a-fA-F:.]', '', str(raw_ip))[:45]
-    except:
-        return "Unknown_IP"
-
 def check_api_rate_limit(ip):
     now = time.time()
     with api_rate_lock:
@@ -278,7 +370,7 @@ def verify_request_signature(data):
         sig = data.get("signature", "")
         key = data.get("key", "")
         if abs(int(time.time() * 1000) - ts) > 15000: return False
-        expected = hashlib.sha256(f"{key}{ts}{API_SECRET}".encode()).hexdigest()
+        expected = hashlib.sha256(f"{key}{ts}{key}".encode()).hexdigest()
         return sig == expected
     except: return False
 
@@ -307,34 +399,6 @@ def _core_validate(db, key, deviceId=None):
         if db_changed: save_db(db)
         return True, "Success"
 
-def is_admin_valid(db, uid):
-    with db_lock:
-        user = db["bot_users"].get(uid)
-        if not user or not user.get("is_admin"): return False, "⚠️ <b>BẠN CẦN ADMIN CẤP QUYỀN!</b>\nVui lòng nhập <code>Key Admin</code> để mở khóa:"
-        adm_key = user.get("admin_key", "")
-        now_ms = int(time.time() * 1000)
-        
-        if adm_key and adm_key in db["keys"]:
-            kd = db["keys"][adm_key]
-            if kd.get("status") == "banned":
-                user["is_admin"] = False
-                return False, "🚫 <b>Key Admin của bạn đã bị BAN!</b>\nVui lòng nhập Key mới:"
-            if kd.get("exp") != "permanent" and kd.get("exp") != "pending":
-                if int(kd.get("exp", 0)) < now_ms:
-                    user["is_admin"] = False
-                    return False, "⏳ <b>Key Admin của bạn đã HẾT HẠN!</b>\nVui lòng nhập Key mới:"
-            return True, ""
-            
-        elif user.get("admin_exp"):
-            exp = user.get("admin_exp")
-            if exp == "permanent" or (isinstance(exp, int) and exp > now_ms): return True, ""
-            else:
-                user["is_admin"] = False
-                return False, "⏳ <b>Quyền Admin của bạn đã HẾT HẠN!</b>\nVui lòng nhờ cấp lại quyền:"
-                
-        user["is_admin"] = False
-        return False, "⚠️ <b>BẠN CẦN ADMIN CẤP QUYỀN!</b>\nVui lòng nhập <code>Key Admin</code>:"
-
 def tg_send(chat_id, text, markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if markup: payload["reply_markup"] = markup
@@ -355,14 +419,6 @@ def tg_edit(chat_id, msg_id, text, markup=None):
             else: return tg_send(chat_id, text, markup)
         return msg_id
     except: return msg_id
-
-def get_user_id_by_username(db, username):
-    username = username.strip().lower()
-    with db_lock:
-        items = list(db["bot_users"].items())
-    for uid, info in items:
-        if info.get("username", "").lower() == username: return uid
-    return None
 
 def format_time(exp_ms, now_ms):
     if exp_ms == "permanent": return "Vĩnh viễn"
@@ -406,7 +462,7 @@ def live_timer_updater():
                         url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
                         btn_text = "🔴 Tắt Spoofer" if loader_status else "🟢 Bật Spoofer"
                         st_spoofer = "🟢 ĐANG BẬT" if loader_status else "🔴 ĐÃ TẮT"
-                        txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_name}</b>\n📱 Thiết bị: <b>{devs}/{max_devs}</b> máy\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái Tool: <b>{st}</b>\n⚙️ Chức năng Spoofer: <b>{st_spoofer}</b>\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>\n<i>(Lưu ý: Chỉ cần dán URL này 1 lần duy nhất vào Violentmonkey!)</i>"
+                        txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER (LIVE)</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_name}</b>\n📱 Thiết bị: <b>{devs}/{max_devs}</b> máy\n⏳ Thời gian còn lại: <b>{t_left}</b>\n⚡ Trạng thái Tool: <b>{st}</b>\n⚙️ Chức năng Spoofer: <b>{st_spoofer}</b>\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>"
                         markup = {"inline_keyboard": [[{"text": btn_text, "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]}
                         webhook_executor.submit(tg_edit, uid, msg_id, txt, markup)
         except: pass
@@ -415,7 +471,12 @@ threading.Thread(target=live_timer_updater, daemon=True).start()
 @app.route('/webhook', methods=['POST', 'GET'])
 def telegram_webhook():
     if request.method == 'GET': return "OK", 200
-    if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != WEBHOOK_SECRET: return "Unauthorized", 401
+    
+    # [NÂNG CẤP BẢO MẬT] Phạt IP nếu truyền sai Token Webhook
+    if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != WEBHOOK_SECRET:
+        report_bad_signature(get_real_ip())
+        return "Unauthorized", 401
+        
     try:
         data = request.json
         if data: webhook_executor.submit(_async_process_webhook, data)
@@ -439,6 +500,18 @@ def _async_process_webhook(data):
         global _sys_metrics_buffer
         now_ms = int(time.time() * 1000)
         trigger_auto_ban = False
+        
+        db = load_db()
+        
+        if db.get("settings", {}).get("maintenance_mode", False):
+            is_admin = False
+            with db_lock:
+                if str(chat_id) in db["bot_users"] and db["bot_users"][str(chat_id)].get("is_admin"):
+                    is_admin = True
+            if not is_admin:
+                if "message" in data:
+                    tg_send(chat_id, "⚙️ <b>HỆ THỐNG ĐANG BẢO TRÌ NÂNG CẤP!</b>\nVui lòng quay lại sau ít phút nữa nhé. Xin lỗi vì sự bất tiện này!")
+                return
         
         with anti_spam_lock:
             if len(anti_spam_cache) > 5000: anti_spam_cache.clear()
@@ -465,7 +538,6 @@ def _async_process_webhook(data):
             try: requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": data["callback_query"]["id"]}, timeout=2)
             except: pass
 
-        db = load_db()
         safe_name = user_name.replace("<", "").replace(">", "")
         f_uname = f"@{tg_username}" if tg_username else ""
         
@@ -488,7 +560,7 @@ def _async_process_webhook(data):
                         for p in db["bot_users"][sid].get("purchases", []):
                             if p["key"] in db.setdefault("keys", {}): db["keys"][p["key"]]["status"] = "banned"
                 else:
-                    db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": "permanent", "ban_reason": ai_banned_reason, "approved": False, "approval_time": 0, "temp_key": ""}
+                    db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "gifts": {}, "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": "permanent", "ban_reason": ai_banned_reason, "approved": False, "approval_time": 0, "temp_key": "", "referred_by": ""}
                 
                 if not was_already_banned:
                     db.setdefault("security_alerts", []).insert(0, {
@@ -522,12 +594,21 @@ def _async_process_webhook(data):
                 if should_warn: tg_send(sid, "🚫 <b>HỆ THỐNG ĐÓNG CỬA!</b>\nServer đã đạt giới hạn số lượng tài khoản tối đa. Vui lòng quay lại sau.")
                 return
 
+            ref_code = ""
+            if msg_text.startswith("/start "): ref_code = msg_text.split(" ")[1]
+
             with db_lock:
-                db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": 0, "ban_reason": "", "approved": False, "approval_time": 0, "temp_key": ""}
+                db["bot_users"][sid] = {"name": safe_name, "username": f_uname, "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "gifts": {}, "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": 0, "ban_reason": "", "approved": False, "approval_time": 0, "temp_key": "", "referred_by": ref_code}
                 admin_items = list(db["bot_users"].items())
+                webhook_url = db.get("settings", {}).get("discord_webhook", "")
+                save_db(db)
                 
+            webhook_executor.submit(send_discord_webhook, webhook_url, "Khách Hàng Mới 🎉", f"Tên: {safe_name}\nID: {sid}\nUsername: {f_uname}")
+            
             for uid, uinfo in admin_items:
                 if uinfo.get("is_admin"): tg_send(uid, f"🚨 <b>CÓ KHÁCH HÀNG MỚI (CHỜ DUYỆT)!</b>\n👤 Tên: {escape(safe_name)} {escape(f_uname)}\n🆔 ID: <code>{sid}</code>\n👉 <i>Vào Web Admin để phê duyệt cho khách nhé!</i>")
+            
+            tg_send(sid, "👋 <b>CHÀO MỪNG BẠN ĐẾN VỚI HỆ THỐNG AUTO OLM!</b>\n\nTài khoản của bạn đang chờ Admin duyệt hoặc bạn có thể mua Key để sử dụng ngay.\nHãy gõ lệnh /start để mở Menu nhé!")
         else:
             with db_lock:
                 db["bot_users"][sid]["username"] = f_uname
@@ -603,7 +684,7 @@ def _async_process_webhook(data):
                     user["live_msg_type"] = "loader"
                 
                 url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
-                txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_target}</b>\n⚡ Trạng thái: Đang kết nối URL\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>\n<i>(Lưu ý: Chỉ cần dán URL này 1 lần duy nhất vào Violentmonkey!)</i>"
+                txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_target}</b>\n⚡ Trạng thái: Đang kết nối URL\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>"
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔴 Tắt Spoofer" if db["keys"][k].get("loader_enabled", True) else "🟢 Bật Spoofer", "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]})
                 with db_lock: user["live_msg_id"] = user["main_menu_id"]
                 add_log(db, "ĐĂNG KÝ OLM", k, "Telegram", "Bot Setup", olm_target)
@@ -622,14 +703,23 @@ def _async_process_webhook(data):
                         dur_ms = shop_info.get("dur_ms", 0)
                         name = shop_info.get("name", "")
                         stock = shop_info.get("stock", 0)
+                        total_cost = cost * qty
                         
                         if stock < qty: 
                             tg_msg_content = f"❌ <b>Kho Key Không Đủ!</b>\nGói {name} hiện tại trong kho bot chỉ còn lại <b>{stock}</b> Key. Vui lòng mua số lượng nhỏ hơn."
                             tg_markup = {"inline_keyboard": [[{"text": "🔙 Quay Lại Mua", "callback_data": "BUY_VIP"}]]}
-                        elif db["bot_users"][sid].get("balance", 0) >= (cost * qty):
-                            db["bot_users"][sid]["balance"] -= (cost * qty)
+                        elif db["bot_users"][sid].get("balance", 0) >= total_cost:
+                            db["bot_users"][sid]["balance"] -= total_cost
                             db["shop"].setdefault(pkg, {"stock": stock})
                             db["shop"][pkg]["stock"] -= qty
+                            db.setdefault("revenue_logs", []).append({"time": now_ms, "amount": total_cost})
+                            
+                            referrer = db["bot_users"][sid].get("referred_by")
+                            if referrer and referrer in db["bot_users"]:
+                                hoa_hong = int(total_cost * 0.1)
+                                db["bot_users"][referrer]["balance"] = db["bot_users"][referrer].get("balance", 0) + hoa_hong
+                                webhook_executor.submit(tg_send, referrer, f"💵 <b>HOA HỒNG AFFILIATE!</b>\nNgười bạn giới thiệu vừa mua hàng. Bạn nhận được <b>+{hoa_hong}đ</b> vào tài khoản.")
+
                             for _ in range(qty):
                                 nk = f"OLM-{secrets.token_hex(4).upper()}"
                                 db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
@@ -722,6 +812,17 @@ def _async_process_webhook(data):
                 else:
                     tg_send(sid, "❌ Bạn không có quyền Admin để thực hiện thao tác này.")
                 return
+            
+            elif payload.startswith("OPEN_GIFT_"):
+                gift_id = payload.split("OPEN_GIFT_")[1]
+                with db_lock:
+                    gift = user.get("gifts", {}).pop(gift_id, None)
+                    if gift:
+                        tg_edit(sid, msg_id, f"🎉 <b>BÙM! BẠN ĐÃ MỞ QUÀ THÀNH CÔNG!</b>\nBạn nhận được gói: <b>{gift['name']}</b>\n🔑 Key của bạn: <code>{gift['key']}</code>", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+                        save_db(db)
+                    else:
+                        tg_edit(sid, msg_id, "❌ Hộp quà này đã được mở hoặc không tồn tại!", {"inline_keyboard": [[{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]})
+                return
 
             with db_lock: user["live_msg_type"] = None
             if payload == "MENU_MAIN":
@@ -729,7 +830,7 @@ def _async_process_webhook(data):
                     bal = user.get('balance', 0)
                     rst = user.get('resets', 0)
                 txt = "🎉 <b>Chào mừng bạn đến với AutoKey (Admin @luongtuyen20)</b>\n➖➖➖➖➖➖➖➖\n\n"
-                txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{bal:,}đ</b>\n└ 🔄 Reset Key: <b>{rst}/3</b>\n\n👇 Chọn dịch vụ:"
+                txt += f"👋 Chào mừng <b>{safe_name}</b>!\n\n💳 <b>THÔNG TIN:</b>\n├ 🆔 ID: <code>{sid}</code>\n├ 💰 Số dư: <b>{bal:,}đ</b>\n└ 🔄 Reset Key: <b>{rst}/3</b>\n\n🔗 <b>MÃ GIỚI THIỆU:</b> (Hoa hồng 10%)\n<code>https://t.me/{BOT_USERNAME}?start={sid}</code>\n\n👇 Chọn dịch vụ:"
                 markup = {
                     "inline_keyboard": [
                         [{"text": "🛒 Mua Key Mới", "callback_data": "BUY"}, {"text": "🔄 Reset Key", "callback_data": "RESET"}],
@@ -777,7 +878,7 @@ def _async_process_webhook(data):
             elif payload == "LOADER_MENU":
                 with db_lock: user["state"] = "none"
                 txt = "🔗 <b>QUẢN LÝ SCRIPT OLM</b>\n\n👇 Vui lòng chọn chức năng bạn muốn sử dụng:"
-                markup = {"inline_keyboard": [[{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}], [{"text": "🚀 Cài Đặt Script (1-Click)", "callback_data": "LOADER_FILE_OLM"}], [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]}
+                markup = {"inline_keyboard": [[{"text": "🔑 Nhập Key Tàng Hình", "callback_data": "LOADER_ENTER_KEY"}], [{"text": "🚀 Cài Đặt Script Cố Định", "callback_data": "LOADER_FILE_OLM"}], [{"text": "🏠 Về Trang Chủ", "callback_data": "MENU_MAIN"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_ENTER_KEY":
@@ -786,8 +887,8 @@ def _async_process_webhook(data):
 
             elif payload == "LOADER_FILE_OLM":
                 with db_lock: user["state"] = "none"
-                txt = "📂 <b>CÀI ĐẶT SCRIPT TỰ ĐỘNG (1-CLICK)</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n<i>👉 Nhấn vào nút bên dưới, trình duyệt sẽ tự động mở và yêu cầu cài đặt Script vào Violentmonkey.</i>\n\n⚠️ <b>Lưu ý:</b> Trình duyệt của bạn phải được cài sẵn tiện ích Violentmonkey từ trước."
-                markup = {"inline_keyboard": [[{"text": "🚀 BẤM VÀO ĐÂY ĐỂ CÀI ĐẶT (1-CLICK)", "url": f"{WEB_URL}/api/script/lvt_vip_loader.user.js"}], [{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]}
+                txt = f"📂 <b>CÀI ĐẶT SCRIPT (THỦ CÔNG)</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n\n<i>👉 Bạn hãy bôi đen và copy đường link bên dưới, sau đó dán vào Violentmonkey (Dấu + => Cài đặt từ URL) để cài đặt nhé.</i>\n\n📥 <b>Link Script:</b>\n<code>{WEB_URL}/api/script/lvt_vip_loader.user.js</code>"
+                markup = {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "LOADER_MENU"}]]}
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, markup)
 
             elif payload == "LOADER_DISCONNECT":
@@ -842,10 +943,17 @@ def script_ping():
     if not check_api_rate_limit(get_real_ip()): return "Too Many Requests", 429
     if request.method == 'OPTIONS': return make_response("ok", 200)
     data = request.json or {}
-    if not verify_request_signature(data): return "Invalid Signature", 403
+    
+    db = load_db()
+    if db.get("settings", {}).get("maintenance_mode", False):
+        return "Maintenance", 503
+        
+    if not verify_request_signature(data):
+        report_bad_signature(get_real_ip()) 
+        return "Invalid Signature", 403
+        
     key = data.get("key")
     olm_name = data.get("olm_name")
-    db = load_db()
     with db_lock:
         if key in db.get("keys", {}):
             active_sessions[key] = {"ip": get_real_ip(), "olm_name": olm_name, "key": key, "last_seen": time.time()}
@@ -854,14 +962,20 @@ def script_ping():
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_api():
-    if not check_api_rate_limit(get_real_ip()):
+    ip = get_real_ip()
+    if not check_api_rate_limit(ip):
         return jsonify({"status": "error", "message": "Quá nhiều yêu cầu. Vui lòng thử lại sau 5 giây!"}), 429
     if request.method == 'OPTIONS': return make_response("ok", 200)
+    
+    db = load_db()
+    if db.get("settings", {}).get("maintenance_mode", False):
+        return jsonify({"status": "error", "message": "Server đang bảo trì hệ thống. Vui lòng thử lại sau!"}), 503
+        
     data = request.json or {}
     if not verify_request_signature(data):
+        report_bad_signature(ip) 
         return jsonify({"status": "error", "message": "Chữ ký mã hóa API không hợp lệ. Vui lòng update Script!"}), 403
 
-    db = load_db()
     key = data.get('key')
     deviceId = data.get('deviceId')
     olm_name = data.get('olm_name', 'N/A')
@@ -875,7 +989,7 @@ def check_api():
     if bound_user and bound_user != "N/A" and olm_name != "N/A":
         if bound_user.lower() != olm_name.lower():
             with db_lock: kd["status"] = "banned"
-            add_log(db, "SERVER AUTO BAN (Sai Tên)", key, get_real_ip(), f"Thiết bị: {deviceId}", olm_name)
+            add_log(db, "SERVER AUTO BAN (Sai Tên)", key, ip, f"Thiết bị: {deviceId}", olm_name)
             save_db(db)
             return jsonify({"status": "error", "message": f"PHÁT HIỆN GIAN LẬN! Tài khoản đang dùng ({olm_name}) không khớp với gốc ({bound_user}). Key đã bị hệ thống khóa!"})
 
@@ -907,7 +1021,7 @@ def serve_dynamic_script():
 
     async function secureFetch(path, bodyObj) {{
         let ts = Date.now();
-        let msg = bodyObj.key + ts + "{API_SECRET}";
+        let msg = bodyObj.key + ts + bodyObj.key;
         let encoder = new TextEncoder();
         let data = encoder.encode(msg);
         let hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -1037,10 +1151,23 @@ def login():
         now = time.time()
         attempts = login_attempts.get(ip, [])
         attempts = [t for t in attempts if now - t < 300]
-        if len(attempts) >= 5: return "<html><script>alert('Quá nhiều lần thử sai! Hãy quay lại sau 5 phút.');window.location.href='/login';</script></html>"
+        
+        # [NÂNG CẤP PRO] Trừng phạt Dò Pass Admin
+        if len(attempts) >= 4: # Sai 5 lần là Auto Ban IP
+            db = load_db()
+            with db_lock:
+                if ip not in db.setdefault("banned_ips", []):
+                    db["banned_ips"].append(ip)
+                    db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "user": "Kẻ xâm nhập", "id": ip, "reason": "Cố tình dò Mật Khẩu Admin (Brute Force)"})
+                    save_db(db)
+            return "<html><script>alert('🚨 BẠN ĐÃ BỊ FIREWALL KHÓA IP VÌ DÒ PASS!');window.location.href='/login';</script></html>"
         
         if hashlib.sha256(request.form.get('password', '').encode()).hexdigest() == ADMIN_PASSWORD_HASH:
             session['admin_auth'] = True 
+            session['admin_ip'] = ip 
+            db = load_db()
+            with db_lock: log_admin_action(db, f"Đăng nhập thành công từ IP: {ip}")
+            save_db(db)
             if ip in login_attempts: del login_attempts[ip]
             return redirect('/')
         attempts.append(now)
@@ -1051,6 +1178,7 @@ def login():
 @app.route('/logout')
 def logout():
     session.pop('admin_auth', None)
+    session.pop('admin_ip', None)
     return redirect('/login')
 
 @app.route('/admin/create', methods=['POST'])
@@ -1076,14 +1204,14 @@ def create_key():
             db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": [], "status": "active", "vip": vip, "target": target_app, "bound_olm": "", "loader_enabled": True}
             if t != 'permanent': db["keys"][nk]["durationMs"] = dur * multipliers_web.get(t, 86400000)
             else: db["keys"][nk]["exp"] = "permanent"
+        log_admin_action(db, f"Tạo {qty} Key mới ({dur} {t}) - Tiền tố: {pfx}")
         save_db(db)
     return redirect('/')
 
-# [TÍNH NĂNG TIER S] 1. Tặng Key trực tiếp vào túi đồ khách
 @app.route('/admin/gift_key', methods=['POST'])
 def gift_key():
     if not session.get('admin_auth'): return redirect('/login')
-    target_user = request.form.get('target_user', '').strip()
+    target_users = request.form.get('target_users', '').strip()
     try: dur = int(request.form.get('duration') or 0)
     except: dur = 0
     try: md = int(request.form.get('maxDevices') or 1)
@@ -1094,31 +1222,43 @@ def gift_key():
     db = load_db()
     with db_lock: items = list(db.get("bot_users", {}).items())
     
-    target_id = None
-    if target_user.startswith('@'):
-        u_name = target_user.lower()
-        for uid, info in items:
-            if info.get("username", "").lower() == u_name: 
-                target_id = uid
-                break
-    else: target_id = target_user
+    target_ids = []
+    if target_users.upper() == 'ALL':
+        target_ids = [uid for uid, _ in items]
+    else:
+        for t_user in target_users.split(','):
+            t_user = t_user.strip()
+            if not t_user: continue
+            if t_user.startswith('@'):
+                u_name = t_user.lower()
+                for uid, info in items:
+                    if info.get("username", "").lower() == u_name: 
+                        target_ids.append(uid)
+                        break
+            else: target_ids.append(t_user)
 
-    if target_id and target_id in db.get("bot_users", {}):
-        nk = f"GIFT-{secrets.token_hex(4).upper()}"
-        with db_lock:
-            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": [], "status": "active", "vip": vip, "target": "olm", "bound_olm": "", "loader_enabled": True}
-            if t != 'permanent': db["keys"][nk]["durationMs"] = dur * multipliers_web.get(t, 86400000)
-            else: db["keys"][nk]["exp"] = "permanent"
-            db["bot_users"][target_id]["purchases"].insert(0, {"key": nk, "type": "🎁 Quà Tặng Admin", "time": int(time.time()*1000)})
-            save_db(db)
-        tg_send(target_id, f"🎁 <b>BẠN VỪA NHẬN ĐƯỢC QUÀ TỪ ADMIN!</b>\n🔑 Key của bạn: <code>{nk}</code>\n💎 Loại: {'VIP' if vip else 'Thường'}\n📱 Thiết bị: {md} máy")
+    for target_id in set(target_ids):
+        if target_id in db.get("bot_users", {}):
+            nk = f"GIFT-{secrets.token_hex(4).upper()}"
+            gift_id = secrets.token_hex(6)
+            with db_lock:
+                db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": [], "status": "active", "vip": vip, "target": "olm", "bound_olm": "", "loader_enabled": True}
+                if t != 'permanent': db["keys"][nk]["durationMs"] = dur * multipliers_web.get(t, 86400000)
+                else: db["keys"][nk]["exp"] = "permanent"
+                db["bot_users"][target_id]["purchases"].insert(0, {"key": nk, "type": "🎁 Quà Tặng Admin", "time": int(time.time()*1000)})
+                db["bot_users"][target_id].setdefault("gifts", {})[gift_id] = {"key": nk, "name": f"Key {'VIP' if vip else 'Thường'} ({dur} {t})"}
+            markup = {"inline_keyboard": [[{"text": "🎁 Mở Quà Ngay", "callback_data": f"OPEN_GIFT_{gift_id}"}]]}
+            tg_send(target_id, f"🎁 <b>BẠN VỪA NHẬN ĐƯỢC QUÀ TỪ ADMIN!</b>\nHãy nhấn nút bên dưới để mở hộp quà nhé.", markup)
+    
+    with db_lock:
+        log_admin_action(db, f"Tặng Quà cho {len(set(target_ids))} Users ({dur} {t})")
+        save_db(db)
     return redirect('/')
 
-# [TÍNH NĂNG TIER S] 2. Vòng quay Gacha Random Key
 @app.route('/admin/gacha_key', methods=['POST'])
 def gacha_key():
     if not session.get('admin_auth'): return redirect('/login')
-    target_user = request.form.get('target_user', '').strip()
+    target_users = request.form.get('target_users', '').strip()
     pkg = request.form.get('package')
     try: win_rate = int(request.form.get('win_rate') or 0)
     except: win_rate = 0
@@ -1126,32 +1266,45 @@ def gacha_key():
     db = load_db()
     with db_lock: items = list(db.get("bot_users", {}).items())
     
-    target_id = None
-    if target_user.startswith('@'):
-        u_name = target_user.lower()
-        for uid, info in items:
-            if info.get("username", "").lower() == u_name: 
-                target_id = uid
-                break
-    else: target_id = target_user
+    target_ids = []
+    if target_users.upper() == 'ALL':
+        target_ids = [uid for uid, _ in items]
+    else:
+        for t_user in target_users.split(','):
+            t_user = t_user.strip()
+            if not t_user: continue
+            if t_user.startswith('@'):
+                u_name = t_user.lower()
+                for uid, info in items:
+                    if info.get("username", "").lower() == u_name: 
+                        target_ids.append(uid)
+                        break
+            else: target_ids.append(t_user)
 
-    if target_id and target_id in db.get("bot_users", {}):
-        with db_lock:
-            shop_info = db.setdefault("shop", {}).get(pkg, {})
-            if not shop_info: return redirect('/')
-            dur_ms = shop_info.get("dur_ms", 0)
-            name = shop_info.get("name", pkg)
-
-        roll = random.randint(1, 100)
-        if roll <= win_rate:
-            nk = f"LUCKY-{secrets.token_hex(4).upper()}"
+    for target_id in set(target_ids):
+        if target_id in db.get("bot_users", {}):
             with db_lock:
-                db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
-                db["bot_users"][target_id]["purchases"].insert(0, {"key": nk, "type": f"🎰 Trúng {name}", "time": int(time.time()*1000)})
-                save_db(db)
-            tg_send(target_id, f"🎉 <b>CHÚC MỪNG BẠN!</b>\nBạn đã may mắn TRÚNG THƯỞNG gói <b>{name}</b> (Tỉ lệ: {win_rate}%)\n🔑 Key của bạn: <code>{nk}</code>")
-        else:
-            tg_send(target_id, f"😢 <b>RẤT TIẾC!</b>\nAdmin vừa quay thưởng gói <b>{name}</b> cho bạn (Tỉ lệ: {win_rate}%), nhưng thần may mắn chưa mỉm cười. Lần này xịt rồi nhé!")
+                shop_info = db.setdefault("shop", {}).get(pkg, {})
+                if not shop_info: continue
+                dur_ms = shop_info.get("dur_ms", 0)
+                name = shop_info.get("name", pkg)
+
+            roll = random.randint(1, 100)
+            if roll <= win_rate:
+                nk = f"LUCKY-{secrets.token_hex(4).upper()}"
+                gift_id = secrets.token_hex(6)
+                with db_lock:
+                    db["keys"][nk] = {"exp": "pending", "durationMs": dur_ms, "maxDevices": 1, "devices": [], "known_ips": [], "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True}
+                    db["bot_users"][target_id]["purchases"].insert(0, {"key": nk, "type": f"🎰 Trúng {name}", "time": int(time.time()*1000)})
+                    db["bot_users"][target_id].setdefault("gifts", {})[gift_id] = {"key": nk, "name": f"Trúng thưởng {name}"}
+                markup = {"inline_keyboard": [[{"text": "🎁 Mở Quà May Mắn", "callback_data": f"OPEN_GIFT_{gift_id}"}]]}
+                tg_send(target_id, f"🎉 <b>CHÚC MỪNG BẠN TRÚNG THƯỞNG!</b>\nBạn đã được hệ thống quay trúng thưởng ngẫu nhiên (Tỉ lệ: {win_rate}%).\nHãy mở quà để nhận mã Key!", markup)
+            else:
+                tg_send(target_id, f"😢 <b>RẤT TIẾC!</b>\nAdmin vừa quay thưởng gói <b>{name}</b> cho bạn (Tỉ lệ: {win_rate}%), nhưng thần may mắn chưa mỉm cười. Lần này xịt rồi nhé!")
+    
+    with db_lock:
+        log_admin_action(db, f"Quay Gacha cho {len(set(target_ids))} Users (Gói: {pkg}, Tỉ lệ: {win_rate}%)")
+        save_db(db)
     return redirect('/')
 
 @app.route('/admin/delete_all', methods=['POST'])
@@ -1160,6 +1313,7 @@ def delete_all_keys():
     db = load_db()
     with db_lock:
         db["keys"] = {}
+        log_admin_action(db, "CẢNH BÁO: Đã xóa TOÀN BỘ Key trên Server")
         save_db(db)
     return redirect('/')
 
@@ -1174,6 +1328,7 @@ def extend_key():
     with db_lock:
         if key in db["keys"] and db["keys"][key].get('exp') not in ['permanent', 'pending']:
             db["keys"][key]['exp'] = (db["keys"][key]['exp'] if db["keys"][key]['exp'] > int(time.time() * 1000) else int(time.time() * 1000)) + dur * multipliers_web.get(t, 86400000)
+            log_admin_action(db, f"Gia hạn Key {key} thêm {dur} {t}")
             save_db(db)
     return redirect('/')
 
@@ -1204,6 +1359,7 @@ def add_balance():
         with db_lock:
             db["bot_users"][target_id]["balance"] = db["bot_users"][target_id].get("balance", 0) + amount
             db["bot_users"][target_id]["resets"] = db["bot_users"][target_id].get("resets", 0) + resets
+            log_admin_action(db, f"Cộng {amount}đ và {resets} reset cho User {target_id}")
             save_db(db)
             msg = f"🎉 <b>Admin vừa cập nhật tài khoản của bạn!</b>\n"
             if amount > 0: msg += f"💰 Nạp tiền: <b>+{amount}đ</b>\n"
@@ -1236,6 +1392,7 @@ def direct_approve():
             db["bot_users"][target_id]["approval_time"] = 0
             db["bot_users"][target_id]["banned_until"] = 0 
             db["bot_users"][target_id]["ban_reason"] = ""
+            log_admin_action(db, f"Phê duyệt đặc cách cho User {target_id}")
             save_db(db)
         tg_send(target_id, "🎉 <b>PHÊ DUYỆT ĐẶC CÁCH!</b>\nAdmin đã duyệt trực tiếp tài khoản của bạn. Vui lòng gõ /start để sử dụng Bot ngay lập tức.")
     return redirect('/')
@@ -1267,6 +1424,7 @@ def grant_admin():
             db["bot_users"][target_id]["is_admin"] = True
             db["bot_users"][target_id]["approved"] = True
             db["bot_users"][target_id]["admin_exp"] = exp
+            log_admin_action(db, f"Cấp quyền Admin cho User {target_id} ({dur} {t})")
             save_db(db)
         msg = "🎉 <b>CHÚC MỪNG!</b>\nBạn đã được cấp quyền Admin Server.\nHãy gõ lệnh /admin để vào Bảng Điều Khiển nhé."
         tg_send(target_id, msg)
@@ -1278,10 +1436,60 @@ def update_settings():
     db = load_db()
     try:
         max_u = int(request.form.get('max_users') or 500)
+        webhook_url = request.form.get('discord_webhook', '').strip()
+        maintenance = request.form.get('maintenance_mode') == 'on'
         with db_lock:
             db.setdefault("settings", {})["max_users"] = max_u
+            db["settings"]["discord_webhook"] = webhook_url
+            db["settings"]["maintenance_mode"] = maintenance
+            log_admin_action(db, f"Cập nhật Cài Đặt Hệ Thống (MaxU: {max_u}, Bảo Trì: {maintenance})")
             save_db(db)
     except: pass
+    return redirect('/')
+
+@app.route('/admin/backup_db', methods=['POST'])
+def backup_database():
+    if not session.get('admin_auth'): return redirect('/login')
+    db = load_db()
+    with db_lock: admin_uids = [u for u, i in db["bot_users"].items() if i.get("is_admin")]
+    
+    try:
+        with open(DB_FILE, 'rb') as f:
+            for admin_id in admin_uids:
+                requests.post(
+                    f"{TELEGRAM_API_URL}/sendDocument", 
+                    data={"chat_id": admin_id, "caption": f"☁️ <b>BACKUP DATABASE</b>\nThời gian: {time.strftime('%Y-%m-%d %H:%M:%S')}\n✅ Nhấn vào file để tải xuống an toàn.", "parse_mode": "HTML"}, 
+                    files={"document": ("database.json", f)},
+                    timeout=10
+                )
+        with db_lock:
+            log_admin_action(db, "Thực hiện Sao lưu File Database lên Telegram")
+            save_db(db)
+    except: pass
+    return redirect('/')
+
+@app.route('/admin/ban_ip', methods=['POST'])
+def web_ban_ip():
+    if not session.get('admin_auth'): return redirect('/login')
+    ip = request.form.get('ip', '').strip()
+    if ip:
+        db = load_db()
+        with db_lock:
+            if ip not in db.setdefault("banned_ips", []):
+                db["banned_ips"].append(ip)
+                log_admin_action(db, f"Đưa IP {ip} vào danh sách Đen (Blacklist)")
+                save_db(db)
+    return redirect('/')
+
+@app.route('/admin/unban_ip/<ip>')
+def unban_ip(ip):
+    if not session.get('admin_auth'): return redirect('/login')
+    db = load_db()
+    with db_lock:
+        if ip in db.setdefault("banned_ips", []):
+            db["banned_ips"].remove(ip)
+            log_admin_action(db, f"Gỡ IP {ip} khỏi danh sách Đen")
+            save_db(db)
     return redirect('/')
 
 @app.route('/admin/approve', methods=['POST'])
@@ -1297,11 +1505,13 @@ def approve_user():
             if not dur or dur == 0:
                 db["bot_users"][uid]["approved"] = True
                 db["bot_users"][uid]["approval_time"] = 0
+                log_admin_action(db, f"Phê duyệt trực tiếp User {uid}")
                 tg_send(uid, "🎉 <b>PHÊ DUYỆT THÀNH CÔNG!</b>\nAdmin đã phê duyệt tài khoản của bạn. Vui lòng gõ /start để sử dụng.")
             else:
                 dur_ms = dur * multipliers_web.get(t, 60000)
                 db["bot_users"][uid]["approval_time"] = int(time.time() * 1000) + dur_ms
                 db["bot_users"][uid]["approved"] = False
+                log_admin_action(db, f"Hẹn giờ duyệt User {uid} sau {dur} {t}")
                 tg_send(uid, f"⏳ <b>THÔNG BÁO TỪ ADMIN:</b>\nTài khoản của bạn đã được nhận diện. Bạn sẽ được phép truy cập Bot sau: <b>{dur} {t}</b> nữa.")
             save_db(db)
     return redirect('/')
@@ -1314,6 +1524,7 @@ def unapprove_user(uid):
         if uid in db.get("bot_users", {}):
             db["bot_users"][uid]["approved"] = False
             db["bot_users"][uid]["approval_time"] = 0
+            log_admin_action(db, f"Hủy phê duyệt User {uid}")
             save_db(db)
             tg_send(uid, "🚫 <b>Tài khoản của bạn đã bị Admin thu hồi quyền truy cập Bot.</b>")
     return redirect('/')
@@ -1333,6 +1544,7 @@ def update_shop():
             db["shop"][pkg]["price"] = price
             db["shop"][pkg]["stock"] = stock
             pkg_name = db["shop"][pkg].get("name", pkg)
+            log_admin_action(db, f"Cập nhật Shop {pkg_name}: Giá {price}, Tồn {stock}")
             save_db(db)
             admin_uids = [u for u, i in db["bot_users"].items() if i.get("is_admin")]
             
@@ -1376,6 +1588,7 @@ def web_ban_user():
             db["bot_users"][target_id]["ban_reason"] = raw_reason 
             for p in db["bot_users"][target_id].get("purchases", []):
                 if p["key"] in db.get("keys", {}): db["keys"][p["key"]]["status"] = "banned"
+            log_admin_action(db, f"Ban User {target_id} - Lý do: {raw_reason}")
             save_db(db)
             tg_send(target_id, f"🚫 <b>TÀI KHOẢN CỦA BẠN ĐÃ BỊ KHÓA!</b>\n📝 Lý do: {reason}\n<i>Toàn bộ kết nối Tool và Web OLM của bạn đã bị ngắt.</i>")
     return redirect('/')
@@ -1391,6 +1604,7 @@ def unban_user(uid):
             for p in db["bot_users"][uid].get("purchases", []):
                 if p["key"] in db.get("keys", {}) and db["keys"][p["key"]].get("status") == "banned":
                     db["keys"][p["key"]]["status"] = "active"
+            log_admin_action(db, f"Mở khóa User {uid}")
             save_db(db)
         tg_send(uid, f"✅ <b>Tài khoản của bạn đã được Admin mở khóa!</b>")
     return redirect('/')
@@ -1405,6 +1619,7 @@ def delete_user(uid):
             for p in purchases:
                 db.get("keys", {}).pop(p["key"], None)
             db["bot_users"].pop(uid, None)
+            log_admin_action(db, f"Xóa vĩnh viễn User {uid} và các Key liên quan")
             save_db(db)
     return redirect('/')
 
@@ -1417,6 +1632,7 @@ def revoke_user(uid):
             db["bot_users"][uid]["is_admin"] = False
             db["bot_users"][uid]["admin_key"] = ""
             db["bot_users"][uid]["admin_exp"] = 0
+            log_admin_action(db, f"Thu hồi quyền Admin của User {uid}")
             save_db(db)
     return redirect('/')
 
@@ -1436,6 +1652,7 @@ def key_actions(action, key):
                 db["keys"][key]['known_ips'] = []
                 db["keys"][key]["bound_olm"] = ""
             elif action == 'toggle_vip': db["keys"][key]['vip'] = not db["keys"][key].get('vip', False)
+            log_admin_action(db, f"Action [{action}] thực hiện trên Key {key}")
             save_db(db)
     return redirect('/')
 
@@ -1448,6 +1665,7 @@ def web_bind_olm():
     with db_lock:
         if key in db.get("keys", {}):
             db["keys"][key]["bound_olm"] = olm
+            log_admin_action(db, f"Ghim OLM {olm} cho Key {key}")
             save_db(db)
     return redirect('/')
 
@@ -1475,11 +1693,26 @@ def dashboard():
         users_items = list(db.get("bot_users", {}).items())
         logs_list = list(db.get("logs", []))
         security_alerts = list(db.get("security_alerts", []))
+        banned_ips = list(db.get("banned_ips", []))
+        revenue_logs = list(db.get("revenue_logs", []))
+        admin_logs = list(db.get("admin_logs", []))
 
     v1h = s.get("V_1H") or {"price": 7000, "stock": 999}
     v7d = s.get("V_7D") or {"price": 30000, "stock": 999}
     v30d = s.get("V_30D") or {"price": 85000, "stock": 999}
     v1y = s.get("V_1Y") or {"price": 200000, "stock": 999}
+
+    import datetime
+    chart_labels = []
+    chart_data = []
+    today = datetime.date.today()
+    for i in range(6, -1, -1):
+        day = today - datetime.timedelta(days=i)
+        chart_labels.append(day.strftime("%d/%m"))
+        day_start = datetime.datetime.combine(day, datetime.time.min).timestamp() * 1000
+        day_end = datetime.datetime.combine(day, datetime.time.max).timestamp() * 1000
+        daily_total = sum(item["amount"] for item in revenue_logs if day_start <= item["time"] <= day_end)
+        chart_data.append(daily_total)
 
     shop_status = f"""
     <ul class="list-group list-group-flush mb-2" style="font-size:12px;">
@@ -1492,16 +1725,34 @@ def dashboard():
 
     max_u = settings.get("max_users", 500)
     curr_u = len(users_items)
+    discord_webhook = escape(settings.get("discord_webhook", ""))
+    is_maintenance = settings.get("maintenance_mode", False)
+    
     anti_spam_html = f'''
     <div class="card p-3 mb-4" style="border-color: #00ffcc;">
-        <h4><i class="fas fa-shield-alt"></i> Chống Spam Bot</h4>
-        <p class="text-muted" style="font-size:11px; margin-bottom:5px;">Giới hạn số người dùng được ấn /start.</p>
+        <h4><i class="fas fa-shield-alt"></i> Cài Đặt Hệ Thống</h4>
+        
+        <form action="/admin/backup_db" method="POST" class="mb-3 border-bottom border-secondary pb-3">
+            <button type="submit" class="btn btn-outline-info w-100 fw-bold"><i class="fas fa-cloud-download-alt"></i> GỬI BACKUP QUA TELEGRAM</button>
+            <small class="text-muted d-block mt-1 text-center" style="font-size:11px;">Gửi file Database gốc về tin nhắn Telegram của Admin</small>
+        </form>
+
         <form action="/admin/update_settings" method="POST" class="row g-2">
+            <div class="col-12 d-flex justify-content-between align-items-center bg-dark p-2 rounded mb-2 border border-warning">
+                <span class="text-warning fw-bold"><i class="fas fa-tools"></i> Chế Độ Bảo Trì</span>
+                <div class="form-check form-switch m-0">
+                    <input class="form-check-input" type="checkbox" name="maintenance_mode" id="maintenanceMode" {'checked' if is_maintenance else ''}>
+                </div>
+            </div>
             <div class="col-12">
                 <label class="text-info" style="font-size:12px;">Đã dùng: <b>{curr_u} / {max_u}</b> tài khoản</label>
-                <input type="number" name="max_users" class="form-control bg-dark text-light border-info mt-1" value="{max_u}" placeholder="Số lượng tối đa">
+                <input type="number" name="max_users" class="form-control bg-dark text-light border-info mt-1" value="{max_u}" placeholder="Số lượng user tối đa">
             </div>
-            <div class="col-12"><button type="submit" class="btn btn-info w-100 fw-bold text-dark p-1">LƯU CÀI ĐẶT</button></div>
+            <div class="col-12 mt-2">
+                <label class="text-warning" style="font-size:12px;"><i class="fab fa-discord"></i> Discord Webhook (Thông báo User mới)</label>
+                <input type="text" name="discord_webhook" class="form-control bg-dark text-light border-warning mt-1" value="{discord_webhook}" placeholder="URL Webhook Discord">
+            </div>
+            <div class="col-12 mt-2"><button type="submit" class="btn btn-info w-100 fw-bold text-dark p-1">LƯU CÀI ĐẶT</button></div>
         </form>
     </div>
     '''
@@ -1516,35 +1767,68 @@ def dashboard():
 
     ai_radar_html = f'''
     <div class="card p-3 mb-4" style="border-color: #dc3545;">
-        <h4 class="text-danger"><i class="fas fa-user-secret"></i> AI Báo Cáo</h4>
+        <h4 class="text-danger"><i class="fas fa-user-secret"></i> AI Báo Cáo Bảo Mật</h4>
         <ul class="list-group list-group-flush mt-2">
             {alerts_html}
         </ul>
     </div>
     '''
 
-    # [UI TIER S] Form Tặng Quà & Gacha Random Key
+    blacklist_rows = ""
+    for ip in banned_ips:
+        blacklist_rows += f'<li class="list-group-item bg-dark text-light d-flex justify-content-between align-items-center" style="font-size:13px;">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger p-0 px-2">Xóa</a></li>'
+    if not blacklist_rows: blacklist_rows = '<li class="list-group-item bg-dark text-muted text-center" style="font-size:13px;">Chưa có IP bị chặn</li>'
+    
+    blacklist_html = f'''
+    <div class="card p-3 mb-4" style="border-color: #ff0000;">
+        <h4 class="text-danger"><i class="fas fa-ban"></i> Blacklist IP</h4>
+        <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-2">
+            <input type="text" name="ip" class="form-control form-control-sm bg-dark text-light" placeholder="Nhập IP..." required>
+            <button type="submit" class="btn btn-sm btn-danger">Chặn</button>
+        </form>
+        <ul class="list-group list-group-flush" style="max-height:150px; overflow-y:auto;">
+            {blacklist_rows}
+        </ul>
+    </div>
+    '''
+
+    admin_logs_html = ""
+    for alog in admin_logs[:10]:
+        l_time = time.strftime('%H:%M %d/%m', time.localtime(alog.get('time', 0)/1000))
+        admin_logs_html += f'<li class="list-group-item bg-dark text-light border-secondary p-2 mb-1 rounded" style="font-size:11px;"><span class="text-warning">[{l_time}]</span> {escape(alog.get("action", ""))}</li>'
+    if not admin_logs_html:
+        admin_logs_html = '<li class="list-group-item bg-dark text-muted text-center" style="font-size:12px;">Chưa có hoạt động</li>'
+    
+    admin_logs_panel = f'''
+    <div class="card p-3 mb-4" style="border-color: #f39c12;">
+        <h4 class="text-warning"><i class="fas fa-clipboard-list"></i> Nhật Ký Quản Trị</h4>
+        <ul class="list-group list-group-flush mt-2" style="max-height:200px; overflow-y:auto;">
+            {admin_logs_html}
+        </ul>
+    </div>
+    '''
+
     gacha_html = f'''
     <div class="card p-3 mb-4" style="border-color: #ff00ff;">
-        <h4 style="color:#ff00ff;"><i class="fas fa-gift"></i> Tặng & Quay Key</h4>
+        <h4 style="color:#ff00ff;"><i class="fas fa-gift"></i> Tặng & Quay Key (Hộp Quà)</h4>
         
         <form action="/admin/gift_key" method="POST" class="row g-2 mt-1">
             <p class="text-info m-0" style="font-size:13px; font-weight:bold;">1. Tặng Trực Tiếp</p>
-            <div class="col-12"><input type="text" name="target_user" class="form-control form-control-sm bg-dark text-light" placeholder="Nhập @username hoặc ID" required></div>
+            <div class="col-12"><textarea name="target_users" class="form-control form-control-sm bg-dark text-light" rows="2" placeholder="Nhập ID/@user (cách nhau dấu phẩy) hoặc nhập ALL để gửi toàn Server" required></textarea></div>
             <div class="col-4"><input type="number" name="duration" class="form-control form-control-sm bg-dark text-light" placeholder="Hạn" required></div>
             <div class="col-4"><select name="type" class="form-select form-select-sm bg-dark text-light"><option value="hour">Giờ</option><option value="day">Ngày</option><option value="month">Tháng</option><option value="permanent">V.Viễn</option></select></div>
             <div class="col-4"><input type="number" name="maxDevices" class="form-control form-control-sm bg-dark text-light" value="1" placeholder="Máy"></div>
             <div class="col-6 d-flex align-items-center">
                 <div class="form-check form-switch m-0"><input class="form-check-input" type="checkbox" name="is_vip" id="giftVip" checked><label class="form-check-label text-warning" style="font-size:12px;" for="giftVip">VIP</label></div>
             </div>
-            <div class="col-6"><button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#ff00ff; color:white;">TẶNG</button></div>
+            <div class="col-6"><button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#ff00ff; color:white;">TẶNG VÀO TÚI ĐỒ</button></div>
         </form>
         
         <hr class="border-secondary my-3">
         
         <form action="/admin/gacha_key" method="POST" class="row g-2">
             <p class="text-warning m-0" style="font-size:13px; font-weight:bold;">2. Vòng Quay May Mắn (%)</p>
-            <div class="col-12"><input type="text" name="target_user" class="form-control form-control-sm bg-dark text-light border-warning" placeholder="Nhập @username hoặc ID" required></div>
+            <div class="col-12"><textarea name="target_users" class="form-control form-control-sm bg-dark text-light border-warning" rows="2" placeholder="Nhập ID/@user (cách nhau dấu phẩy) hoặc nhập ALL để quay toàn Server" required></textarea></div>
             <div class="col-6"><select name="package" class="form-select form-select-sm bg-dark text-light"><option value="V_1H">Gói 1 Giờ</option><option value="V_7D">Gói 7 Ngày</option><option value="V_30D">Gói 30 Ngày</option><option value="V_1Y">Gói 1 Năm</option></select></div>
             <div class="col-6"><input type="number" name="win_rate" class="form-control form-control-sm bg-dark text-light border-warning" placeholder="Tỉ lệ trúng (1-100)" required min="1" max="100"></div>
             <div class="col-12"><button type="submit" class="btn btn-sm btn-warning w-100 fw-bold text-dark">QUAY THƯỞNG</button></div>
@@ -1653,9 +1937,16 @@ def dashboard():
     '''
 
     return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-3">
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-3">
     
+    <div class="card p-3 mb-4" style="border-color: #00ffcc;">
+        <h4><i class="fas fa-chart-line"></i> Doanh Thu 7 Ngày</h4>
+        <canvas id="revenueChart" style="height: 200px; width: 100%;"></canvas>
+    </div>
+    
+    {admin_logs_panel}
     {ai_radar_html}
+    {blacklist_html}
     {gacha_html}
     {anti_spam_html}
     
@@ -1710,6 +2001,22 @@ def dashboard():
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        const ctx = document.getElementById('revenueChart').getContext('2d');
+        const revenueChart = new Chart(ctx, {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(chart_labels)},
+                datasets: [{{
+                    label: 'Doanh thu (VNĐ)',
+                    data: {json.dumps(chart_data)},
+                    backgroundColor: 'rgba(0, 255, 204, 0.6)',
+                    borderColor: 'rgba(0, 255, 204, 1)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{ scales: {{ y: {{ beginAtZero: true, ticks: {{ color: '#ccc' }} }}, x: {{ ticks: {{ color: '#ccc' }} }} }}, plugins: {{ legend: {{ labels: {{ color: '#fff' }} }} }} }}
+        }});
+
         function copyText(text) {{ navigator.clipboard.writeText(text); alert("Đã copy: " + text); }} 
         function filterTable() {{ let s = document.getElementById('searchInput').value.toLowerCase(), f = document.getElementById('statusFilter').value; document.querySelectorAll('.key-row').forEach(r => {{ r.style.display = (r.innerText.toLowerCase().includes(s) && (f==='all' || r.dataset.status===f)) ? '' : 'none'; }}); }} 
         
@@ -1726,7 +2033,7 @@ def dashboard():
         function openBanModal(uid, name) {{ document.getElementById('banTargetInput').value = uid; document.getElementById('banTargetDisplay').innerText = name + ' (' + uid + ')'; new bootstrap.Modal(document.getElementById('banModal')).show(); }}
 
         let reloadTimer = setTimeout(() => location.reload(), 20000);
-        document.querySelectorAll('input, select').forEach(el => {{
+        document.querySelectorAll('input, select, textarea').forEach(el => {{
             el.addEventListener('focus', () => clearTimeout(reloadTimer));
             el.addEventListener('blur', () => reloadTimer = setTimeout(() => location.reload(), 20000));
         }});
