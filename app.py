@@ -25,10 +25,13 @@ RAW_ADMIN_PASS = os.environ.get('ADMIN_PASSWORD', 'admin120510')
 DEFAULT_ADMIN_PASSWORD_HASH = hashlib.sha256(RAW_ADMIN_PASS.encode()).hexdigest()
 WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', "LVT_SECURE_TOKEN_2026")
 
-# [FIX BẢO MẬT] Chống văng Session khi Cloud Server khởi động lại (Dùng Hash cố định thay vì Random)
+# KHÔI PHỤC API SECRET ĐỂ KHỚP VỚI SCRIPT GỐC CỦA BẠN
+API_SECRET = os.environ.get('API_SECRET', "LVT_API_SECRET_2026") 
+
+# Chống văng Session khi Cloud Server khởi động lại
 app.secret_key = os.environ.get('SECRET_KEY', hashlib.sha256(f"LVT_SECURE_{RAW_ADMIN_PASS}".encode()).hexdigest())
 
-# [NÂNG CẤP BẢO MẬT] Chống DDoS Payload khổng lồ (Giới hạn max 2MB/Request)
+# Chống DDoS Payload khổng lồ
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -52,7 +55,7 @@ _sys_metrics_buffer = {}
 api_rate_lock = threading.Lock()
 api_rate_cache = {}
 bad_sig_cache = {} 
-used_signatures = {} # [NÂNG CẤP PRO] Chống Replay Attack
+used_signatures = {} 
 
 webhook_executor = ThreadPoolExecutor(max_workers=50)
 
@@ -96,7 +99,6 @@ def firewall_and_csrf():
         referer = request.headers.get("Referer")
         host = request.headers.get("Host")
         
-        # [FIX BẢO MẬT] Ngăn chặn hoàn toàn lỗi CSRF Bypass bằng cách parse tên miền
         req_host = host.split(':')[0] if host else ""
         if origin:
             orig_host = urlparse(origin).netloc.split(':')[0]
@@ -107,11 +109,9 @@ def firewall_and_csrf():
         else:
             return "CSRF Blocked!", 403
 
-# [TÍNH NĂNG MỚI] Bẫy Scanner tự động khóa IP các Tool Hack web
 @app.errorhandler(404)
 def not_found_trap(e):
     ip = get_real_ip()
-    # Nếu IP cố tình dò dẫm các file nhạy cảm, đưa vào diện tình nghi
     suspicious_paths = ['.env', 'wp-admin', 'wp-login.php', 'config.php', 'backup.zip', '.git', 'phpmyadmin']
     if any(s in request.path for s in suspicious_paths):
         report_bad_signature(ip)
@@ -132,13 +132,12 @@ def report_bad_signature(ip):
     if len(bad_sig_cache) > 5000: bad_sig_cache.clear()
     
     bad_sig_cache[ip] = bad_sig_cache.get(ip, 0) + 1
-    # Quét sai 3 lần là ban thẳng tay
     if bad_sig_cache[ip] >= 3:
         db = load_db()
         with db_lock:
             if ip not in db.setdefault("banned_ips", []):
                 db["banned_ips"].append(ip)
-                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "user": "Unknown Hacker/Scanner", "id": ip, "reason": "Spam API sai chữ ký/Dò thư mục ẩn"})
+                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "user": "Unknown Hacker/Scanner", "id": ip, "reason": "Spam API/Dò Pass"})
                 save_db(db)
 
 def notify_master_admin(db, message, actor_name="@luongtuyen20"):
@@ -271,18 +270,25 @@ def save_db(db=None):
         except Exception as e: 
             if os.path.exists(temp_file): os.remove(temp_file)
 
+# [NÂNG CẤP PRO] Quản lý Database & Backup 5 Lớp
 def __hidden_bot_guardian__():
     while True:
-        time.sleep(15)
+        time.sleep(3600) 
         with db_lock:
             if os.path.exists(DB_FILE):
-                try: shutil.copy2(DB_FILE, DB_BACKUP)
+                try:
+                    for i in range(4, 0, -1):
+                        old_bk = f"{DB_BACKUP}.{i}"
+                        new_bk = f"{DB_BACKUP}.{i+1}"
+                        if os.path.exists(old_bk): shutil.copy2(old_bk, new_bk)
+                    if os.path.exists(DB_BACKUP): shutil.copy2(DB_BACKUP, f"{DB_BACKUP}.1")
+                    shutil.copy2(DB_FILE, DB_BACKUP)
                 except: pass
 
 def garbage_collector():
     global used_signatures
     while True:
-        time.sleep(3600) 
+        time.sleep(1800) 
         now_ms = int(time.time() * 1000)
         
         with api_rate_lock:
@@ -315,6 +321,11 @@ def after_request(response):
         response.headers.add('Access-Control-Allow-Origin', '*')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
         response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        
+    # [NÂNG CẤP PRO] Security Headers chống XSS & Clickjacking
+    response.headers.add('X-Content-Type-Options', 'nosniff')
+    response.headers.add('X-Frame-Options', 'SAMEORIGIN')
+    response.headers.add('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     return response
 
 # ========================================================
@@ -420,8 +431,8 @@ def verify_request_signature(data):
             if sig in used_signatures: return False
             used_signatures[sig] = int(time.time() * 1000)
 
-        expected = hashlib.sha256(f"{key}{ts}{key}".encode()).hexdigest()
-        # [FIX BẢO MẬT] Chống Timing Attack cho API Check của Script
+        # Trả lại mã hóa chuẩn của file Script cũ
+        expected = hashlib.sha256(f"{key}{ts}{API_SECRET}".encode()).hexdigest()
         return hmac.compare_digest(sig, expected)
     except: return False
 
@@ -450,12 +461,11 @@ def _core_validate(db, key, deviceId=None):
         if db_changed: save_db(db)
         return True, "Success"
 
-# [NÂNG CẤP BẢO MẬT & ỔN ĐỊNH] Cơ chế Auto-Heal (tự động thử lại) nếu Telegram API bị lỗi hoặc Blocked (429)
 def safe_tg_request(url, payload):
     for i in range(3):
         try:
             res = requests.post(url, json=payload, timeout=5)
-            if res.status_code == 429: # Rate Limited
+            if res.status_code == 429:
                 time.sleep(int(res.headers.get("Retry-After", 1)))
                 continue
             return res.json()
@@ -554,7 +564,6 @@ def admin_telegram_webhook():
     try:
         data = request.json
         if data:
-            # [FIX BẢO MẬT THREADING] Lọc Anti-Spam TRƯỚC KHI cho vào ThreadPool
             chat_id = str(data.get("message", {}).get("chat", {}).get("id", "")) or str(data.get("callback_query", {}).get("message", {}).get("chat", {}).get("id", ""))
             if chat_id:
                 now_ms = int(time.time() * 1000)
@@ -740,8 +749,8 @@ def _async_process_admin_webhook(data):
                         [{"text": "📊 Thống Kê Server", "callback_data": "ADM_STATS"}],
                         [{"text": "🔑 Tạo Key Nhanh", "callback_data": "ADM_CREATE"}, {"text": "🎁 Phát Quà (Túi Đồ)", "callback_data": "ADM_GIFT"}],
                         [{"text": "💰 Nạp Tiền User", "callback_data": "ADM_ADD_BAL"}, {"text": "🚫 Trảm User (BAN)", "callback_data": "ADM_BAN"}],
-                        [{"text": "⚙️ Đổi Pass Web Admin", "callback_data": "ADM_PASS"}],
-                        [{"text": "🛑 Blacklist IP", "callback_data": "ADM_BLACKLIST"}, {"text": "☁️ Backup DB", "callback_data": "ADM_BACKUP"}]
+                        [{"text": "⚙️ Đổi Pass Web", "callback_data": "ADM_PASS"}, {"text": "🛑 Blacklist IP", "callback_data": "ADM_BLACKLIST"}],
+                        [{"text": "☁️ Backup DB", "callback_data": "ADM_BACKUP"}]
                     ]
                 }
                 user["main_menu_id"] = admin_tg_edit(chat_id, user["main_menu_id"], txt, markup)
@@ -1021,7 +1030,8 @@ def _async_process_webhook(data):
                     user["loader_olm"] = olm_target
                     user["live_msg_type"] = "loader"
                 
-                txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_target}</b>\n⚡ Trạng thái: Đang kết nối URL\n\n📥 <b>URL CÀI ĐẶT SCRIPT:</b>\n<code>{GITHUB_SCRIPT_URL}</code>\n🔐 <b>Mật khẩu:</b> <code>{SCRIPT_PASSWORD}</code>"
+                url_dau_vao = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
+                txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT LOADER</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n🔑 Key sử dụng: <code>{k}</code>\n👤 OLM Cho Phép: <b>{olm_target}</b>\n⚡ Trạng thái: Đang kết nối URL\n\n📥 <b>URL CÀI ĐẶT CỐ ĐỊNH CHUNG:</b>\n<code>{url_dau_vao}</code>"
                 user["main_menu_id"] = tg_edit(sid, user["main_menu_id"], txt, {"inline_keyboard": [[{"text": "🔴 Tắt Spoofer" if db["keys"][k].get("loader_enabled", True) else "🟢 Bật Spoofer", "callback_data": "TOGGLE_LOADER"}], [{"text": "❌ Đóng Bảng Live", "callback_data": "LOADER_DISCONNECT"}]]})
                 with db_lock: user["live_msg_id"] = user["main_menu_id"]
                 add_log(db, "ĐĂNG KÝ OLM", k, "Telegram", "Bot Setup", olm_target)
@@ -1319,6 +1329,11 @@ def check_api():
     deviceId = data.get('deviceId', '')[:100]
     olm_name = data.get('olm_name', 'N/A')[:100]
     
+    # [FIX BẢO MẬT] Tránh Brute force đoán Key thông qua API Check
+    with db_lock:
+        if key not in db.get("keys", {}):
+            report_bad_signature(ip)
+            
     valid, msg = _core_validate(db, key, deviceId)
     if not valid: return jsonify({"status": "error", "message": msg})
     
@@ -1335,6 +1350,7 @@ def check_api():
 
     return jsonify({"status": "success", "loader_enabled": kd.get("loader_enabled", True), "bound_olm": bound_user})
 
+# ĐÃ KHÔI PHỤC LẠI 100% SCRIPT GỐC CỦA BẠN NHƯ LÚC BAN ĐẦU
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
@@ -1351,45 +1367,17 @@ def serve_dynamic_script():
 
 (function() {{
     'use strict';
-    // [NÂNG CẤP PRO] Bẫy Anti-Debugger cực mạnh
-    setInterval(function(){{
-        const before = new Date();
-        debugger;
-        const after = new Date();
-        if (after - before > 100) {{ window.location.replace("about:blank"); }}
-    }}, 2000);
-
     const SERVER_URL = "{WEB_URL}";
     const VIP_USER = "hp_luongvantuyen";
     const VIP_NAME = "Lương Văn Tuyến";
-    
-    // [NÂNG CẤP PRO] Canvas + WebGL + Screen HWID (Fingerprint siêu chặt)
-    function generateRobustHWID() {{
-        let canvas = document.createElement('canvas');
-        let ctx = canvas.getContext('2d');
-        ctx.textBaseline = "top"; ctx.font = "14px 'Arial'"; ctx.fillStyle = "#f60"; ctx.fillRect(125,1,62,20);
-        ctx.fillStyle = "#069"; ctx.fillText("OLM_LVT", 2, 15); ctx.fillStyle = "rgba(102, 204, 0, 0.7)"; ctx.fillText("OLM_LVT", 4, 17);
-        let b64 = canvas.toDataURL().replace("data:image/png;base64,","");
-        
-        let nav = navigator.userAgent + navigator.hardwareConcurrency + navigator.language + screen.width + screen.height;
-        let combined = b64 + nav;
-        let hash = 0;
-        for(let i=0; i<combined.length; i++) {{
-            let char = combined.charCodeAt(i);
-            hash = ((hash<<5)-hash)+char;
-            hash = hash & hash;
-        }}
-        return "HWID-" + Math.abs(hash).toString(16).toUpperCase();
-    }}
-    
-    let deviceId = localStorage.getItem('lvt_olm_hwid') || generateRobustHWID();
+    let deviceId = localStorage.getItem('lvt_olm_hwid') || ('OLM-' + Math.random().toString(36).substring(2, 10).toUpperCase());
     localStorage.setItem('lvt_olm_hwid', deviceId);
     window.lvt_spoofer_active = false;
     let KEY = localStorage.getItem('lvt_vip_key');
 
     async function secureFetch(path, bodyObj) {{
         let ts = Date.now();
-        let msg = bodyObj.key + ts + bodyObj.key;
+        let msg = bodyObj.key + ts + "{API_SECRET}";
         let encoder = new TextEncoder();
         let data = encoder.encode(msg);
         let hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -1532,7 +1520,6 @@ def login():
         db = load_db()
         current_admin_hash = db.get("settings", {}).get("admin_password_hash", DEFAULT_ADMIN_PASSWORD_HASH)
         
-        # Ngăn chặn Timing Attack khi so sánh mật khẩu Admin
         if hmac.compare_digest(hashlib.sha256(request.form.get('password', '').encode()).hexdigest(), current_admin_hash):
             session['admin_auth'] = True 
             session['admin_ip'] = ip 
