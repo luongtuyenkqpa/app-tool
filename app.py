@@ -36,7 +36,6 @@ app.config['SESSION_COOKIE_SECURE'] = True
 DB_FILE = './database.json'
 DB_BACKUP = './database.backup.json'
 
-GITHUB_SCRIPT_URL = "https://gist.githubusercontent.com/luongtuyenkqpa/3d7cdb9e8607afc85a81a52041acd50c/raw/299ccb32bb1bcbc3a6e2538723844cca192ab5fa/olm-god-mode.user.js"
 SCRIPT_PASSWORD = "OLM_VIP_786B-XQCH-BYEF-SYUS"
 
 db_lock = threading.RLock()
@@ -199,14 +198,12 @@ def load_db():
                 data.setdefault("keys", {})
                 data.setdefault("logs", [])
                 data.setdefault("banned_ips", [])
-                data.setdefault("revenue_logs", [])
                 data.setdefault("admin_logs", [])
                 data.setdefault("active_scripts", {})
                 data.setdefault("security_alerts", []) 
                 
                 settings_data = data.setdefault("settings", {})
                 settings_data.setdefault("max_users", 500)
-                settings_data.setdefault("discord_webhook", "")
                 settings_data.setdefault("maintenance_mode", False)
                 settings_data.setdefault("admin_password_hash", DEFAULT_ADMIN_PASSWORD_HASH)
                 
@@ -334,12 +331,6 @@ WEB_URL = "https://app-tool-trlp.onrender.com"
 # ========================================================
 # UTILS CHUNG & FACEBOOK API
 # ========================================================
-def send_discord_webhook(url, title, desc, color=5814783):
-    if not url: return
-    data = {"embeds": [{"title": title, "description": desc, "color": color}]}
-    try: requests.post(url, json=data, timeout=3)
-    except: pass
-
 def is_vietnamese_or_english_letter(char):
     if 'a' <= char.lower() <= 'z': return True
     vi_chars = "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ"
@@ -357,14 +348,24 @@ def has_weird_name(name):
 multipliers_web = {'sec': 1000, 'min': 60000, 'hour': 3600000, 'day': 86400000, 'month': 2592000000, 'year': 31536000000}
 
 # === CÁC HÀM GỬI TIN NHẮN MESSENGER ===
+def fb_send_action(recipient_id, action="typing_on"):
+    """Hiển thị bong bóng 'Đang gõ...' chuyên nghiệp"""
+    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={FB_PAGE_TOKEN}"
+    payload = {"recipient": {"id": str(recipient_id)}, "sender_action": action}
+    try: requests.post(url, json=payload, timeout=3)
+    except: pass
+
 def fb_send_api(recipient_id, message_data):
+    """Gửi tin nhắn có cơ chế Retry để tránh mất kết nối API FB"""
     url = f"https://graph.facebook.com/v18.0/me/messages?access_token={FB_PAGE_TOKEN}"
     payload = {"recipient": {"id": str(recipient_id)}, "message": message_data}
-    try: 
-        res = requests.post(url, json=payload, timeout=5)
-        if res.status_code != 200:
-            print(f"FB API Error: {res.text}")
-    except Exception as e: print(f"Lỗi FB API: {e}")
+    for _ in range(3):
+        try: 
+            res = requests.post(url, json=payload, timeout=5)
+            if res.status_code == 200: return
+            time.sleep(1)
+        except Exception as e: 
+            time.sleep(1)
 
 def fb_get_user_name(psid):
     try:
@@ -376,12 +377,10 @@ def fb_send_text(recipient_id, text):
     fb_send_api(recipient_id, {"text": text})
 
 def fb_send_quick_replies(recipient_id, text, buttons):
-    # FB API giới hạn tối đa 13 Quick Replies
     qr = [{"content_type": "text", "title": b["title"][:20], "payload": b["payload"]} for b in buttons[:13]]
     fb_send_api(recipient_id, {"text": text, "quick_replies": qr})
 
 def fb_send_button_template(recipient_id, text, buttons):
-    # FB API GIỚI HẠN TỐI ĐA 3 NÚT CHO BUTTON TEMPLATE
     if not buttons: return fb_send_text(recipient_id, text)
     if len(buttons) > 3: return fb_send_quick_replies(recipient_id, text, buttons)
     
@@ -710,7 +709,6 @@ def _async_process_admin_webhook(data):
                                 nk = f"{pfx}-{secrets.token_hex(4).upper()}"
                                 gift_id = secrets.token_hex(6)
                                 db["keys"][nk] = {"exp": "pending", "maxDevices": 1, "devices": [], "known_ips": {}, "status": "active", "vip": True, "target": "olm", "bound_olm": "", "loader_enabled": True, "durationMs": dur_ms}
-                                db["bot_users"][t_id]["purchases"].insert(0, {"key": nk, "type": "🎁 Quà Tặng Admin", "time": now_ms})
                                 db["bot_users"][t_id].setdefault("gifts", {})[gift_id] = {"key": nk, "name": f"Key VIP {days} Ngày"}
                                 save_db(db)
                                 
@@ -744,11 +742,9 @@ def _async_process_admin_webhook(data):
                 with db_lock:
                     total_u = len(db.get("bot_users", {}))
                     total_k = len(db.get("keys", {}))
-                    today_start = int(datetime.datetime.combine(datetime.date.today(), datetime.time.min).timestamp() * 1000)
-                    rev_today = sum(item["amount"] for item in db.get("revenue_logs", []) if item["time"] >= today_start)
                     banned_ips_c = len(db.get("banned_ips", []))
                     
-                txt = f"📊 <b>THỐNG KÊ MÁY CHỦ (LIVE)</b>\n➖➖➖➖➖➖➖➖\n👥 Tổng User: <b>{total_u}</b>\n🔑 Tổng Key: <b>{total_k}</b>\n💸 Doanh thu nay: <b>{rev_today:,}đ</b>\n🛡️ IP bị Firewall chặn: <b>{banned_ips_c}</b> IP"
+                txt = f"📊 <b>THỐNG KÊ MÁY CHỦ (LIVE)</b>\n➖➖➖➖➖➖➖➖\n👥 Tổng User: <b>{total_u}</b>\n🔑 Tổng Key: <b>{total_k}</b>\n🛡️ IP bị Firewall chặn: <b>{banned_ips_c}</b> IP"
                 markup = {"inline_keyboard": [[{"text": "🔙 Quay Lại", "callback_data": "ADM_MAIN"}]]}
                 user["main_menu_id"] = admin_tg_edit(chat_id, user["main_menu_id"], txt, markup)
                 
@@ -841,6 +837,10 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
         db = load_db()
         msg_text = msg_text.strip()
         cmd_lower = msg_text.lower()
+
+        # Hiệu ứng bong bóng chat chuyên nghiệp
+        if msg_text or payload:
+            fb_send_action(sender_id, "typing_on")
         
         if db.get("settings", {}).get("maintenance_mode", False):
             is_admin = False
@@ -861,10 +861,13 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
         safe_name = fb_get_user_name(sender_id)
         
         ai_banned_reason = ""
+        is_spam = False
         if has_weird_name(safe_name):
             trigger_auto_ban = True
+            is_spam = True
             ai_banned_reason = "AI phát hiện Nick chứa ký tự lạ/nick rác"
         elif trigger_auto_ban:
+            is_spam = True
             ai_banned_reason = "Hệ thống ngầm phát hiện Tool Spam lệnh"
 
         if trigger_auto_ban:
@@ -906,14 +909,12 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
 
                 db["bot_users"][sender_id] = {"name": safe_name, "username": "", "balance": 0, "resets": 3, "state": "none", "is_admin": False, "purchases": [], "gifts": {}, "notices": [], "loader_active": False, "loader_key": "", "loader_olm": "", "main_menu_id": None, "live_msg_id": None, "live_msg_type": None, "admin_exp": 0, "admin_key": "", "banned_until": 0, "ban_reason": "", "approved": False, "approval_time": 0, "temp_key": "", "referred_by": ref_code, "admin_state": "none"}
                 admin_items = list(db["bot_users"].items())
-                webhook_url = db.get("settings", {}).get("discord_webhook", "")
                 save_db(db)
                 
-            webhook_executor.submit(send_discord_webhook, webhook_url, "Khách FB Mới 🎉", f"Tên: {safe_name}\nID: {sender_id}")
             for uid, uinfo in admin_items:
                 if uinfo.get("is_admin"): admin_tg_send(uid, f"🚨 <b>CÓ KHÁCH FB MỚI (CHỜ DUYỆT)!</b>\n👤 Tên: {escape(safe_name)}\n🆔 ID: <code>{sender_id}</code>")
             
-            fb_send_text(sender_id, "👋 <b>CHÀO MỪNG BẠN ĐẾN VỚI HỆ THỐNG AUTO OLM!</b>\n\nTài khoản của bạn đang chờ Admin duyệt. Hãy gõ lệnh /start để mở Menu nhé!")
+            fb_send_text(sender_id, f"👋 Chào mừng {safe_name} đến với auto-bot admin : @luongtuyen20!\n\nTài khoản của bạn đang chờ Admin duyệt. Hãy gõ lệnh /start để mở Menu nhé!")
             return
 
         with db_lock: db["bot_users"][sender_id]["name"] = safe_name
@@ -984,8 +985,10 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
                     user["loader_key"] = k
                     user["loader_olm"] = olm_target
                     save_db(db)
-                txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT</b>\n🔑 Key: {k}\n👤 OLM: {olm_target}\n\n📥 Link Cài Script:\n{GITHUB_SCRIPT_URL}\n🔐 Pass: {SCRIPT_PASSWORD}"
-                fb_send_quick_replies(sender_id, txt, [
+                
+                vmonkey_url = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
+                txt = f"🟢 <b>BẢNG ĐIỀU KHIỂN SCRIPT VIOLENTMONKEY</b>\n🔑 Key: {k}\n👤 OLM: {olm_target}\n\n📥 Link Cài Script:\n{vmonkey_url}\n🔐 Pass: {SCRIPT_PASSWORD}"
+                fb_send_quick_replies(sender_id, txt[:640], [
                     {"title": "🔴 Tắt Spoofer" if db["keys"][k].get("loader_enabled", True) else "🟢 Bật Spoofer", "payload": "TOGGLE_LOADER"},
                     {"title": "🏠 Về Trang Chủ", "payload": "MENU_MAIN"}
                 ])
@@ -1011,7 +1014,6 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
                             db["bot_users"][sender_id]["balance"] -= total_cost
                             db["shop"].setdefault(pkg, {"stock": stock})
                             db["shop"][pkg]["stock"] -= qty
-                            db.setdefault("revenue_logs", []).append({"time": now_ms, "amount": total_cost})
                             
                             referrer = db["bot_users"][sender_id].get("referred_by")
                             if referrer and referrer in db["bot_users"]:
@@ -1036,13 +1038,14 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
                                     break
 
                             k_str = "\n".join([f"🔑 {k}" for k in gen_keys])
-                            msg_success = f"🎊 MUA THÀNH CÔNG!\n{k_str}\n\nTB hỗ trợ: 1 Máy\nGói: {name}"
-                            fb_send_quick_replies(sender_id, msg_success, [{"title": "🔗 Cài Spoofer", "payload": "LOADER_MENU"}, {"title": "🏠 Menu", "payload": "MENU_MAIN"}])
+                            msg_success = f"🎊 CHÚC MỪNG BẠN ĐÃ MUA KEY THÀNH CÔNG! 🎊\n➖➖➖➖➖➖➖➖➖➖\n{k_str}\n\n📱 Số thiết bị hỗ trợ: 1 Máy\n⏳ Thời gian sử dụng: {name}\n💎 Loại Key: VIP Cao Cấp\n\n(Key sẽ tự động kích hoạt trừ giờ khi bạn kết nối lần đầu)"
+                            fb_send_quick_replies(sender_id, msg_success[:640], [{"title": "🔗 Cài Script", "payload": "LOADER_MENU"}, {"title": "🏠 Menu", "payload": "MENU_MAIN"}])
                             for gk in gen_keys: add_log(db, "MUA KEY (FB)", gk, "Messenger", f"Khách: {safe_name}", "N/A")
                         else: 
                             fb_send_quick_replies(sender_id, "❌ Số dư không đủ! Vui lòng nạp thêm tiền.", [{"title": "🔙 Mua Lại", "payload": "BUY_VIP"}, {"title": "🏠 Menu", "payload": "MENU_MAIN"}])
                 else: 
-                    fb_send_quick_replies(sender_id, "❌ Vui lòng nhập số lượng hợp lệ (1, 2, 3...)!", [{"title": "🔙 Hủy Mua", "payload": "BUY_VIP"}])
+                    with db_lock: user["state"] = "none"
+                    fb_send_quick_replies(sender_id, "❌ Lệnh đã bị hủy do nhập sai định dạng số lượng!", [{"title": "🔙 Mua Lại", "payload": "BUY_VIP"}])
             
             elif user_state == "wait_reset_key":
                 with db_lock:
@@ -1105,10 +1108,10 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
                 with db_lock: 
                     bal = user.get('balance', 0)
                     rst = user.get('resets', 0)
-                txt = f"🎉 Chào mừng {safe_name} đến với AutoKey\n\n💳 THÔNG TIN:\n🆔 ID FB: {sender_id}\n💰 Số dư: {bal:,}đ\n🔄 Reset Key: {rst}/3\n\n🔗 Link giới thiệu:\nhttps://m.me/your_page_id?ref={sender_id}\n\n👇 Chọn dịch vụ:"
+                txt = f"🎉 Chào mừng {safe_name} đến với auto-bot admin : @luongtuyen20\n➖➖➖➖➖➖➖➖➖➖\n\n💳 THÔNG TIN TÀI KHOẢN:\n🆔 ID FB: {sender_id}\n💰 Số dư: {bal:,}đ\n🔄 Lượt Reset: {rst}/3\n\n🔗 Link giới thiệu:\nhttps://m.me/your_page_id?ref={sender_id}\n\n👇 Vui lòng chọn dịch vụ bên dưới:"
                 qr_buttons = [
                     {"title": "🛒 Mua Key Mới", "payload": "BUY"},
-                    {"title": "🔗 Quản Lý Script", "payload": "LOADER_MENU"},
+                    {"title": "🔗 Cài Script", "payload": "LOADER_MENU"},
                     {"title": "🔄 Reset Thiết Bị", "payload": "RESET"},
                     {"title": "🩺 Chẩn Đoán Lỗi", "payload": "DIAGNOSE"}
                 ]
@@ -1173,24 +1176,25 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
                             elif b_olm and user.get("loader_olm") and b_olm.lower() != user.get("loader_olm").lower(): txt += f"🔴 Bệnh: Sai tên OLM. Key khóa với {b_olm}."
                             elif not kd.get("loader_enabled"): txt += "🔴 Bệnh: Spoofer bị tắt."
                             else: txt += "🟢 Khỏe mạnh: Key hoạt động bình thường trên Server."
-                fb_send_button_template(sender_id, txt, [{"title": "🔙 Menu", "payload": "MENU_MAIN"}])
+                fb_send_button_template(sender_id, txt[:640], [{"title": "🔙 Menu", "payload": "MENU_MAIN"}])
 
             elif payload == "LOADER_MENU":
                 with db_lock: user["state"] = "none"
-                fb_send_quick_replies(sender_id, "🔗 QUẢN LÝ SCRIPT OLM\n\nChọn chức năng:", [
-                    {"title": "🔑 Nhập Key", "payload": "LOADER_ENTER_KEY"},
-                    {"title": "🚀 Lấy Script OLM", "payload": "LOADER_FILE_OLM"},
+                fb_send_quick_replies(sender_id, "🔗 QUẢN LÝ SCRIPT VIOLENTMONKEY\n\nChọn chức năng:", [
+                    {"title": "🔑 Nhập Key Spoofer", "payload": "LOADER_ENTER_KEY"},
+                    {"title": "🚀 Script Violentmonkey", "payload": "LOADER_FILE_OLM"},
                     {"title": "🏠 Trang Chủ", "payload": "MENU_MAIN"}
                 ])
 
             elif payload == "LOADER_ENTER_KEY":
                 with db_lock: user["state"] = "wait_loader_key"
                 save_db(db)
-                fb_send_quick_replies(sender_id, "🔗 TẠO KẾT NỐI SCRIPT OLM\n\n🔑 Vui lòng dán Mã Key của bạn vào đây:", [{"title": "🔙 Hủy", "payload": "LOADER_MENU"}])
+                fb_send_quick_replies(sender_id, "🔗 TẠO KẾT NỐI SCRIPT VIOLENTMONKEY\n\n🔑 Vui lòng dán Mã Key của bạn vào đây:", [{"title": "🔙 Hủy", "payload": "LOADER_MENU"}])
 
             elif payload == "LOADER_FILE_OLM":
-                txt = f"📂 CÀI ĐẶT SCRIPT OLM MODE\n\n📥 Link Script OLM (Cài vào Violentmonkey):\n{GITHUB_SCRIPT_URL}\n\n🔐 Mật khẩu giải nén: {SCRIPT_PASSWORD}"
-                fb_send_button_template(sender_id, txt, [{"title": "🔙 Quay Lại", "payload": "LOADER_MENU"}])
+                vmonkey_url = f"{WEB_URL}/api/script/lvt_vip_loader.user.js"
+                txt = f"📂 CÀI ĐẶT SCRIPT VIOLENTMONKEY\n➖➖➖➖➖➖➖➖➖➖\n\n📥 Link Script (Cài đặt qua trình duyệt):\n{vmonkey_url}\n\n🔐 Mật khẩu giải nén/kích hoạt: {SCRIPT_PASSWORD}"
+                fb_send_button_template(sender_id, txt[:640], [{"title": "🔙 Quay Lại", "payload": "LOADER_MENU"}])
 
             elif payload == "TOGGLE_LOADER":
                 with db_lock: k = user.get("loader_key")
@@ -1208,7 +1212,7 @@ def _async_process_fb_webhook(sender_id, msg_text, payload):
                     save_db(db)
                     fb_send_quick_replies(sender_id, "📝 Gửi chính xác Mã Key cần Reset thiết bị vào đây:", [{"title": "🔙 Hủy", "payload": "MENU_MAIN"}])
     except Exception as e:
-        print(f"Lỗi Logic FB Bot: {e}") # Đã log lỗi ra terminal thay vì pass im lặng để bot không bị đơ ẩn
+        print(f"Lỗi Logic FB Bot: {e}") 
 
 # ========================================================
 # API TÀNG HÌNH (SPOOFER)
@@ -1777,7 +1781,7 @@ def grant_admin():
             save_db(db)
         
         is_fb = not target_id.isdigit()
-        msg = f"🎉 <b>CHÚC MỪNG! BẠN ĐÃ ĐƯỢC CẤP QUYỀN ADMIN.</b>\n⏳ Thời hạn: {dur} {t}\n\n👉 Bạn đã có thể dùng các lệnh Quản trị hệ thống."
+        msg = f"🎉 <b>CHÚC MỪNG! BẠN ĐĐÃ ĐƯỢC CẤP QUYỀN ADMIN.</b>\n⏳ Thời hạn: {dur} {t}\n\n👉 Bạn đã có thể dùng các lệnh Quản trị hệ thống."
         if is_fb: fb_send_text(target_id, msg)
         else:
             msg += f"\n🔗 Hãy truy cập Bot Admin: @{ADMIN_BOT_USERNAME}"
@@ -1790,11 +1794,9 @@ def update_settings():
     db = load_db()
     try:
         max_u = int(request.form.get('max_users') or 500)
-        webhook_url = request.form.get('discord_webhook', '').strip()
         maintenance = request.form.get('maintenance_mode') == 'on'
         with db_lock:
             db.setdefault("settings", {})["max_users"] = max_u
-            db["settings"]["discord_webhook"] = webhook_url
             db["settings"]["maintenance_mode"] = maintenance
             log_admin_action(db, f"Cập nhật Cài Đặt Hệ Thống (MaxU: {max_u}, Bảo Trì: {maintenance})", "@luongtuyen20")
             save_db(db)
@@ -2064,7 +2066,7 @@ def online_ips():
         safe_ip = escape(str(info.get('ip', '')))
         safe_name = escape(str(info.get('olm_name', '')))
         safe_key = escape(str(info.get('key', '')))
-        html_rows += f"<tr><td>{safe_ip}</td><td class='text-warning'>{safe_name}</td><td class='text-info'>{safe_key}</td><td>OLM MODE (Github)</td><td>{onl_time}</td><td><a href='/admin/action/ban/{safe_key}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
+        html_rows += f"<tr><td>{safe_ip}</td><td class='text-warning'>{safe_name}</td><td class='text-info'>{safe_key}</td><td>Violentmonkey</td><td>{onl_time}</td><td><a href='/admin/action/ban/{safe_key}' class='btn btn-sm btn-danger'>Khóa Key</a></td></tr>"
     return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Giám Sát Online - LVT</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>body{{background:#0a0a12;color:white;}}</style></head><body class="p-4"><div class="container"><div class="d-flex justify-content-between mb-4"><h2>📡 RADAR GIÁM SÁT OLM ONLINE</h2><a href="/" class="btn btn-secondary">Quay lại Dashboard</a></div><div class="card bg-dark p-3"><table class="table table-dark table-hover"><thead><tr><th>IP Máy</th><th>Tên OLM</th><th>Key Đang Dùng</th><th>Loại Kết Nối</th><th>Tín Hiệu Cuối</th><th>Thao Tác</th></tr></thead><tbody>{html_rows if html_rows else "<tr><td colspan='6' class='text-center text-muted'>Hiện không có ai đang làm OLM.</td></tr>"}</tbody></table></div></div><script>setInterval(() => location.reload(), 10000);</script></body></html>'''
 
 @app.route('/')
@@ -2080,25 +2082,12 @@ def dashboard():
         logs_list = list(db.get("logs", []))
         security_alerts = list(db.get("security_alerts", []))
         banned_ips = list(db.get("banned_ips", []))
-        revenue_logs = list(db.get("revenue_logs", []))
         admin_logs = list(db.get("admin_logs", []))
 
     v1h = s.get("V_1H") or {"price": 7000, "stock": 999}
     v7d = s.get("V_7D") or {"price": 30000, "stock": 999}
     v30d = s.get("V_30D") or {"price": 85000, "stock": 999}
     v1y = s.get("V_1Y") or {"price": 200000, "stock": 999}
-
-    import datetime
-    chart_labels = []
-    chart_data = []
-    today = datetime.date.today()
-    for i in range(6, -1, -1):
-        day = today - datetime.timedelta(days=i)
-        chart_labels.append(day.strftime("%d/%m"))
-        day_start = datetime.datetime.combine(day, datetime.time.min).timestamp() * 1000
-        day_end = datetime.datetime.combine(day, datetime.time.max).timestamp() * 1000
-        daily_total = sum(item["amount"] for item in revenue_logs if day_start <= item["time"] <= day_end)
-        chart_data.append(daily_total)
 
     shop_status = f"""
     <ul class="list-group list-group-flush mb-2" style="font-size:12px;">
@@ -2111,7 +2100,6 @@ def dashboard():
 
     max_u = settings.get("max_users", 500)
     curr_u = len(users_items)
-    discord_webhook = escape(settings.get("discord_webhook", ""))
     is_maintenance = settings.get("maintenance_mode", False)
     
     anti_spam_html = f'''
@@ -2133,10 +2121,6 @@ def dashboard():
             <div class="col-12">
                 <label class="text-info" style="font-size:12px;">Đã dùng: <b>{curr_u} / {max_u}</b> tài khoản</label>
                 <input type="number" name="max_users" class="form-control bg-dark text-light border-info mt-1" value="{max_u}" placeholder="Số lượng user tối đa">
-            </div>
-            <div class="col-12 mt-2">
-                <label class="text-warning" style="font-size:12px;"><i class="fab fa-discord"></i> Discord Webhook (Thông báo User mới)</label>
-                <input type="text" name="discord_webhook" class="form-control bg-dark text-light border-warning mt-1" value="{discord_webhook}" placeholder="URL Webhook Discord">
             </div>
             <div class="col-12 mt-2"><button type="submit" class="btn btn-info w-100 fw-bold text-dark p-1">LƯU CÀI ĐẶT</button></div>
         </form>
@@ -2323,12 +2307,7 @@ def dashboard():
     '''
 
     return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-3">
-    
-    <div class="card p-3 mb-4" style="border-color: #00ffcc;">
-        <h4><i class="fas fa-chart-line"></i> Doanh Thu 7 Ngày</h4>
-        <canvas id="revenueChart" style="height: 200px; width: 100%;"></canvas>
-    </div>
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT PRO - Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>:root {{ --bg-main: #0a0a12; --bg-card: #151525; --neon-cyan: #00ffcc; --neon-purple: #bd00ff; }} body {{ background: var(--bg-main); color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; }} .card {{ background: var(--bg-card); border: 1px solid #2a2a40; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }} h1, h4 {{ color: var(--neon-cyan); font-weight: 800; }} .btn-primary {{ background: linear-gradient(45deg, var(--neon-purple), #7a00ff); border: none; font-weight: bold; }} .table-container {{ max-height: 500px; overflow-y: auto; }} tbody tr:hover {{ background-color: rgba(0, 255, 204, 0.05) !important; }} #toastBox {{ position: fixed; bottom: 20px; right: 20px; z-index: 9999; }}</style></head><body class="p-2 p-md-4"><div id="toastBox"></div><div class="container-fluid"><div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom border-secondary"><h1 class="m-0">⚡ LVT ADMIN</h1><div><a href="/admin/online" class="btn btn-success me-2 fw-bold">📡 Giám Sát IP Online</a><a href="/logout" class="btn btn-outline-danger">Đăng xuất</a></div></div><div class="row g-4"><div class="col-lg-3">
     
     {admin_logs_panel}
     {ai_radar_html}
@@ -2387,22 +2366,6 @@ def dashboard():
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const ctx = document.getElementById('revenueChart').getContext('2d');
-        const revenueChart = new Chart(ctx, {{
-            type: 'bar',
-            data: {{
-                labels: {json.dumps(chart_labels)},
-                datasets: [{{
-                    label: 'Doanh thu (VNĐ)',
-                    data: {json.dumps(chart_data)},
-                    backgroundColor: 'rgba(0, 255, 204, 0.6)',
-                    borderColor: 'rgba(0, 255, 204, 1)',
-                    borderWidth: 1
-                }}]
-            }},
-            options: {{ scales: {{ y: {{ beginAtZero: true, ticks: {{ color: '#ccc' }} }}, x: {{ ticks: {{ color: '#ccc' }} }} }}, plugins: {{ legend: {{ labels: {{ color: '#fff' }} }} }} }}
-        }});
-
         function copyText(text) {{ navigator.clipboard.writeText(text); alert("Đã copy: " + text); }} 
         function filterTable() {{ let s = document.getElementById('searchInput').value.toLowerCase(), f = document.getElementById('statusFilter').value; document.querySelectorAll('.key-row').forEach(r => {{ r.style.display = (r.innerText.toLowerCase().includes(s) && (f==='all' || r.dataset.status===f)) ? '' : 'none'; }}); }} 
         
