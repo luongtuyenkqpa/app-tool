@@ -35,23 +35,32 @@ _last_mtime_check = 0
 # ĐỊA CHỈ WEB CỦA BẠN
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
-# CẤU HÌNH SHOP KEY THEO YÊU CẦU
+# ========================================================
+# CẤU HÌNH SHOP KEY MỚI NHẤT
+# ========================================================
 SHOP_PACKAGES = {
     "1H": {"name": "1 Giờ", "price": 10000, "dur_ms": 3600000},
     "7D": {"name": "7 Ngày", "price": 30000, "dur_ms": 604800000},
-    "30D": {"name": "1 Tháng", "price": 85000, "dur_ms": 2592000000},
-    "1Y": {"name": "1 Năm", "price": 150000, "dur_ms": 31536000000}
+    "30D": {"name": "1 Tháng", "price": 100000, "dur_ms": 2592000000},
+    "1Y": {"name": "1 Năm Học", "price": 150000, "dur_ms": 31536000000}
 }
 
 # ========================================================
-# [MÃ NGUỒN TOOL GỐC ĐƯỢC GIẤU TRÊN SERVER]
+# CÔNG CỤ TẠO THÔNG BÁO POPUP SIÊU ĐẸP (SWEETALERT2)
 # ========================================================
-TOOL_CORE_SCRIPT = """
-console.log("🔥 [LVT SPOOFER] KẾT NỐI SERVER THÀNH CÔNG!");
-console.log("🔥 MÃ NGUỒN CHÍNH ĐÃ ĐƯỢC GIẢI MÃ VÀ TIÊM VÀO TRANG.");
-
-// VIẾT CODE HACK/TOOL CỦA BẠN Ở ĐÂY...
-"""
+def swal_redirect(title, text, icon, url):
+    return f"""
+    <!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>body {{ background: #05050A; }}</style>
+    </head><body><script>
+        Swal.fire({{
+            title: `{title}`, html: `{text}`, icon: '{icon}',
+            background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc',
+            allowOutsideClick: false
+        }}).then(() => {{ window.location.href = '{url}'; }});
+    </script></body></html>
+    """
 
 # ========================================================
 # HỆ THỐNG BẢO VỆ LAYER 7 & FIREWALL & IPS
@@ -77,9 +86,15 @@ def firewall_and_csrf():
     if any(bot in ua for bot in blocked_bots):
         return "Firewall Blocked Suspicious Bot/Scanner.", 403
         
-    if request.path.startswith("/admin") and request.path not in ["/login", "/register", "/logout"]:
+    if request.path.startswith("/admin") and request.path != "/admin_login":
         if session.get('role') != 'admin':
-            return redirect('/login')
+            return redirect('/admin_login')
+                
+    if request.method == "POST" and request.path.startswith("/admin/"):
+        origin = request.headers.get("Origin")
+        req_host = request.headers.get("Host", "").split(':')[0]
+        if origin:
+            if urlparse(origin).netloc.split(':')[0] != req_host: return "CSRF Blocked!", 403
 
 @app.errorhandler(404)
 def not_found_trap(e):
@@ -108,12 +123,12 @@ def log_admin_action(db, action_text):
     })
     db["admin_logs"] = db["admin_logs"][:100]
 
-# ========================================================
-# DATABASE CORE & KHỞI TẠO ADMIN MẶC ĐỊNH
-# ========================================================
 def hash_pwd(pwd):
     return hashlib.sha256(pwd.encode()).hexdigest()
 
+# ========================================================
+# DATABASE CORE & KHỞI TẠO ADMIN
+# ========================================================
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
     now = time.time()
@@ -143,7 +158,7 @@ def load_db():
                 data.setdefault("admin_logs", [])
                 data.setdefault("security_alerts", []) 
                 
-                # TẠO TÀI KHOẢN ADMIN MẶC ĐỊNH NẾU CHƯA CÓ
+                # TẠO TÀI KHOẢN ADMIN MẶC ĐỊNH
                 if "admin" not in data["users"]:
                     data["users"]["admin"] = {
                         "password_hash": hash_pwd("120510@"),
@@ -151,10 +166,17 @@ def load_db():
                         "balance": 0,
                         "created_at": int(time.time() * 1000),
                         "ips": [],
-                        "purchased_keys": []
+                        "purchased_keys": [],
+                        "notices": [],
+                        "custom_script": 'console.log("HELLO OLM BY LVT");\n// Dán code hack gốc vào đây...'
                     }
                 
+                for u in data["users"]:
+                    data["users"][u].setdefault("notices", [])
+                    data["users"][u].setdefault("custom_script", "")
+
                 for k in data["keys"]:
+                    data["keys"][k].setdefault("owner", "admin")
                     data["keys"][k].setdefault("violations", 0)
                     data["keys"][k].setdefault("temp_ban_until", 0)
                     data["keys"][k].setdefault("loader_enabled", True)
@@ -213,7 +235,7 @@ def generate_secure_key(prefix=""):
     return rand_str
 
 # ========================================================
-# API TÀNG HÌNH (SPOOFER & CẤP PHÉP KEY TOOL)
+# API TÀNG HÌNH (SPOOFER & CẤP PHÉP BƠM CODE)
 # ========================================================
 def check_api_rate_limit(ip):
     now = time.time()
@@ -298,6 +320,7 @@ def check_api():
 
 @app.route('/api/core', methods=['POST', 'OPTIONS'])
 def serve_core_payload():
+    """TRẢ VỀ SCRIPT TÙY CHỈNH CỦA NGƯỜI DÙNG TỪ CƠ SỞ DỮ LIỆU"""
     ip = get_real_ip()
     if not check_api_rate_limit(ip): return jsonify({"status": "error"}), 429
     if request.method == 'OPTIONS': return make_response("ok", 200)
@@ -312,9 +335,19 @@ def serve_core_payload():
     valid, _ = _core_validate(db, key, deviceId)
     if not valid: return jsonify({"status": "error"}), 403
 
-    encoded_core = base64.b64encode(TOOL_CORE_SCRIPT.encode('utf-8')).decode('utf-8')
-    reversed_core = encoded_core[::-1]
+    # Kéo code tùy chỉnh của chủ sở hữu Key
+    owner = db["keys"][key].get("owner", "admin")
+    custom_script = db["users"].get(owner, {}).get("custom_script", "")
+    
+    if not custom_script.strip():
+        # Lấy script của admin nếu user chưa cài
+        custom_script = db["users"].get("admin", {}).get("custom_script", "")
+        if not custom_script.strip():
+            custom_script = 'console.log("⚠️ CHƯA CÓ MÃ NGUỒN NÀO ĐƯỢC THIẾT LẬP Ở WEB ADMIN!");'
 
+    # MÃ HÓA NGƯỢC
+    encoded_core = base64.b64encode(custom_script.encode('utf-8')).decode('utf-8')
+    reversed_core = encoded_core[::-1]
     return jsonify({"status": "success", "payload": reversed_core})
 
 @app.route('/api/script_ping', methods=['POST', 'OPTIONS'])
@@ -357,13 +390,16 @@ def script_ping():
             return "ok", 200
     return "invalid", 403
 
+# ========================================================
+# LOADER DYNAMIC (CÀI 1 LẦN VÀO VIOLENTMONKEY)
+# ========================================================
 @app.route('/api/script/lvt_vip_loader.user.js')
 def serve_dynamic_script():
     js_code = f"""// ==UserScript==
 // @name         LVT TOOL VIP LOADER (SECURE MODE)
 // @namespace    http://tampermonkey.net/
 // @version      2.0
-// @description  Hệ thống bảo vệ và cấp phép tải ngầm Tool VIP LVT.
+// @description  Hệ thống cầu nối tải ngầm Script VIP LVT.
 // @author       DEV.TIỆP
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -441,6 +477,7 @@ def serve_dynamic_script():
             if(res.status === 'success' && res.payload) {{
                 let reversed = res.payload.split('').reverse().join('');
                 let decodedCore = decodeURIComponent(escape(window.atob(reversed)));
+                // TIÊM SCRIPT CỦA USER VÀO TRANG
                 let s = document.createElement('script'); s.textContent = decodedCore;
                 document.documentElement.appendChild(s); s.remove();
                 setInterval(() => {{ secureFetch('/api/script_ping', {{ key: key }}); }}, 30000);
@@ -462,7 +499,7 @@ def serve_dynamic_script():
     return resp
 
 # ========================================================
-# HỆ THỐNG LOGIN / REGISTER TÀI KHOẢN TRÊN WEB
+# GIAO DIỆN KHÁCH HÀNG (TRANG CHỦ / SHOP)
 # ========================================================
 CSS_GLASS = """
 body { background: #05050A; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin:0;}
@@ -478,14 +515,34 @@ a.link-neon:hover { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }
 
 @app.route('/')
 def home():
-    if 'username' in session:
-        if session.get('role') == 'admin': return redirect('/admin')
-        return redirect('/dashboard')
-    return redirect('/login')
+    shop_html = ""
+    for pkg_id, pkg in SHOP_PACKAGES.items():
+        if pkg_id == "30D":
+            shop_html += f'<div class="col-md-3"><div class="pkg-card" style="border-color:#bd00ff;box-shadow:0 0 20px rgba(189,0,255,0.2);"><div class="badge bg-danger mb-2">HOT NHẤT</div><h3 class="text-white">{pkg["name"]}</h3><div class="price text-info">{pkg["price"]:,}đ</div><p class="text-secondary">Chiến game dài hạn<br>Hỗ trợ 1 thiết bị</p><a href="/login" class="btn btn-info w-100 mt-3 fw-bold">MUA NGAY</a></div></div>'
+        else:
+            shop_html += f'<div class="col-md-3"><div class="pkg-card"><h3 class="text-white">{pkg["name"]}</h3><div class="price">{pkg["price"]:,}đ</div><p class="text-secondary">Bảo mật đa tầng<br>Hỗ trợ 1 thiết bị</p><a href="/login" class="btn btn-outline-light w-100 mt-3">MUA NGAY</a></div></div>'
+
+    return f'''
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT TOOL - Trang Chủ</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>body{{background:#05050A;color:#fff;font-family:'Segoe UI',sans-serif;}} .hero{{background:linear-gradient(135deg,#000,#0a192f);padding:100px 0;text-align:center;border-bottom:1px solid #00ffcc;}} .neon-text{{color:#00ffcc;text-shadow:0 0 10px #00ffcc;}} .pkg-card{{background:#11111A;border:1px solid #333;border-radius:15px;padding:30px;text-align:center;transition:0.3s;height:100%;}} .pkg-card:hover{{border-color:#00ffcc;box-shadow:0 0 20px rgba(0,255,204,0.2);transform:translateY(-10px);}} .price{{font-size:35px;font-weight:900;color:#bd00ff;margin:20px 0;}}</style></head><body>
+    <div class="hero">
+        <h1 class="neon-text fw-bold mb-3">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1>
+        <p class="text-secondary fs-5 mb-4">Công cụ tự động hóa thông minh - Bảo mật đa tầng - Tự chỉnh Script theo ý muốn</p>
+        <a href="#shop" class="btn btn-lg fw-bold" style="background:#00ffcc;color:#000;">XEM BẢNG GIÁ</a>
+        <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-2">ĐĂNG NHẬP</a>
+    </div>
+    <div class="container py-5" id="shop">
+        <h2 class="text-center neon-text fw-bold mb-5">BẢNG GIÁ DỊCH VỤ</h2>
+        <div class="row g-4 justify-content-center">{shop_html}</div>
+    </div>
+    <footer class="text-center text-secondary py-4 border-top border-dark">© 2026 LVT SECURE SYSTEM. Chạy ngầm đỉnh cao.</footer>
+    </body></html>
+    '''
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if 'username' in session: return redirect('/')
+    if 'username' in session: 
+        if session.get('role') == 'admin': return redirect('/admin')
+        return redirect('/dashboard')
     
     global login_attempts
     ip = get_real_ip()
@@ -499,7 +556,7 @@ def login():
                 db["banned_ips"].append(ip)
                 report_bad_signature(ip)
                 save_db(db)
-        return "<html><script>alert('🚨 FIREWALL: BẠN ĐÃ BỊ KHÓA IP VÌ DÒ MẬT KHẨU!');</script></html>", 403
+        return swal_redirect("FIREWALL CẢNH BÁO", "Bạn đã bị khóa IP vì dò mật khẩu quá 5 lần!", "error", "/")
 
     if request.method == 'POST':
         username = request.form.get('username', '').strip().lower()
@@ -518,16 +575,16 @@ def login():
                 save_db(db)
                 
             if ip in login_attempts: del login_attempts[ip]
-            return redirect('/')
+            return swal_redirect("Đăng nhập thành công!", f"Chào mừng {username.upper()} quay trở lại.", "success", "/dashboard" if session['role'] != 'admin' else "/admin")
         else:
             attempts.append(now)
             login_attempts[ip] = attempts
-            return f"<html><script>alert('Sai tài khoản hoặc mật khẩu! (Cảnh cáo {len(attempts)}/5)');window.location.href='/login';</script></html>"
+            return swal_redirect("Đăng nhập thất bại!", f"Sai tài khoản hoặc mật khẩu.<br><small>Cảnh cáo: Lần thứ {len(attempts)}/5</small>", "error", "/login")
 
     return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Nhập - LVT SYSTEM</title>
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Nhập</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head>
-    <body><div class="glass-panel"><h2>⚡ ĐĂNG NHẬP HỆ THỐNG</h2>
+    <body><div class="glass-panel"><h2>⚡ ĐĂNG NHẬP</h2>
     <form method="POST">
         <input type="text" name="username" class="form-control" placeholder="Tên đăng nhập" required>
         <input type="password" name="password" class="form-control" placeholder="Mật khẩu" required>
@@ -545,34 +602,31 @@ def register():
         password = request.form.get('password', '').strip()
         
         if not username.isalnum() or len(username) < 4:
-            return "<html><script>alert('Tên đăng nhập phải > 4 ký tự và không chứa ký tự đặc biệt!');window.location.href='/register';</script></html>"
+            return swal_redirect("Lỗi Đăng Ký", "Tên đăng nhập phải > 4 ký tự và không có dấu!", "warning", "/register")
         if len(password) < 6:
-            return "<html><script>alert('Mật khẩu phải từ 6 ký tự trở lên!');window.location.href='/register';</script></html>"
+            return swal_redirect("Lỗi Đăng Ký", "Mật khẩu phải từ 6 ký tự trở lên!", "warning", "/register")
 
         db = load_db()
         with db_lock:
             if username in db.setdefault("users", {}):
-                return "<html><script>alert('Tên đăng nhập này đã tồn tại!');window.location.href='/register';</script></html>"
+                return swal_redirect("Lỗi Đăng Ký", "Tên đăng nhập này đã có người sử dụng!", "error", "/register")
             
             db["users"][username] = {
-                "password_hash": hash_pwd(password),
-                "role": "user",
-                "balance": 0,
-                "created_at": int(time.time() * 1000),
-                "ips": [get_real_ip()],
-                "purchased_keys": []
+                "password_hash": hash_pwd(password), "role": "user", "balance": 0,
+                "created_at": int(time.time() * 1000), "ips": [get_real_ip()],
+                "purchased_keys": [], "notices": [], "custom_script": ""
             }
             save_db(db)
-        return "<html><script>alert('Đăng ký thành công! Hãy đăng nhập.');window.location.href='/login';</script></html>"
+        return swal_redirect("Tuyệt vời!", "Tạo tài khoản thành công. Hãy đăng nhập!", "success", "/login")
 
     return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Ký - LVT SYSTEM</title>
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Ký</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head>
-    <body><div class="glass-panel"><h2>⚡ ĐĂNG KÝ TÀI KHOẢN</h2>
+    <body><div class="glass-panel"><h2>⚡ TẠO TÀI KHOẢN</h2>
     <form method="POST">
         <input type="text" name="username" class="form-control" placeholder="Tên đăng nhập (viết liền không dấu)" required>
         <input type="password" name="password" class="form-control" placeholder="Mật khẩu (Tối thiểu 6 ký tự)" required>
-        <button type="submit" class="btn btn-neon">TẠO TÀI KHOẢN</button>
+        <button type="submit" class="btn btn-neon">ĐĂNG KÝ NGAY</button>
     </form>
     <div class="mt-4"><p class="text-secondary">Đã có tài khoản? <a href="/login" class="link-neon">Đăng nhập</a></p></div>
     </div></body></html>
@@ -581,10 +635,10 @@ def register():
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect('/login')
+    return redirect('/')
 
 # ========================================================
-# GIAO DIỆN USER (MUA KEY + QUẢN LÝ KEY)
+# GIAO DIỆN USER (MUA KEY + QUẢN LÝ KEY + ĐỔI SCRIPT)
 # ========================================================
 @app.route('/dashboard')
 def user_dashboard():
@@ -595,10 +649,21 @@ def user_dashboard():
     user_data = db["users"].get(username, {})
     balance = user_data.get("balance", 0)
     owned_keys = user_data.get("purchased_keys", [])
+    user_script = user_data.get("custom_script", "")
     
+    # Xử lý thông báo (Notice) từ Admin
+    notices = user_data.get("notices", [])
+    swal_scripts = ""
+    if notices:
+        msg = "<br>".join(notices)
+        swal_scripts = f"Swal.fire({{title: 'TING TING 💰', html: '{msg}', icon: 'success', background: '#11111A', color: '#00ffcc'}});"
+        with db_lock:
+            db["users"][username]["notices"] = []
+            save_db(db)
+
     keys_html = ""
     if not owned_keys:
-        keys_html = "<tr><td colspan='4' class='text-center text-muted'>Bạn chưa mua Key nào. Hãy mua ngay ở Cửa Hàng!</td></tr>"
+        keys_html = "<tr><td colspan='4' class='text-center text-muted py-3'>Bạn chưa mua Key nào. Hãy mua ngay ở Cửa Hàng!</td></tr>"
     else:
         for k_obj in owned_keys:
             k = k_obj["key"]
@@ -619,7 +684,7 @@ def user_dashboard():
             devs = len(kd.get("devices", []))
             max_devs = kd.get("maxDevices", 1)
             
-            keys_html += f"<tr><td><strong class='text-info'>{k}</strong></td><td>{badge}</td><td>{exp_str}</td><td>{devs}/{max_devs}</td></tr>"
+            keys_html += f"<tr><td><strong class='text-info'>{k}</strong> <button class='btn btn-sm btn-outline-info border-0' onclick='copyText(\"{k}\")'>📋</button></td><td>{badge}</td><td>{exp_str}</td><td>{devs}/{max_devs}</td></tr>"
 
     shop_html = ""
     for pkg_id, pkg in SHOP_PACKAGES.items():
@@ -627,21 +692,23 @@ def user_dashboard():
         <div class="col-md-3 col-6">
             <div class="card bg-dark border-secondary text-center p-3 h-100" style="transition:0.3s;" onmouseover="this.style.borderColor='#00ffcc'" onmouseout="this.style.borderColor='#6c757d'">
                 <h5 class="text-white fw-bold">{pkg['name']}</h5>
-                <h3 style="color:#bd00ff; font-weight:900;">{pkg['price']:,}đ</h3>
+                <h4 style="color:#bd00ff; font-weight:900;">{pkg['price']:,}đ</h4>
                 <form action="/buy" method="POST" class="mt-auto pt-3">
                     <input type="hidden" name="pkg_id" value="{pkg_id}">
-                    <button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#00ffcc; color:#000;" onclick="return confirm('Xác nhận mua {pkg['name']} với giá {pkg['price']:,}đ?')">MUA NGAY</button>
+                    <button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#00ffcc; color:#000;">MUA NGAY</button>
                 </form>
             </div>
         </div>'''
 
     return f'''
     <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Dashboard - User</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>body{{background:#05050A;color:#e0e0e0;font-family:'Segoe UI',sans-serif;}} .card{{background:#11111A;border-radius:15px;}}</style></head>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>body{{background:#05050A;color:#e0e0e0;font-family:'Segoe UI',sans-serif;}} .card{{background:#11111A;border-radius:15px;}}</style></head>
     <body class="p-3">
-    <div class="container max-w-1000">
+    <div class="container" style="max-width:1100px;">
         <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-            <h2 style="color:#00ffcc; font-weight:900;">⚡ LVT VIP TOOL</h2>
+            <h2 style="color:#00ffcc; font-weight:900;">⚡ LVT VIP DASHBOARD</h2>
             <div><span class="me-3">Xin chào, <b class="text-info">{username.upper()}</b></span> <a href="/logout" class="btn btn-sm btn-outline-danger">Thoát</a></div>
         </div>
         
@@ -651,14 +718,37 @@ def user_dashboard():
                     <h5 class="text-secondary">SỐ DƯ CỦA BẠN</h5>
                     <h2 style="color:#00ffcc; font-weight:900; font-size:40px;">{balance:,}<small style="font-size:20px;">đ</small></h2>
                     <hr class="border-secondary">
-                    <p class="text-warning mb-1" style="font-size:14px;"><i class="fas fa-university"></i> <b>CÁCH NẠP TIỀN TỰ ĐỘNG</b></p>
-                    <p class="text-muted" style="font-size:12px;">Vui lòng chuyển khoản với nội dung:<br><strong class="text-white fs-6">NẠP {username.upper()}</strong></p>
-                    <a href="#" class="btn btn-outline-info btn-sm fw-bold">Liên hệ Admin (Zalo/Telegram)</a>
+                    <p class="text-warning mb-1" style="font-size:14px;"><i class="fas fa-university"></i> <b>CÁCH NẠP TIỀN AUTO</b></p>
+                    <p class="text-muted" style="font-size:12px;">Vui lòng chuyển khoản với nội dung:<br><strong class="text-white fs-6">NAP {username.upper()}</strong></p>
+                    <a href="https://zalo.me/123456789" target="_blank" class="btn btn-outline-info btn-sm fw-bold">Liên hệ Admin (Zalo)</a>
                 </div>
             </div>
             
             <div class="col-md-8">
-                <div class="card p-4 border-secondary h-100">
+                <div class="card p-4 border-info h-100">
+                    <h4 class="text-info fw-bold mb-3"><i class="fas fa-rocket"></i> TRUNG TÂM KÍCH HOẠT HACK</h4>
+                    <p class="text-muted mb-2" style="font-size:12px;">*Chú ý: Bạn cần <a href="/api/script/lvt_vip_loader.user.js" class="text-warning fw-bold">Cài đặt Loader Cầu Nối</a> vào Violentmonkey 1 lần duy nhất trước khi dùng.</p>
+                    <div class="row g-3 h-100">
+                        <div class="col-md-6">
+                            <div class="p-3 border border-secondary rounded text-center h-100 d-flex flex-column justify-content-center">
+                                <h5 class="text-warning fw-bold">NÚT 1: TÙY CHỈNH SCRIPT</h5>
+                                <p class="text-muted" style="font-size:12px;">Chèn Script Hack OLM của riêng bạn vào hệ thống Server.</p>
+                                <button class="btn btn-warning fw-bold w-100 mt-auto text-dark" data-bs-toggle="modal" data-bs-target="#scriptModal"><i class="fas fa-code"></i> SỬA ĐỔI SCRIPT CỦA TÔI</button>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="p-3 border border-success rounded text-center h-100 d-flex flex-column justify-content-center">
+                                <h5 class="text-success fw-bold">NÚT 2: VÀO HACK NGAY</h5>
+                                <p class="text-muted" style="font-size:12px;">Hệ thống sẽ tự động chuyển sang OLM và bơm thẳng Script mà bạn đã cài ở Nút 1.</p>
+                                <a href="https://olm.vn" target="_blank" class="btn btn-success fw-bold w-100 mt-auto"><i class="fas fa-play"></i> MỞ OLM & AUTO BƠM SCRIPT</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <div class="card p-4 border-secondary">
                     <h4 style="color:#bd00ff; font-weight:900; margin-bottom:20px;"><i class="fas fa-shopping-cart"></i> MUA KEY TỰ ĐỘNG</h4>
                     <div class="row g-3">{shop_html}</div>
                 </div>
@@ -668,20 +758,59 @@ def user_dashboard():
                 <div class="card p-4 border-success">
                     <h4 style="color:#00ffcc; font-weight:900; margin-bottom:20px;"><i class="fas fa-key"></i> DANH SÁCH KEY ĐÃ MUA</h4>
                     <div class="table-responsive">
-                        <table class="table table-dark table-hover align-middle">
+                        <table class="table table-dark table-hover table-sm align-middle text-center">
                             <thead class="table-active"><tr><th>🔑 Mã Key (Copy)</th><th>Trạng thái</th><th>Hạn Sử Dụng</th><th>Máy / Tối đa</th></tr></thead>
                             <tbody>{keys_html}</tbody>
                         </table>
-                    </div>
-                    <div class="mt-3">
-                        <a href="/api/script/lvt_vip_loader.user.js" class="btn fw-bold" style="background:#00ffcc; color:#000;"><i class="fas fa-download"></i> TẢI SCRIPT LOADER (SPOOFER) VỀ MÁY</a>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+    
+    <div class="modal fade" id="scriptModal" tabindex="-1" data-bs-theme="dark">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content" style="background:#11111A; border:1px solid #00ffcc;">
+          <div class="modal-header border-secondary">
+            <h5 class="modal-title" style="color:#00ffcc;font-weight:bold;">🛠️ TÙY CHỈNH MÃ NGUỒN SCRIPT</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <form action="/update_script" method="POST">
+              <div class="modal-body">
+                <p class="text-muted" style="font-size:13px;">Hãy dán đoạn code Javascript (Hack OLM) của bạn vào đây. Khi bạn bấm Nút 2, Server sẽ lập tức băm nhuyễn và truyền ngầm đoạn code này thẳng vào OLM.</p>
+                <textarea name="script_content" class="form-control bg-dark text-light border-info" rows="12" style="font-family:monospace; font-size:12px;" placeholder="Dán mã Script OLM vào đây...">{escape(user_script)}</textarea>
+              </div>
+              <div class="modal-footer border-secondary">
+                <button type="submit" class="btn btn-info fw-bold w-100 text-dark">💾 LƯU SCRIPT LÊN ĐÁM MÂY</button>
+              </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        {swal_scripts}
+        function copyText(text) {{
+            navigator.clipboard.writeText(text);
+            Swal.fire({{toast:true, position:'top-end', icon:'success', title:'Đã copy: '+text, showConfirmButton:false, timer:2000, background:'#111', color:'#fff'}});
+        }}
+    </script>
     </body></html>
     '''
+
+@app.route('/update_script', methods=['POST'])
+def update_user_script():
+    if 'username' not in session: return redirect('/login')
+    new_script = request.form.get('script_content', '')
+    
+    db = load_db()
+    with db_lock:
+        if session['username'] in db["users"]:
+            db["users"][session['username']]["custom_script"] = new_script
+            save_db(db)
+            
+    return swal_redirect("Đã lưu Script!", "Hệ thống sẽ tự động bơm script này khi bạn vào OLM.", "success", "/dashboard")
 
 @app.route('/buy', methods=['POST'])
 def buy_key():
@@ -689,7 +818,7 @@ def buy_key():
     username = session['username']
     pkg_id = request.form.get('pkg_id')
     
-    if pkg_id not in SHOP_PACKAGES: return "Gói không tồn tại", 400
+    if pkg_id not in SHOP_PACKAGES: return swal_redirect("Lỗi Hệ Thống", "Gói này không tồn tại!", "error", "/dashboard")
     
     pkg = SHOP_PACKAGES[pkg_id]
     price = pkg['price']
@@ -698,36 +827,82 @@ def buy_key():
     with db_lock:
         user_data = db["users"].get(username)
         if user_data['balance'] < price:
-            return "<html><script>alert('❌ Số dư không đủ! Vui lòng nạp thêm tiền.');window.location.href='/dashboard';</script></html>"
+            return swal_redirect("Số Dư Không Đủ!", "Bạn cần nạp thêm tiền để mua gói này.", "warning", "/dashboard")
         
         # Trừ tiền
         user_data['balance'] -= price
         
-        # Tạo key siêu bảo mật
+        # Tạo key siêu bảo mật gắn với Tên Chủ Sở Hữu (owner)
         nk = generate_secure_key("TOOL")
         db["keys"][nk] = {
             "exp": "pending", "durationMs": pkg['dur_ms'], "maxDevices": 1, 
             "devices": [], "known_ips": {}, "status": "active", "vip": True, 
-            "loader_enabled": True, "violations": 0, "temp_ban_until": 0
+            "loader_enabled": True, "violations": 0, "temp_ban_until": 0,
+            "owner": username
         }
         
         # Thêm vào túi đồ user
         user_data.setdefault("purchased_keys", []).insert(0, {
-            "key": nk,
-            "package_name": pkg['name'],
-            "buy_time": int(time.time() * 1000)
+            "key": nk, "package_name": pkg['name'], "buy_time": int(time.time() * 1000)
         })
-        
         save_db(db)
         
-    return f"<html><script>alert('🎉 MUA KEY [{pkg['name']}] THÀNH CÔNG! Mã Key của bạn là: {nk}');window.location.href='/dashboard';</script></html>"
+    html_msg = f"""
+    <div style='text-align:left; font-size:15px;'>
+        <p>Gói: <b style='color:#bd00ff'>{pkg['name']}</b></p>
+        <p>Mã Key của bạn:</p>
+        <div style='background:#000; padding:10px; border:1px dashed #00ffcc; border-radius:5px; text-align:center; font-family:monospace; font-size:18px; color:#00ffcc; margin-bottom:15px;'>
+            {nk}
+        </div>
+        <p style='color:#aaa; font-size:12px;'>*Ghi nhớ mã Key. Key sẽ tự động kích hoạt trừ giờ vào lần đầu tiên bạn sử dụng Spoofer.</p>
+    </div>
+    """
+    return swal_redirect("🎉 MUA KEY THÀNH CÔNG!", html_msg, "success", "/dashboard")
 
 # ========================================================
 # GIAO DIỆN WEB ADMIN QUẢN LÝ
 # ========================================================
+@app.route('/admin_login', methods=['GET', 'POST'])
+def admin_login():
+    global login_attempts
+    if request.method == 'POST':
+        ip = get_real_ip()
+        now = time.time()
+        attempts = [t for t in login_attempts.get(ip, []) if now - t < 600] 
+        
+        if len(attempts) >= 4: 
+            db = load_db()
+            with db_lock:
+                if ip not in db.setdefault("banned_ips", []):
+                    db["banned_ips"].append(ip)
+                    report_bad_signature(ip) 
+                    save_db(db)
+            return swal_redirect("FIREWALL BLOCK", "IP này đã bị khóa do cố tình xâm nhập Admin!", "error", "/")
+        
+        db = load_db()
+        username = request.form.get('username', '').strip().lower()
+        pwd = request.form.get('password', '').strip()
+        
+        u_data = db.get("users", {}).get(username)
+        if u_data and u_data.get("role") == "admin" and u_data.get("password_hash") == hash_pwd(pwd):
+            session['username'] = username
+            session['role'] = 'admin'
+            session['admin_auth'] = True 
+            session['admin_ip'] = ip 
+            with db_lock: log_admin_action(db, f"Đăng nhập Admin thành công từ IP: {ip}")
+            save_db(db)
+            if ip in login_attempts: del login_attempts[ip]
+            return redirect('/admin')
+            
+        attempts.append(now)
+        login_attempts[ip] = attempts
+        return swal_redirect("Từ Chối Truy Cập", f"Thông tin Admin không chính xác!<br>Cảnh cáo: {len(attempts)}/5", "error", "/admin_login")
+    
+    return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2>🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control" placeholder="Mật Khẩu" required><button type="submit" class="btn btn-neon">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
+
 @app.route('/admin')
 def admin_dashboard():
-    if session.get('role') != 'admin': return redirect('/login')
+    if session.get('role') != 'admin': return redirect('/admin_login')
     db = load_db()
     with db_lock:
         keys_items = list(db.get("keys", {}).items())
@@ -737,154 +912,140 @@ def admin_dashboard():
 
     now_ms = int(time.time() * 1000)
 
-    # XỬ LÝ HTML CHO BẢNG USER
     users_html = ""
     for uname, udata in users_items:
-        if udata.get("role") == "admin": continue # Ẩn admin khỏi danh sách
+        if udata.get("role") == "admin": continue
         
         bal = udata.get("balance", 0)
         ips = "<br>".join(udata.get("ips", [])) or "Chưa có"
         keys_count = len(udata.get("purchased_keys", []))
-        created = time.strftime("%d/%m/%Y", time.localtime(udata.get("created_at", 0)/1000))
+        created = time.strftime("%d/%m/%y", time.localtime(udata.get("created_at", 0)/1000))
         
         users_html += f'''
         <tr>
-            <td><strong class="text-warning">{escape(uname)}</strong><br><small class="text-muted">Đăng ký: {created}</small></td>
-            <td><span class="badge bg-success" style="font-size:14px;">{bal:,}đ</span></td>
+            <td><strong class="text-warning">{escape(uname)}</strong><br><small class="text-muted">{created}</small></td>
+            <td><span class="badge bg-success" style="font-size:13px;">{bal:,}đ</span></td>
             <td><span class="badge bg-info text-dark">{keys_count} Keys</span></td>
-            <td style="font-size:11px; color:#aaa;">{ips}</td>
+            <td style="font-size:10px; color:#aaa;">{ips}</td>
             <td>
                 <form action="/admin/add_balance" method="POST" class="d-flex gap-1">
                     <input type="hidden" name="username" value="{escape(uname)}">
-                    <input type="number" name="amount" class="form-control form-control-sm bg-dark text-light border-secondary" style="width:100px;" placeholder="+ / - Tiền" required>
-                    <button type="submit" class="btn btn-sm btn-primary fw-bold">CỘNG</button>
+                    <input type="number" name="amount" class="form-control form-control-sm bg-dark text-light border-secondary px-1" style="width:75px;font-size:12px;" placeholder="± Tiền" required>
+                    <button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;">CỘNG</button>
                 </form>
             </td>
         </tr>
         '''
 
-    # XỬ LÝ HTML CHO BẢNG KEY
     keys_html = ''
     for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
         st = data.get('status', 'active')
         is_banned = (st == 'banned')
-        is_vip = data.get('vip', False)
-        violation_count = data.get('violations', 0)
         temp_ban = data.get('temp_ban_until', 0)
         
         status_badge = '<span class="badge bg-success">Hoạt động</span>'
         if is_banned: status_badge = '<span class="badge bg-dark border border-danger text-danger">TỬ HÌNH</span>'
         elif temp_ban > now_ms: status_badge = f'<span class="badge bg-warning text-dark">Phạt Share ({ (temp_ban - now_ms)//60000 }p)</span>'
 
-        vip_badge = '<span class="badge bg-primary">VIP</span>' if is_vip else '<span class="badge bg-secondary">THƯỜNG</span>'
+        vip_badge = '<span class="badge bg-primary">VIP</span>' if data.get('vip', False) else '<span class="badge bg-secondary">THƯỜNG</span>'
         
         is_expired = False
-        if data.get('exp') == 'pending': exp_text = '<span class="text-info">Chưa kích hoạt</span>'
+        if data.get('exp') == 'pending': exp_text = '<span class="text-info">Chưa KH</span>'
         elif data.get('exp') == 'permanent': exp_text = '<span class="text-success fw-bold">V.Viễn</span>'
         else:
             is_expired = now_ms > data.get('exp', 0)
-            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-light"}">{time.strftime("%d/%m/%Y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
+            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-light"}">{time.strftime("%d/%m/%y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
         
         if is_expired and not is_banned: status_badge = '<span class="badge bg-secondary">HẾT HẠN</span>'
 
         devs = data.get('devices', [])
-        max_devs = data.get('maxDevices', 1)
         safe_k = escape(str(k))
-
-        # Tìm chủ sở hữu
-        owner = "Admin Tạo"
-        for u, ud in users_items:
-            for pk in ud.get("purchased_keys", []):
-                if pk["key"] == k: owner = f"Khách: {u}"
+        owner = escape(data.get('owner', 'Admin'))
 
         keys_html += f'''
         <tr class="key-row">
-            <td><strong class="text-info">{safe_k}</strong><br>{vip_badge} {status_badge}<br><small class="text-warning">{owner}</small></td>
-            <td>{exp_text}</td>
-            <td><span class="badge bg-info text-dark">{len(devs)}/{max_devs}</span> <small class="text-muted">(Lỗi: {violation_count})</small></td>
+            <td><strong class="text-info" style="font-size:13px;">{safe_k}</strong><br>{vip_badge} {status_badge}<br><small class="text-warning">Chủ: {owner}</small></td>
+            <td style="font-size:12px;">{exp_text}</td>
+            <td><span class="badge bg-info text-dark">{len(devs)}/{data.get('maxDevices', 1)}</span></td>
             <td>
                 <div class="btn-group btn-group-sm">
-                    <a href="/admin/action/reset-dev/{safe_k}" class="btn btn-primary" title="Reset Máy">🔄 HWID</a>
-                    <a href="/admin/action/unban_temp/{safe_k}" class="btn btn-success" title="Gỡ phạt Share">Gỡ Phạt</a>
-                    <a href="/admin/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-{"light" if is_banned else "danger"}" title="Tử hình">{"Cứu Sống" if is_banned else "Trảm"}</a>
-                    <a href="/admin/action/delete/{safe_k}" class="btn btn-dark" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa thùng rác">🗑️</a>
+                    <a href="/admin/action/reset-dev/{safe_k}" class="btn btn-primary" style="font-size:10px;">🔄 HWID</a>
+                    <a href="/admin/action/unban_temp/{safe_k}" class="btn btn-success" style="font-size:10px;">Gỡ Phạt</a>
+                    <a href="/admin/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-{"light" if is_banned else "danger"}" style="font-size:10px;">{"Cứu" if is_banned else "Trảm"}</a>
+                    <a href="/admin/action/delete/{safe_k}" class="btn btn-dark" onclick="return confirm('Xóa vĩnh viễn Key này?')" style="font-size:10px;">🗑️</a>
                 </div>
             </td>
         </tr>'''
 
-    # LOGS IP & LỊCH SỬ
-    blacklist_rows = ""
-    for ip in banned_ips:
-        blacklist_rows += f'<li class="list-group-item bg-dark text-light d-flex justify-content-between align-items-center" style="font-size:13px;">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger p-0 px-2">Gỡ</a></li>'
-    if not blacklist_rows: blacklist_rows = '<li class="list-group-item bg-dark text-muted text-center" style="font-size:13px;">Sạch sẽ</li>'
+    blacklist_rows = "".join([f'<li class="list-group-item bg-dark text-light d-flex justify-content-between align-items-center" style="font-size:12px;">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger p-0 px-2">Gỡ</a></li>' for ip in banned_ips])
+    if not blacklist_rows: blacklist_rows = '<li class="list-group-item bg-dark text-muted text-center" style="font-size:12px;">Sạch sẽ</li>'
     
-    logs_html = ""
-    for alog in admin_logs[:15]:
-        l_time = time.strftime('%H:%M %d/%m', time.localtime(alog.get('time', 0)/1000))
-        logs_html += f'<li class="list-group-item bg-dark text-light border-secondary p-2 mb-1 rounded" style="font-size:11px;"><span class="text-warning">[{l_time}]</span> {escape(alog.get("action", ""))}</li>'
+    logs_html = "".join([f'<li class="list-group-item bg-dark text-light border-secondary p-1 mb-1 rounded" style="font-size:11px;"><span class="text-warning">[{time.strftime("%H:%M", time.localtime(alog.get("time", 0)/1000))}]</span> {escape(alog.get("action", ""))}</li>' for alog in admin_logs[:15]])
 
-    # TRẢ VỀ GIAO DIỆN ADMIN CHÍNH
     return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ADMIN - LVT TOOL</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>body{{background:#05050A;color:#e0e0e0;font-family:'Segoe UI',sans-serif;}} .card{{background:#11111A;border:1px solid #333;border-radius:12px;}} h4{{color:#00ffcc;font-weight:900;}} .table-container{{max-height:500px;overflow-y:auto;}} tbody tr:hover{{background:rgba(0,255,204,0.05)!important;}}</style></head><body class="p-3">
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ADMIN DASHBOARD</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>body{{background:#05050A;color:#e0e0e0;font-family:'Segoe UI',sans-serif;font-size:14px;}} .card{{background:#11111A;border:1px solid #333;border-radius:12px;}} h5{{color:#00ffcc;font-weight:900;}} .table-container{{max-height:450px;overflow-y:auto;}} tbody tr:hover{{background:rgba(0,255,204,0.05)!important;}}</style>
+    </head><body class="p-2">
     <div class="container-fluid">
-        <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-2">
-            <h2 class="m-0" style="color:#00ffcc; font-weight:900;">⚡ BẢNG ĐIỀU KHIỂN BẢO MẬT & TÀI KHOẢN</h2>
-            <div><span class="me-3">Admin: <b>{session.get('username','').upper()}</b></span><a href="/logout" class="btn btn-outline-danger btn-sm">Thoát</a></div>
+        <div class="d-flex justify-content-between align-items-center mb-3 border-bottom border-secondary pb-2">
+            <h3 class="m-0" style="color:#00ffcc; font-weight:900;">⚡ LVT SECURE ADMIN</h3>
+            <div><span class="me-3 d-none d-md-inline">Admin: <b>{session.get('username','').upper()}</b></span><a href="/logout" class="btn btn-outline-danger btn-sm fw-bold">Thoát</a></div>
         </div>
         
-        <div class="row g-4">
-            <div class="col-lg-12">
-                <div class="card p-3 mb-4" style="border-color:#3366ff;">
-                    <h4 style="color:#3366ff;"><i class="fas fa-users"></i> QUẢN LÝ NGƯỜI DÙNG & NẠP TIỀN</h4>
+        <div class="row g-3">
+            <div class="col-lg-6">
+                <div class="card p-3 h-100" style="border-color:#3366ff;">
+                    <h5 style="color:#3366ff;"><i class="fas fa-users"></i> DANH SÁCH NGƯỜI DÙNG</h5>
                     <div class="table-container">
-                        <table class="table table-dark table-hover table-sm align-middle mb-0">
-                            <thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Số Key Sở Hữu</th><th>IP Đã Đăng Nhập</th><th>Nạp Tiền Nhanh</th></tr></thead>
+                        <table class="table table-dark table-hover table-sm align-middle mb-0 text-center">
+                            <thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Tài sản</th><th>IP Log</th><th>Nạp Tiền</th></tr></thead>
                             <tbody>{users_html}</tbody>
                         </table>
                     </div>
                 </div>
             </div>
 
-            <div class="col-lg-4">
-                <div class="card p-3 mb-4" style="border-color:#bd00ff;">
-                    <h4 style="color:#bd00ff;"><i class="fas fa-key"></i> TẠO KEY TOOL (TẶNG KHÁCH)</h4>
-                    <form action="/admin/create" method="POST" class="row g-2 mt-2">
-                        <div class="col-6"><input type="text" name="prefix" class="form-control bg-dark text-light border-secondary" placeholder="Tiền tố (VD: T)"></div>
-                        <div class="col-6"><input type="number" name="quantity" class="form-control bg-dark text-light border-secondary" value="1" placeholder="Số Lượng"></div>
-                        <div class="col-6"><input type="number" name="duration" class="form-control bg-dark text-light border-secondary" placeholder="Độ dài hạn" required></div>
-                        <div class="col-6"><select name="type" class="form-select bg-dark text-light border-secondary"><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh viễn</option></select></div>
-                        <div class="col-6"><input type="number" name="maxDevices" class="form-control bg-dark text-light border-secondary" placeholder="Max Thiết bị" value="1"></div>
-                        <div class="col-6 d-flex align-items-center"><div class="form-check form-switch m-0"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSw" checked><label class="form-check-label text-warning" for="vipSw">Gắn mác VIP</label></div></div>
-                        <div class="col-12 mt-3"><button type="submit" class="btn w-100 fw-bold" style="background:#bd00ff;color:white;">🚀 TẠO NGAY</button></div>
-                    </form>
-                </div>
-                
-                <div class="card p-3 mb-4" style="border-color:#ff3366;">
-                    <h4 class="text-danger"><i class="fas fa-shield-virus"></i> FIREWALL (IP BANNED)</h4>
-                    <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-2">
-                        <input type="text" name="ip" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nhập IP thủ công..." required>
-                        <button type="submit" class="btn btn-sm btn-danger fw-bold">Chặn</button>
-                    </form>
-                    <ul class="list-group list-group-flush" style="max-height:150px;overflow-y:auto;">{blacklist_rows}</ul>
-                </div>
-                
-                <div class="card p-3" style="border-color:#888;">
-                    <h4 class="text-secondary"><i class="fas fa-list-ul"></i> LOGS HOẠT ĐỘNG</h4>
-                    <ul class="list-group list-group-flush" style="max-height:200px;overflow-y:auto;">{logs_html}</ul>
+            <div class="col-lg-6">
+                <div class="row g-3 h-100">
+                    <div class="col-md-6">
+                        <div class="card p-3 h-100" style="border-color:#bd00ff;">
+                            <h5 style="color:#bd00ff;"><i class="fas fa-key"></i> TẠO KEY MỚI</h5>
+                            <form action="/admin/create" method="POST" class="row g-2 mt-1">
+                                <div class="col-6"><input type="text" name="prefix" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Tiền tố (T)"></div>
+                                <div class="col-6"><input type="number" name="quantity" class="form-control form-control-sm bg-dark text-light border-secondary" value="1" placeholder="Số Lượng"></div>
+                                <div class="col-6"><input type="number" name="duration" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Độ dài" required></div>
+                                <div class="col-6"><select name="type" class="form-select form-select-sm bg-dark text-light border-secondary"><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">V.Viễn</option></select></div>
+                                <div class="col-12 mt-2"><button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#bd00ff;color:white;">🚀 TẠO NGAY</button></div>
+                            </form>
+                            
+                            <hr class="border-secondary my-3">
+                            <h5 style="color:#ff9900;"><i class="fas fa-code"></i> SET MÃ NGUỒN CHUNG</h5>
+                            <button class="btn btn-sm btn-outline-warning w-100 fw-bold" data-bs-toggle="modal" data-bs-target="#adminScriptModal">Sửa Code Mặc Định</button>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card p-3 h-100" style="border-color:#ff3366;">
+                            <h5 class="text-danger"><i class="fas fa-shield-virus"></i> FIREWALL BANS</h5>
+                            <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-2">
+                                <input type="text" name="ip" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nhập IP..." required>
+                                <button type="submit" class="btn btn-sm btn-danger fw-bold">Chặn</button>
+                            </form>
+                            <ul class="list-group list-group-flush" style="max-height:100px;overflow-y:auto;">{blacklist_rows}</ul>
+                        </div>
+                    </div>
                 </div>
             </div>
             
-            <div class="col-lg-8">
+            <div class="col-lg-12">
                 <div class="card p-3 h-100" style="border-color:#00ffcc;">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h4><i class="fas fa-database"></i> TẤT CẢ KEY TRÊN HỆ THỐNG</h4>
-                        <div class="d-flex gap-2">
-                            <input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light border-info" style="width:250px;" placeholder="Tìm mã Key hoặc Tên khách..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
-                        </div>
+                        <h5 class="m-0"><i class="fas fa-database"></i> TẤT CẢ MÃ KEY</h5>
+                        <input type="text" id="searchInput" class="form-control form-control-sm bg-dark text-light border-info" style="width:200px;" placeholder="🔍 Tìm mã Key / Tên..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
                     </div>
-                    <div class="table-container" style="max-height:750px;">
-                        <table class="table table-dark table-sm align-middle table-hover">
-                            <thead class="table-active"><tr><th>🔑 Mã Key / Chủ Sỡ Hữu</th><th>⏳ Hạn Dùng</th><th>💻 Thông số</th><th>⚙️ Thao tác</th></tr></thead>
+                    <div class="table-container">
+                        <table class="table table-dark table-sm align-middle table-hover text-center">
+                            <thead class="table-active"><tr><th>🔑 Mã Key / Chủ</th><th>⏳ Hạn Dùng</th><th>💻 Thiết bị</th><th>⚙️ Thao tác</th></tr></thead>
                             <tbody>{keys_html}</tbody>
                         </table>
                     </div>
@@ -892,6 +1053,28 @@ def admin_dashboard():
             </div>
         </div>
     </div>
+    
+    <div class="modal fade" id="adminScriptModal" tabindex="-1" data-bs-theme="dark">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content" style="background:#11111A; border:1px solid #ff9900;">
+          <div class="modal-header border-secondary">
+            <h5 class="modal-title" style="color:#ff9900;font-weight:bold;">TÙY CHỈNH MÃ NGUỒN CHUNG (FALLBACK)</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <form action="/update_script" method="POST">
+              <div class="modal-body">
+                <p class="text-muted" style="font-size:13px;">Đoạn script này sẽ được tự động tiêm cho những khách hàng <b>không tự thiết lập Script riêng</b>.</p>
+                <textarea name="script_content" class="form-control bg-dark text-light border-warning" rows="12" style="font-family:monospace; font-size:12px;">{escape(db.get("users", {{}}).get("admin", {{}}).get("custom_script", ""))}</textarea>
+              </div>
+              <div class="modal-footer border-secondary">
+                <button type="submit" class="btn btn-warning fw-bold w-100 text-dark">LƯU CÀI ĐẶT</button>
+              </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     </body></html>
     '''
 
@@ -909,8 +1092,12 @@ def add_balance():
     with db_lock:
         if username in db.get("users", {}):
             db["users"][username]["balance"] += amt
-            # Ngăn số dư âm
             if db["users"][username]["balance"] < 0: db["users"][username]["balance"] = 0
+            
+            # Gửi Notification cho user
+            if amt > 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa nạp cho bạn +{amt:,}đ")
+            elif amt < 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa trừ của bạn {amt:,}đ")
+            
             log_admin_action(db, f"Cộng/Trừ {amt}đ cho tài khoản {username}")
             save_db(db)
     return redirect('/admin')
@@ -932,7 +1119,8 @@ def create_key():
             db["keys"][nk] = {
                 "exp": "pending", "maxDevices": md, "devices": [], 
                 "known_ips": {}, "status": "active", "vip": vip, 
-                "loader_enabled": True, "violations": 0, "temp_ban_until": 0
+                "loader_enabled": True, "violations": 0, "temp_ban_until": 0,
+                "owner": "admin"
             }
             if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
             else: db["keys"][nk]["exp"] = "permanent"
@@ -981,7 +1169,6 @@ def key_actions(action, key):
                 kd['violations'] = 0
             elif action == 'delete': 
                 db["keys"].pop(key, None)
-                # Dọn dẹp key trong túi người dùng
                 for u in db["users"]:
                     db["users"][u]["purchased_keys"] = [pk for pk in db["users"][u].get("purchased_keys", []) if pk["key"] != key]
             elif action == 'reset-dev':
