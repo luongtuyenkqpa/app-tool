@@ -35,7 +35,7 @@ _last_mtime_check = 0
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
 # ========================================================
-# CẤU HÌNH SHOP KEY MỚI NHẤT
+# CẤU HÌNH SHOP KEY
 # ========================================================
 SHOP_PACKAGES = {
     "1H": {"name": "1 Giờ", "price": 10000, "dur_ms": 3600000, "vip": False},
@@ -177,7 +177,7 @@ def firewall_and_csrf():
     db = load_db()
     banned_ips = set(db.get("banned_ips", []))
     ip = get_real_ip()
-    if ip in banned_ips: return "⚠️ IP BỊ KHÓA BỞI LVT FIREWALL.", 403
+    if ip in banned_ips: return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL (IPS LVT-SECURE).", 403
 
     ua = request.headers.get('User-Agent', '').lower()
     blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
@@ -186,12 +186,6 @@ def firewall_and_csrf():
     if request.path.startswith("/admin") and request.path != "/admin_login":
         if session.get('role') != 'admin':
             return redirect('/admin_login')
-                
-    if request.method == "POST" and request.path.startswith("/admin/"):
-        origin = request.headers.get("Origin")
-        req_host = request.headers.get("Host", "").split(':')[0]
-        if origin:
-            if urlparse(origin).netloc.split(':')[0] != req_host: return "CSRF Blocked!", 403
 
 @app.errorhandler(404)
 def not_found_trap(e):
@@ -210,11 +204,11 @@ def report_bad_signature(ip):
         with db_lock:
             if ip not in db.setdefault("banned_ips", []):
                 db["banned_ips"].append(ip)
-                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "id": ip, "reason": "Tấn công mạng / Quét thư mục ẩn"})
+                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "id": ip, "reason": "Dò mật khẩu / Quét thư mục ẩn"})
                 save_db(db)
 
 # ========================================================
-# API SPOOFER & CẤP PHÉP BƠM CODE (CÓ CHẶN GHIM OLM)
+# API SPOOFER & CẤP PHÉP BƠM CODE
 # ========================================================
 def check_api_rate_limit(ip):
     now = time.time()
@@ -261,14 +255,13 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
         if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): 
             return False, "KEY HẾT HẠN: Vui lòng lên Web mua Key mới!"
         
-        # LOGIC GHIM OLM CỰC CHẶT
         bound_olm = kd.get("bound_olm", "").strip()
         if bound_olm and req_olm_name != "N/A":
             if bound_olm.lower() != req_olm_name.lower():
-                kd["status"] = "banned" # TỬ HÌNH LUÔN
-                db.setdefault("security_alerts", []).insert(0, {"time": now, "id": ip, "user": req_olm_name, "reason": f"Sử dụng Key ({key}) sai tài khoản chỉ định ({bound_olm})"})
+                kd["status"] = "banned" # Auto Ban
+                db.setdefault("security_alerts", []).insert(0, {"time": now, "id": ip, "user": req_olm_name, "reason": f"Dùng trộm Key của {bound_olm}"})
                 save_db(db)
-                return False, f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Bạn dùng cho [{req_olm_name}] -> Key đã bị KHÓA VĨNH VIỄN!"
+                return False, f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Bạn dùng cho [{req_olm_name}]. Key đã bị Khóa!"
 
         if deviceId:
             devices = kd.setdefault("devices", [])
@@ -308,7 +301,7 @@ def serve_core_payload():
     valid, _ = _core_validate(db, key, deviceId, olm_name, ip)
     if not valid: return jsonify({"status": "error"}), 403
 
-    # Giao lại việc thiết lập script duy nhất cho Admin
+    # Lấy Script từ Admin
     custom_script = db["users"].get("admin", {}).get("custom_script", "")
 
     encoded_core = base64.b64encode(custom_script.encode('utf-8')).decode('utf-8')
@@ -352,7 +345,7 @@ def script_ping():
     return "invalid", 403
 
 # ========================================================
-# TÍNH NĂNG V2.0: MÔI TRƯỜNG ẢO HÓA (AUTO BƠM SCRIPT)
+# TÍNH NĂNG V2.0: MÔI TRƯỜNG ẢO HÓA (AUTO BƠM SCRIPT OLM)
 # ========================================================
 @app.route('/play_hack/<key>')
 def play_hack(key):
@@ -363,7 +356,7 @@ def play_hack(key):
     valid, msg = _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=ip)
     if not valid:
         session.pop('active_key', None)
-        return swal_redirect("TRỤC XUẤT", msg, "error", "/key_dashboard")
+        return swal_redirect("TRỤC XUẤT", msg, "error", "/dashboard")
 
     custom_script = db["users"].get("admin", {}).get("custom_script", "")
 
@@ -384,13 +377,9 @@ def play_hack(key):
         <iframe id="olm-frame" src="https://olm.vn"></iframe>
         <div id="lvt-overlay-ui"></div>
         <script>
-            try {{
-                {custom_script}
-            }} catch(e) {{ console.error("Lỗi Script:", e); }}
-            
+            try {{ {custom_script} }} catch(e) {{ console.error("Lỗi Script:", e); }}
             setInterval(() => {{
-                fetch('/api/script_ping', {{
-                    method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{key: "{key}"}})
+                fetch('/api/script_ping', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{key: "{key}"}})
                 }}).then(r=>r.text()).then(res => {{
                     if(res === "Banned for sharing") {{
                         alert("⚠️ HỆ THỐNG: Phát hiện Share Key hoặc vi phạm. Bạn đã bị đá về Web!"); 
@@ -404,17 +393,22 @@ def play_hack(key):
     """
 
 # ========================================================
-# GIAO DIỆN KHÁCH HÀNG (TRANG CHỦ / SHOP)
+# GIAO DIỆN CSS & HTML TOÀN CỤC Y HỆT ẢNH
 # ========================================================
 CSS_GLASS = """
-body { background: #05050A; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0;}
-.glass-panel { background: rgba(20, 25, 35, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(0, 255, 204, 0.3); border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); padding: 40px; text-align: center; width: 100%; max-width: 400px; margin: 50px auto; }
-h2 { color: #00ffcc; font-weight: 900; letter-spacing: 1px; margin-bottom: 30px; text-shadow: 0 0 15px rgba(0,255,204,0.5); }
-.form-control { background: rgba(0,0,0,0.5) !important; border: 1px solid #333 !important; color: #fff !important; padding: 12px; border-radius: 8px; margin-bottom: 15px; }
-.form-control:focus { border-color: #00ffcc !important; box-shadow: 0 0 10px rgba(0,255,204,0.3) !important; }
-.btn-neon { background: linear-gradient(45deg, #00ffcc, #bd00ff); border: none; color: #000; font-weight: bold; width: 100%; padding: 12px; border-radius: 8px; transition: 0.3s; margin-top: 10px; cursor: pointer; }
+:root { --bg: #05050A; --panel: #11111A; --cyan: #00ffcc; --purple: #bd00ff; --blue: #0099ff; }
+body { background: var(--bg); color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0;}
+.glass-panel { background: var(--panel); border: 1px solid rgba(0, 255, 204, 0.3); border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); padding: 40px; text-align: center; width: 100%; max-width: 400px; margin: 50px auto; }
+h2, h3, h4, h5 { color: var(--cyan); font-weight: 900; letter-spacing: 1px; }
+.card { background: var(--panel); border-radius: 15px; border: 1px solid #333; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: 0.3s; }
+.card:hover { border-color: var(--cyan); box-shadow: 0 0 15px rgba(0,255,204,0.1); }
+.form-control, .form-select { background: #0a0a12 !important; border: 1px solid #444 !important; color: #fff !important; padding: 12px; border-radius: 8px; }
+.form-control:focus, .form-select:focus { border-color: var(--cyan) !important; box-shadow: 0 0 10px rgba(0,255,204,0.3) !important; }
+.btn-neon { background: linear-gradient(45deg, var(--cyan), var(--purple)); border: none; color: #000; font-weight: bold; width: 100%; padding: 12px; border-radius: 8px; transition: 0.3s; cursor: pointer; }
 .btn-neon:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,255,204,0.4); }
-a.link-neon { color: #bd00ff; text-decoration: none; font-weight: bold; transition: 0.3s; }
+a.link-neon { color: var(--purple); text-decoration: none; font-weight: bold; transition: 0.3s; }
+a.link-neon:hover { color: var(--cyan); text-shadow: 0 0 10px var(--cyan); }
+.table-dark { --bs-table-bg: transparent; }
 """
 
 @app.route('/')
@@ -422,12 +416,13 @@ def home():
     shop_html = ""
     for pkg_id, pkg in SHOP_PACKAGES.items():
         vip_tag = '<div class="badge bg-danger mb-2">🔥 VIP PRO</div>' if pkg["vip"] else '<div class="badge bg-secondary mb-2">THƯỜNG</div>'
+        border_c = "#bd00ff" if pkg["vip"] else "#0099ff"
         shop_html += f'''
         <div class="col-md-3 col-6 mb-3">
-            <div class="card bg-dark border-secondary p-3 h-100 text-center" style="transition:0.3s;border-radius:15px;" onmouseover="this.style.borderColor='#00ffcc';this.style.transform='translateY(-5px)';" onmouseout="this.style.borderColor='#6c757d';this.style.transform='translateY(0)';">
+            <div class="card p-3 h-100 text-center" style="border-color:{border_c};">
                 {vip_tag}
-                <h4 class="text-white fw-bold">{pkg["name"]}</h4>
-                <div style="font-size:24px;font-weight:900;color:#bd00ff;margin:10px 0;">{pkg["price"]:,}đ</div>
+                <h5 class="text-white fw-bold">{pkg["name"]}</h5>
+                <div style="font-size:22px;font-weight:900;color:{border_c};margin:10px 0;">{pkg["price"]:,}đ</div>
                 <a href="/login" class="btn btn-outline-info w-100 mt-auto fw-bold">MUA NGAY</a>
             </div>
         </div>'''
@@ -437,7 +432,7 @@ def home():
         session['welcomed'] = True
         welcome_script = "Swal.fire({ title: 'CHÀO MỪNG ĐẾN VỚI LVT TOOL!', html: 'Hệ thống tự động hóa và bảo mật đỉnh cao.<br><b style=\"color:#00ffcc\">Khám phá ngay!</b>', icon: 'info', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff' });"
 
-    return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT TOOL - Trang Chủ</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body{{background:#05050A;color:#fff;font-family:'Segoe UI',sans-serif;overflow-x:hidden;}} .hero{{background:linear-gradient(135deg,#000,#0a192f);padding:80px 20px;text-align:center;border-bottom:1px solid #00ffcc;}}</style></head><body>
+    return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT TOOL - Trang Chủ</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS} .hero{{background:linear-gradient(135deg,#000,#0a192f);padding:80px 20px;text-align:center;border-bottom:1px solid #00ffcc;}}</style></head><body>
     <div class="hero"><h1 style="color:#00ffcc;font-weight:900;text-shadow:0 0 15px #00ffcc;">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1><p class="text-secondary fs-5 mb-4">Tự động hóa thông minh - Bảo mật đa tầng - Kích hoạt trên di động dễ dàng</p><a href="#shop" class="btn btn-lg fw-bold mb-2" style="background:#00ffcc;color:#000;">XEM BẢNG GIÁ</a> <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-md-2 mb-2">ĐĂNG NHẬP</a></div>
     <div class="container py-5" id="shop"><h2 class="text-center fw-bold mb-5" style="color:#00ffcc;">BẢNG GIÁ DỊCH VỤ</h2><div class="row justify-content-center">{shop_html}</div></div><script>{welcome_script}</script></body></html>'''
 
@@ -514,13 +509,14 @@ def user_dashboard():
     shop_html = ""
     for pkg_id, pkg in SHOP_PACKAGES.items():
         vip_tag = '<div class="badge bg-danger mb-2">🔥 VIP PRO</div>' if pkg["vip"] else '<div class="badge bg-secondary mb-2">THƯỜNG</div>'
+        border_c = "#bd00ff" if pkg["vip"] else "#0099ff"
         shop_html += f'''
-        <div class="col-lg-3 col-6">
-            <div class="card bg-dark border-secondary text-center p-3 h-100" style="transition:0.3s; border-radius:15px;" onmouseover="this.style.borderColor='#00ffcc'" onmouseout="this.style.borderColor='#6c757d'">
+        <div class="col-lg-3 col-6 mb-3">
+            <div class="card p-3 h-100 text-center" style="border-color:{border_c};">
                 {vip_tag}
-                <h6 class="text-white fw-bold">{pkg['name']}</h6>
-                <h4 style="color:#bd00ff; font-weight:900;">{pkg['price']:,}đ</h4>
-                <button class="btn btn-sm w-100 fw-bold mt-auto" style="background:#00ffcc; color:#000;" onclick="confirmBuy('{pkg_id}', '{pkg['name']}', {pkg['price']})">MUA NGAY</button>
+                <h5 class="text-white fw-bold">{pkg['name']}</h5>
+                <h4 style="color:{border_c}; font-weight:900;">{pkg['price']:,}đ</h4>
+                <button class="btn btn-sm w-100 fw-bold mt-auto" style="background:{border_c}; color:#fff;" onclick="confirmBuy('{pkg_id}', '{pkg['name']}', {pkg['price']})">MUA NGAY</button>
             </div>
         </div>'''
 
@@ -533,19 +529,18 @@ def user_dashboard():
     return f'''
     <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Dashboard - User</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <style>body{{background:#05050A;color:#e0e0e0;font-family:'Segoe UI',sans-serif;}} .card{{background:#11111A;border-radius:15px;border:1px solid #333;box-shadow:0 5px 15px rgba(0,0,0,0.5);}}</style></head>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS}</style></head>
     <body class="p-2 p-md-4">
     <div class="container" style="max-width:1100px;">
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-            <h2 style="color:#00ffcc; font-weight:900;" class="mb-3 mb-md-0">⚡ LVT SHOP CÁ NHÂN</h2>
+            <h2 style="margin:0;">⚡ LVT VIP DASHBOARD</h2>
             <div><span class="me-3">Xin chào, <b class="text-info">{username.upper()}</b></span> <a href="/logout" class="btn btn-sm btn-outline-danger">Thoát</a></div>
         </div>
         <div class="row g-4">
             <div class="col-md-4">
                 <div class="card p-4 text-center border-info h-100">
                     <h5 class="text-secondary">SỐ DƯ CỦA BẠN</h5>
-                    <h2 style="color:#00ffcc; font-weight:900; font-size:40px;">{balance:,}<small style="font-size:20px;">đ</small></h2>
+                    <h2 style="color:#00ffcc; font-size:40px;">{balance:,}<small style="font-size:20px;">đ</small></h2>
                     <hr class="border-secondary">
                     <p class="text-warning mb-1" style="font-size:14px;"><i class="fas fa-university"></i> <b>CÁCH NẠP TIỀN AUTO</b></p>
                     <p class="text-muted" style="font-size:12px;">Chuyển khoản với nội dung:<br><strong class="text-white fs-6">NAP {username.upper()}</strong></p>
@@ -554,15 +549,13 @@ def user_dashboard():
             </div>
             <div class="col-md-8">
                 <div class="card p-4 border-secondary h-100">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h4 style="color:#bd00ff; font-weight:900; margin:0;"><i class="fas fa-shopping-cart"></i> MUA MÃ KEY MỚI</h4>
-                    </div>
-                    <div class="row g-3">{shop_html}</div>
+                    <h4 style="color:#bd00ff; margin-bottom:15px;"><i class="fas fa-shopping-cart"></i> MUA MÃ KEY MỚI</h4>
+                    <div class="row g-2">{shop_html}</div>
                 </div>
             </div>
             <div class="col-12">
                 <div class="card p-4 border-success text-center">
-                    <h4 style="color:#00ffcc; font-weight:900; margin-bottom:10px;"><i class="fas fa-rocket"></i> VÀO PHÒNG ĐIỀU KHIỂN HACK</h4>
+                    <h4 style="color:#00ffcc; margin-bottom:10px;"><i class="fas fa-rocket"></i> VÀO PHÒNG ĐIỀU KHIỂN HACK</h4>
                     <p class="text-muted">Nơi Quản lý Key, lấy mã kích hoạt và bơm thẳng vào OLM.</p>
                     {key_btn}
                 </div>
@@ -636,7 +629,6 @@ def buy_key():
         <div style='background:#000; padding:10px; border:1px dashed #00ffcc; border-radius:5px; text-align:center; font-family:monospace; font-size:18px; color:#00ffcc; margin-bottom:15px; cursor:pointer;' onclick='navigator.clipboard.writeText("{nk}");Swal.showValidationMessage("Đã copy!");'>{nk}</div></div>"""
     return swal_redirect("🎉 MUA KEY THÀNH CÔNG!", html_msg, "success", "/key_dashboard")
 
-
 # ========================================================
 # HỆ THỐNG ĐĂNG NHẬP KEY & KÍCH HOẠT HACK (KEY DASHBOARD)
 # ========================================================
@@ -652,27 +644,17 @@ def key_login():
             return swal_redirect("Chấp nhận mã Key!", "Đang đưa bạn vào Khoang Lái...", "success", "/key_dashboard")
         return swal_redirect("Thất bại", "Mã Key không tồn tại trong hệ thống!", "error", "/key_login")
 
-    return f'''
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kích Hoạt Key</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head>
-    <body><div class="glass-panel"><h2>🔑 KHỞI ĐỘNG KEY SỬ DỤNG</h2>
-    <form method="POST"><input type="text" name="key_input" class="form-control" placeholder="Dán mã Key của bạn vào đây..." required><button type="submit" class="btn-neon">ĐĂNG NHẬP KEY</button></form>
-    <div class="mt-4"><a href="/dashboard" class="link-neon">⬅ Trở về Quầy Shop</a></div>
-    </div></body></html>
-    '''
+    return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kích Hoạt Key</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2>🔑 KHỞI ĐỘNG KEY</h2><form method="POST"><input type="text" name="key_input" class="form-control" placeholder="Dán mã Key của bạn vào đây..." required><button type="submit" class="btn-neon">ĐĂNG NHẬP KEY</button></form><div class="mt-4"><a href="/dashboard" class="link-neon">⬅ Trở về Quầy Shop</a></div></div></body></html>'''
 
 @app.route('/key_dashboard')
 def key_dashboard():
     if 'username' not in session: return redirect('/login')
     
-    # Auto Set Active Key if only 1 key exists and not set
     db = load_db()
     if not session.get('active_key'):
         purchased = db["users"].get(session['username'], {}).get("purchased_keys", [])
-        if len(purchased) > 0:
-            session['active_key'] = purchased[0]["key"]
-        else:
-            return redirect('/key_login')
+        if len(purchased) > 0: session['active_key'] = purchased[0]["key"]
+        else: return redirect('/key_login')
 
     active_key = session.get('active_key')
     kd = db.get("keys", {}).get(active_key)
@@ -711,12 +693,11 @@ def key_dashboard():
     return f'''
     <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Phòng Điều Khiển</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <style>body{{background:#05050A;color:#e0e0e0;font-family:'Segoe UI',sans-serif;}} .card-vip{{background:#11111A;border:2px solid {vip_color};border-radius:15px;box-shadow:0 0 20px {vip_color}44;}}</style></head>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS} .card-vip{{background:#11111A;border:2px solid {vip_color};border-radius:15px;box-shadow:0 0 20px {vip_color}44;}}</style></head>
     <body class="p-3">
     <div class="container" style="max-width:800px;">
         <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-2">
-            <h3 style="color:{vip_color};font-weight:900;margin:0;">⚡ KHOANG LÁI HACK</h3>
+            <h3 style="color:{vip_color};margin:0;">⚡ KHOANG LÁI HACK</h3>
             <a href="/dashboard" class="btn btn-outline-light btn-sm">Về Shop</a>
         </div>
         
@@ -734,7 +715,7 @@ def key_dashboard():
         <div class="row g-3">
             <div class="col-md-12">
                 <div class="p-3 bg-dark border border-info rounded h-100 text-center">
-                    <h5 class="text-info fw-bold"><i class="fas fa-sync-alt"></i> RESET HWID (ĐỔI MÁY / ĐỔI OLM)</h5>
+                    <h5 class="text-info"><i class="fas fa-sync-alt"></i> RESET HWID (ĐỔI MÁY / ĐỔI OLM)</h5>
                     <p class="text-muted" style="font-size:13px;">Phí reset: <b class="text-white">{reset_txt}</b></p>
                     <form action="/user_reset_hwid" method="POST" onsubmit="return confirm('Chắc chắn muốn Reset thiết bị & định danh OLM cho Key này?')"><button class="btn btn-info w-100 fw-bold mt-2 text-dark">THỰC HIỆN RESET</button></form>
                 </div>
@@ -747,16 +728,10 @@ def key_dashboard():
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         function copyT(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã sao chép Key!',showConfirmButton:false,timer:1500,background:'#111',color:'#fff'}}); }}
-        
         function activateHackAuto(key) {{
             Swal.fire({{
-                title: 'ĐANG KHỞI TẠO MÔI TRƯỜNG...',
-                html: 'Hệ thống đang chuẩn bị Bơm Mã vào <b>OLM.VN</b>. Vui lòng chờ...',
-                icon: 'info', background: '#11111A', color: '#fff', allowOutsideClick: false,
-                didOpen: () => {{
-                    Swal.showLoading();
-                    setTimeout(() => {{ window.location.href = '/play_hack/' + key; }}, 1500);
-                }}
+                title: 'ĐANG KHỞI TẠO MÔI TRƯỜNG...', html: 'Hệ thống đang chuẩn bị Bơm Mã vào <b>OLM.VN</b>. Vui lòng chờ...', icon: 'info', background: '#11111A', color: '#fff', allowOutsideClick: false,
+                didOpen: () => {{ Swal.showLoading(); setTimeout(() => {{ window.location.href = '/play_hack/' + key; }}, 1500); }}
             }});
         }}
     </script></body></html>
@@ -776,29 +751,23 @@ def user_reset_hwid():
         
         rc = kd.get("reset_count", 0)
         if rc == 0:
-            kd["devices"] = []
-            kd["known_ips"] = {}
-            kd["bound_olm"] = "" # Reset cả định danh
-            kd["reset_count"] += 1
+            kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
             save_db(db)
-            return swal_redirect("Reset Thành Công!", "Đã gỡ thiết bị và xóa định danh OLM miễn phí (Lần 1).", "success", "/key_dashboard")
+            return swal_redirect("Reset Thành Công!", "Đã gỡ thiết bị và định danh OLM miễn phí (Lần 1).", "success", "/key_dashboard")
         else:
-            if u["balance"] < 10000:
-                return swal_redirect("Thất bại!", "Bạn cần 10,000đ để Reset từ lần thứ 2 trở đi.", "error", "/key_dashboard")
+            if u["balance"] < 10000: return swal_redirect("Thất bại!", "Bạn cần 10,000đ để Reset từ lần thứ 2 trở đi.", "error", "/key_dashboard")
             u["balance"] -= 10000
-            kd["devices"] = []
-            kd["known_ips"] = {}
-            kd["bound_olm"] = ""
-            kd["reset_count"] += 1
+            kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
             save_db(db)
             return swal_redirect("Reset Thành Công!", "Đã trừ 10,000đ và gỡ thiết bị thành công.", "success", "/key_dashboard")
 
 # ========================================================
-# GIAO DIỆN WEB ADMIN QUẢN LÝ TỔNG TÀI KHOẢN VÀ KEY
+# GIAO DIỆN WEB ADMIN QUẢN LÝ
 # ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == 'POST':
+        # BỎ TÍNH NĂNG BAN IP 5 LẦN
         db = load_db()
         username = request.form.get('username', '').strip().lower()
         pwd = request.form.get('password', '').strip()
@@ -813,9 +782,9 @@ def admin_login():
             save_db(db)
             return redirect('/admin')
             
-        return swal_redirect("Từ Chối Truy Cập", f"Thông tin sai!", "error", "/admin_login")
+        return swal_redirect("Từ Chối Truy Cập", f"Tài khoản hoặc mật khẩu Admin không đúng!", "error", "/admin_login")
     
-    return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2>🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control" placeholder="Mật Khẩu" required><button type="submit" class="btn btn-neon">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
+    return f'''<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2>🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
 
 @app.route('/admin')
 def admin_dashboard():
@@ -848,8 +817,7 @@ def admin_dashboard():
                     <button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;">CỘNG</button>
                 </form>
             </td>
-        </tr>
-        '''
+        </tr>'''
 
     keys_html = ''
     for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
@@ -902,7 +870,7 @@ def admin_dashboard():
     return f'''
     <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ADMIN DASHBOARD</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <style>body{{background:#05050A;color:#e0e0e0;font-family:'Segoe UI',sans-serif;font-size:13px;}} .card{{background:#11111A;border:1px solid #333;border-radius:12px;}} h5{{color:#00ffcc;font-weight:900;}} .table-container{{max-height:450px;overflow-y:auto;}} tbody tr:hover{{background:rgba(0,255,204,0.05)!important;}}</style>
+    <style>{CSS_GLASS} .card{{background:#11111A;border:1px solid #333;border-radius:12px;}} h5{{color:#00ffcc;font-weight:900;}} .table-container{{max-height:450px;overflow-y:auto;}} tbody tr:hover{{background:rgba(0,255,204,0.05)!important;}}</style>
     </head><body class="p-2 p-md-4">
     <div class="container-fluid">
         <div class="d-flex justify-content-between align-items-center mb-3 border-bottom border-secondary pb-2">
@@ -912,18 +880,19 @@ def admin_dashboard():
         
         <div class="row g-3">
             <div class="col-lg-6">
-                <div class="row g-3 h-100">
-                    <div class="col-md-6">
-                        <div class="card p-3 h-100" style="border-color:#3366ff;">
-                            <h5 style="color:#3366ff;"><i class="fas fa-users"></i> DANH SÁCH USER</h5>
-                            <div class="table-container">
-                                <table class="table table-dark table-hover table-sm align-middle mb-0 text-center">
-                                    <thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Tài sản</th><th>Nạp Tiền</th></tr></thead>
-                                    <tbody>{users_html}</tbody>
-                                </table>
-                            </div>
-                        </div>
+                <div class="card p-3 h-100" style="border-color:#3366ff;">
+                    <h5 style="color:#3366ff;"><i class="fas fa-users"></i> DANH SÁCH USER</h5>
+                    <div class="table-container">
+                        <table class="table table-dark table-hover table-sm align-middle mb-0 text-center">
+                            <thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Tài sản</th><th>Nạp Tiền</th></tr></thead>
+                            <tbody>{users_html}</tbody>
+                        </table>
                     </div>
+                </div>
+            </div>
+
+            <div class="col-lg-6">
+                <div class="row g-3 h-100">
                     <div class="col-md-6">
                         <div class="card p-3 h-100" style="border-color:#bd00ff;">
                             <h5 style="color:#bd00ff;"><i class="fas fa-key"></i> TẠO KEY (TẶNG KHÁCH)</h5>
@@ -935,33 +904,13 @@ def admin_dashboard():
                                 <div class="col-12 mt-2"><button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#bd00ff;color:white;">🚀 TẠO NGAY</button></div>
                             </form>
                             <hr class="border-secondary my-3">
-                            <h5 style="color:#ff9900;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH</h5>
-                            <button class="btn btn-sm btn-outline-warning w-100 fw-bold" data-bs-toggle="modal" data-bs-target="#adminScriptModal">Sửa Code Fallback</button>
+                            <h5 style="color:#ff9900;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH CHO SERVER</h5>
+                            <button class="btn btn-sm btn-outline-warning w-100 fw-bold" data-bs-toggle="modal" data-bs-target="#adminScriptModal">Mở Bảng Mã Nguồn</button>
                         </div>
                     </div>
-                </div>
-            </div>
-
-            <div class="col-lg-6">
-                <div class="card p-3 h-100" style="border-color:#00ffcc;">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="m-0"><i class="fas fa-database"></i> TẤT CẢ MÃ KEY</h5>
-                        <input type="text" class="form-control form-control-sm bg-dark text-light border-info" style="width:160px;" placeholder="🔍 Tìm Key / Tên..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
-                    </div>
-                    <div class="table-container">
-                        <table class="table table-dark table-sm align-middle table-hover text-center mb-0">
-                            <thead class="table-active"><tr><th>🔑 Key / Chủ / OLM</th><th>⏳ Hạn Dùng</th><th>💻 IP</th><th>⚙️ Thao tác</th></tr></thead>
-                            <tbody>{keys_html}</tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="col-lg-12">
-                <div class="row g-3">
                     <div class="col-md-6">
                         <div class="card p-3 h-100" style="border-color:#ff3366;">
-                            <h5 class="text-danger"><i class="fas fa-shield-virus"></i> FIREWALL BANS IP</h5>
+                            <h5 class="text-danger"><i class="fas fa-shield-virus"></i> FIREWALL BANS</h5>
                             <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-2">
                                 <input type="text" name="ip" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nhập IP..." required>
                                 <button type="submit" class="btn btn-sm btn-danger fw-bold">Chặn</button>
@@ -969,11 +918,20 @@ def admin_dashboard():
                             <ul class="list-group list-group-flush" style="max-height:100px;overflow-y:auto;">{blacklist_rows}</ul>
                         </div>
                     </div>
-                    <div class="col-md-6">
-                        <div class="card p-3 h-100" style="border-color:#888;">
-                            <h5 class="text-secondary"><i class="fas fa-list-ul"></i> LOGS HOẠT ĐỘNG SERVER</h5>
-                            <ul class="list-group list-group-flush" style="max-height:100px;overflow-y:auto;">{logs_html}</ul>
-                        </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-12">
+                <div class="card p-3 h-100" style="border-color:#00ffcc;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="m-0"><i class="fas fa-database"></i> TẤT CẢ MÃ KEY</h5>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-info" style="width:200px;" placeholder="🔍 Tìm Key / Tên..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
+                    </div>
+                    <div class="table-container">
+                        <table class="table table-dark table-sm align-middle table-hover text-center mb-0">
+                            <thead class="table-active"><tr><th>🔑 Key / Chủ / OLM</th><th>⏳ Hạn Dùng</th><th>💻 Thiết bị</th><th>⚙️ Thao tác</th></tr></thead>
+                            <tbody>{keys_html}</tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -984,8 +942,8 @@ def admin_dashboard():
       <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content" style="background:#11111A; border:1px solid #ff9900;">
           <form action="/admin/update_script" method="POST">
-              <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ff9900;font-weight:bold;">MÃ NGUỒN CHUNG (SƠ CUA)</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-              <div class="modal-body"><textarea name="script_content" class="form-control bg-dark text-light border-warning" rows="12" style="font-family:monospace; font-size:12px;">{escape(db.get("users", {{}}).get("admin", {{}}).get("custom_script", ""))}</textarea></div>
+              <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ff9900;font-weight:bold;">TÙY CHỈNH MÃ NGUỒN HACK (LÕI)</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+              <div class="modal-body"><textarea name="script_content" class="form-control bg-dark text-light border-warning" rows="15" style="font-family:monospace; font-size:12px;">{escape(db.get("users", {{}}).get("admin", {{}}).get("custom_script", ""))}</textarea></div>
               <div class="modal-footer border-secondary"><button type="submit" class="btn btn-warning fw-bold w-100 text-dark">LƯU CÀI ĐẶT</button></div>
           </form>
         </div>
