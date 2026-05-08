@@ -36,9 +36,9 @@ _last_mtime_check = 0
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
 # ========================================================
-# SCRIPT VIOLENTMONKEY (V9.0) ẨN TRONG SERVER
+# SCRIPT VIOLENTMONKEY MẶC ĐỊNH (SẼ ĐƯỢC LƯU VÀO DATABASE)
 # ========================================================
-OLM_SCRIPT = """// ==UserScript==
+DEFAULT_OLM_SCRIPT = """// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP (CLOUD AUTH + WEB SYNC + NEW UI)
 // @namespace    http://tampermonkey.net/
 // @version      9.0
@@ -395,13 +395,17 @@ def load_db():
                 try:
                     with open(DB_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
                 except Exception: pass
-            if not data: data = {"users": {}, "keys": {}, "banned_ips": [], "admin_logs": [], "security_alerts": []}
+            if not data: data = {"users": {}, "keys": {}, "banned_ips": [], "admin_logs": [], "security_alerts": [], "settings": {}}
             try:
                 data.setdefault("users", {})
                 data.setdefault("keys", {})
                 data.setdefault("banned_ips", [])
                 data.setdefault("admin_logs", [])
                 data.setdefault("security_alerts", []) 
+                data.setdefault("settings", {})
+                
+                if "violentmonkey_script" not in data["settings"]:
+                    data["settings"]["violentmonkey_script"] = DEFAULT_OLM_SCRIPT
                 
                 if "admin" not in data["users"]:
                     data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin", "balance": 0, "created_at": int(time.time() * 1000), "ips": [], "purchased_keys": [], "notices": [], "custom_script": 'console.log("HACK OLM BY LVT ĐÃ KÍCH HOẠT!");\n// Dán code hack gốc vào đây...'}
@@ -615,7 +619,6 @@ def check_api():
         valid, msg = _core_validate(db, key, deviceId, olm_name, ip)
         if not valid: return jsonify({"status": "error", "message": msg}), 400
 
-        # TRẢ VỀ THÊM TÊN TÀI KHOẢN ĐÃ GHIM ĐỂ SCRIPT CHẶN
         return jsonify({
             "status": "success", 
             "loader_enabled": db["keys"][key].get("loader_enabled", True),
@@ -705,12 +708,15 @@ def script_ping():
 
 @app.route('/api/script/olm_vip.user.js')
 def serve_olm_script():
-    resp = make_response(OLM_SCRIPT)
+    db = load_db()
+    # Lấy Script mới nhất từ DB
+    script_content = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
+    resp = make_response(script_content)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
 # ========================================================
-# GIAO DIỆN CSS & HTML TOÀN CỤC Y HỆT ẢNH
+# GIAO DIỆN CSS & HTML TOÀN CỤC
 # ========================================================
 CSS_GLASS = """
 body { background-color: #05050A !important; color: #fff !important; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0; }
@@ -813,9 +819,6 @@ def logout():
     session.clear()
     return redirect('/')
 
-# ========================================================
-# DASHBOARD NGƯỜI DÙNG & QUẢN LÝ KEY CỦA TÔI
-# ========================================================
 @app.route('/dashboard')
 def user_dashboard():
     try:
@@ -850,13 +853,12 @@ def user_dashboard():
                 </div>
             </div>'''
 
-        # DANH SÁCH KEY ĐÃ MUA CỦA NGƯỜI DÙNG
         now = int(time.time() * 1000)
         my_keys_html = ""
         for pk in owned_keys:
             k = pk['key']
             kd = db["keys"].get(k)
-            if not kd: continue # Key đã bị admin xóa
+            if not kd: continue 
             
             exp = kd.get("exp")
             if exp == "permanent": exp_str = '<span class="text-success">Vĩnh viễn</span>'
@@ -867,6 +869,9 @@ def user_dashboard():
                 
             rc = kd.get("reset_count", 0)
             vip_icon = "💎 " if kd.get("vip") else "🔑 "
+            bound_olm = kd.get("bound_olm", "")
+            bound_str = f'<span class="text-warning fw-bold">{escape(bound_olm)}</span>' if bound_olm else '<span class="text-muted">Chưa ghim</span>'
+
             my_keys_html += f'''
             <tr>
                 <td>
@@ -874,6 +879,7 @@ def user_dashboard():
                 </td>
                 <td>{exp_str}</td>
                 <td>{rc} lần</td>
+                <td>{bound_str}</td>
                 <td>
                     <form action="/user_delete_key" method="POST" onsubmit="return confirm('Bạn có chắc chắn muốn xóa vĩnh viễn Key này khỏi tài khoản của bạn?');" class="m-0">
                         <input type="hidden" name="key_to_delete" value="{k}">
@@ -883,7 +889,7 @@ def user_dashboard():
             </tr>
             '''
         if not my_keys_html:
-            my_keys_html = '<tr><td colspan="4" class="text-muted py-4">Bạn chưa có Key nào. Vui lòng mua Key bên trên!</td></tr>'
+            my_keys_html = '<tr><td colspan="5" class="text-muted py-4">Bạn chưa có Key nào. Vui lòng mua Key bên trên!</td></tr>'
 
         return f'''
         <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Dashboard - User</title>
@@ -933,7 +939,7 @@ def user_dashboard():
                         <div class="table-responsive">
                             <table class="table table-dark table-hover table-sm align-middle text-center mb-0">
                                 <thead class="table-active">
-                                    <tr><th>🔑 Mã Key (Bấm copy)</th><th>⏳ Thời gian</th><th>🔄 Lượt Reset</th><th>⚙️ Thao tác</th></tr>
+                                    <tr><th>🔑 Mã Key (Bấm copy)</th><th>⏳ Thời gian</th><th>🔄 Lượt Reset</th><th>👤 OLM Đã Ghim</th><th>⚙️ Thao tác</th></tr>
                                 </thead>
                                 <tbody>
                                     {my_keys_html}
@@ -1037,9 +1043,6 @@ def user_delete_key():
         return swal_redirect("Thành Công!", "Đã xóa Key vĩnh viễn khỏi hệ thống.", "success", "/dashboard")
     except Exception as e: return swal_back("Lỗi", str(e), "error")
 
-# ========================================================
-# HỆ THỐNG ĐĂNG NHẬP KEY & KÍCH HOẠT HACK (KEY DASHBOARD MỚI)
-# ========================================================
 @app.route('/key_login', methods=['GET', 'POST'])
 def key_login():
     try:
@@ -1130,7 +1133,7 @@ def key_dashboard():
             <div class="row g-3">
                 <div class="col-12 mt-4 text-center">
                     <p class="text-warning fw-bold mb-2">🚀 Ấn nút bên dưới hệ thống sẽ tự động đồng bộ Key và mở khóa OLM.VN</p>
-                    <a href="https://olm.vn/?lvt_key={active_key}" target="_blank" class="btn w-100 p-3 fw-bold fs-5 text-dark" style="background:linear-gradient(45deg,#00ffcc,#0099ff);box-shadow:0 0 20px rgba(0,255,204,0.4);border-radius:12px;">
+                    <a href="https://olm.vn/?lvt_key={active_key}" target="_blank" class="btn w-100 p-3 fw-bold fs-5 text-dark" style="background:linear-gradient(45deg,#00ffcc,#0099ff);box-shadow:0 0 20px rgba(0,255,204,0.4);border-radius:12px;" onclick="checkInstallFirst(event, this.href)">
                         MỞ KHÓA VÀ SỬ DỤNG HACK NGAY
                     </a>
                     <div class="mt-3">
@@ -1143,6 +1146,15 @@ def key_dashboard():
         <script>
             function copyT(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã sao chép Key!',showConfirmButton:false,timer:1500,background:'#111',color:'#fff'}}); }}
             
+            function checkInstallFirst(e, link) {{
+                // Hiển thị một SweetAlert nhỏ để nhắc nhở có thể tự nhấn chuyển trang
+                Swal.fire({{
+                    toast: true, position: 'top', icon: 'info',
+                    title: 'Đang mở khóa OLM...', text: 'Hãy chắc chắn bạn đã cài đặt tiện ích Script trước đó!',
+                    showConfirmButton: false, timer: 2000, background: '#111', color: '#fff'
+                }});
+            }}
+
             let expVal = "{exp_val}";
             let timerEl = document.getElementById('timer');
             if(expVal === "permanent") {{ timerEl.innerHTML = "<span class='text-success'>VĨNH VIỄN</span>"; timerEl.classList.replace('text-danger', 'text-success'); }}
@@ -1164,35 +1176,6 @@ def key_dashboard():
         '''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
-@app.route('/user_reset_hwid', methods=['POST'])
-def user_reset_hwid():
-    try:
-        if 'username' not in session: return redirect('/login')
-        active_key = session.get('active_key')
-        if not active_key: return redirect('/key_login')
-        
-        db = load_db()
-        with db_lock:
-            u = db["users"].get(session['username'])
-            kd = db["keys"].get(active_key)
-            if not kd: return swal_back("Lỗi", "Key không tồn tại", "error")
-            
-            rc = kd.get("reset_count", 0)
-            if rc == 0:
-                kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
-                save_db(db)
-                return swal_redirect("Reset Thành Công!", "Đã gỡ thiết bị và xóa định danh OLM miễn phí (Lần 1).", "success", "/key_dashboard")
-            else:
-                if u["balance"] < 10000: return swal_back("Thất bại!", "Bạn cần 10,000đ để Reset từ lần thứ 2 trở đi.", "error")
-                u["balance"] -= 10000
-                kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
-                save_db(db)
-                return swal_redirect("Reset Thành Công!", "Đã trừ 10,000đ và gỡ thiết bị thành công.", "success", "/key_dashboard")
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
-
-# ========================================================
-# GIAO DIỆN WEB ADMIN QUẢN LÝ
-# ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
     try:
@@ -1274,18 +1257,21 @@ def admin_dashboard():
             
             if is_expired and not is_banned: status_badge = '<span class="badge bg-secondary">HẾT HẠN</span>'
             safe_k = escape(str(k))
+            bound_olm = escape(data.get('bound_olm', ''))
+            bnd_html = f"<br><small class='text-danger'>Ghim: {bound_olm}</small>" if bound_olm else ""
 
             keys_html += f'''
             <tr class="key-row">
                 <td>
                     <strong class="text-info" style="font-size:12px; cursor:pointer;" onclick="copyKey('{safe_k}')" title="Bấm để copy">{safe_k} <i class="fas fa-copy text-muted"></i></strong><br>
                     {vip_badge} {status_badge}<br>
-                    <small class="text-warning">Chủ: {escape(data.get('owner', 'Admin'))}</small>
+                    <small class="text-warning">Chủ: {escape(data.get('owner', 'Admin'))}</small>{bnd_html}
                 </td>
                 <td style="font-size:11px;">{exp_text}</td>
                 <td><span class="badge bg-info text-dark">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
                 <td>
                     <div class="d-flex flex-wrap gap-1 justify-content-center">
+                        <button class="btn btn-warning btn-sm" style="font-size:10px;" onclick="openBindModal('{safe_k}', '{bound_olm}')">Ghim</button>
                         <a href="/admin/action/reset-dev/{safe_k}" class="btn btn-primary btn-sm" style="font-size:10px;">🔄 Máy</a>
                         <a href="/admin/action/unban_temp/{safe_k}" class="btn btn-success btn-sm" style="font-size:10px;">Gỡ Phạt</a>
                         <a href="/admin/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-{"light" if is_banned else "danger"} btn-sm" style="font-size:10px;">{"Cứu" if is_banned else "Trảm"}</a>
@@ -1298,6 +1284,7 @@ def admin_dashboard():
         if not blacklist_rows: blacklist_rows = '<li class="list-group-item bg-dark text-muted text-center" style="font-size:12px;">Sạch sẽ</li>'
         
         safe_admin_script = escape(db.get("users", {}).get("admin", {}).get("custom_script", ""))
+        safe_vm_script = escape(db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT))
 
         return f'''
         <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ADMIN DASHBOARD</title>
@@ -1347,6 +1334,13 @@ def admin_dashboard():
                             </div>
                         </div>
                         <div class="col-md-12 mt-3">
+                            <div class="card p-3 h-100" style="border-color:#ff9900;">
+                                <h5 style="color:#ff9900;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH & CẬP NHẬT MỚI</h5>
+                                <button class="btn btn-sm btn-outline-warning w-100 fw-bold mb-2" data-bs-toggle="modal" data-bs-target="#adminScriptModal">Mở Bảng Mã Nguồn Lõi (Core)</button>
+                                <button class="btn btn-sm btn-outline-info w-100 fw-bold" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Cập Nhật Script Violentmonkey</button>
+                            </div>
+                        </div>
+                        <div class="col-md-12 mt-3">
                             <div class="card p-3 h-100" style="border-color:#ff3366;">
                                 <h5 class="text-danger"><i class="fas fa-shield-virus"></i> FIREWALL BANS</h5>
                                 <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-2">
@@ -1375,10 +1369,56 @@ def admin_dashboard():
                 </div>
             </div>
         </div>
+
+        <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
+            <div class="modal-dialog modal-sm modal-dialog-centered">
+                <div class="modal-content" style="background:#111;border:1px solid #ffcc00;">
+                    <form action="/admin/bind_olm" method="POST">
+                        <div class="modal-body">
+                            <input type="hidden" name="key" id="bindKeyInput">
+                            <p>Ghim Định Danh OLM cho Key:<br><strong id="bindKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p>
+                            <input type="text" name="olm_name" id="bindOlmInput" class="form-control bg-dark text-light" placeholder="Tên nick OLM khách (để trống: hủy)">
+                        </div>
+                        <div class="modal-footer border-secondary"><button type="submit" class="btn btn-warning w-100 fw-bold text-dark">Ghim Chặt Cứng</button></div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="modal fade" id="adminScriptModal" tabindex="-1" data-bs-theme="dark">
+          <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content" style="background:#11111A; border:1px solid #ff9900;">
+              <form action="/admin/update_script" method="POST">
+                  <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ff9900;font-weight:bold;">TÙY CHỈNH MÃ NGUỒN HACK (LÕI)</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                  <div class="modal-body"><textarea name="script_content" class="form-control bg-dark text-light border-warning" rows="15" style="font-family:monospace; font-size:12px;">{safe_admin_script}</textarea></div>
+                  <div class="modal-footer border-secondary"><button type="submit" class="btn btn-warning fw-bold w-100 text-dark">LƯU CÀI ĐẶT</button></div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal fade" id="vmScriptModal" tabindex="-1" data-bs-theme="dark">
+          <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content" style="background:#11111A; border:1px solid #00ffcc;">
+              <form action="/admin/update_vm_script" method="POST">
+                  <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#00ffcc;font-weight:bold;">CẬP NHẬT SCRIPT VIOLENTMONKEY DÀNH CHO KHÁCH CÀI ĐẶT</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                  <div class="modal-body"><textarea name="vm_script_content" class="form-control bg-dark text-light border-info" rows="15" style="font-family:monospace; font-size:12px;">{safe_vm_script}</textarea></div>
+                  <div class="modal-footer border-secondary"><button type="submit" class="btn btn-info fw-bold w-100 text-dark">LƯU CÀI ĐẶT SCRIPT MỚI</button></div>
+              </form>
+            </div>
+          </div>
+        </div>
         
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script>
             function copyKey(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã Copy Key!',showConfirmButton:false,timer:1000,background:'#111',color:'#00ffcc'}}); }}
+            
+            function openBindModal(key, current_olm) {{
+                document.getElementById('bindKeyInput').value = key;
+                document.getElementById('bindKeyDisplay').innerText = key;
+                document.getElementById('bindOlmInput').value = current_olm;
+                new bootstrap.Modal(document.getElementById('bindModal')).show();
+            }}
         </script>
         </body></html>
         '''
@@ -1448,8 +1488,22 @@ def admin_update_script():
         db = load_db()
         with db_lock:
             db["users"]["admin"]["custom_script"] = ns
+            log_admin_action(db, "Cập nhật mã nguồn Lõi Core")
             save_db(db)
         return redirect('/admin')
+    except Exception as e: return swal_back("Lỗi", str(e), "error")
+
+@app.route('/admin/update_vm_script', methods=['POST'])
+def admin_update_vm_script():
+    try:
+        if session.get('role') != 'admin': return redirect('/login')
+        ns = request.form.get('vm_script_content', '')
+        db = load_db()
+        with db_lock:
+            db.setdefault("settings", {})["violentmonkey_script"] = ns
+            log_admin_action(db, "Cập nhật Script Violentmonkey Mới")
+            save_db(db)
+        return swal_redirect("Thành Công", "Đã cập nhật Script Violentmonkey mới!", "success", "/admin")
     except Exception as e: return swal_back("Lỗi", str(e), "error")
 
 @app.route('/admin/ban_ip', methods=['POST'])
