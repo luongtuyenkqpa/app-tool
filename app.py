@@ -1,5 +1,6 @@
 import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string
 from urllib.parse import urlparse
+from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session
 
 # [VÁ LỖI LỆCH MÚI GIỜ CLOUD]
@@ -94,7 +95,6 @@ def load_db():
                 data.setdefault("admin_logs", [])
                 data.setdefault("security_alerts", []) 
                 
-                # ADMIN MẶC ĐỊNH
                 if "admin" not in data["users"]:
                     data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin", "balance": 0, "created_at": int(time.time() * 1000), "ips": [], "purchased_keys": [], "notices": [], "custom_script": 'console.log("HACK OLM BY LVT ĐÃ KÍCH HOẠT!");\n// Dán code hack gốc vào đây...'}
                 
@@ -148,10 +148,11 @@ def garbage_collector():
     while True:
         time.sleep(3600) 
         now_ms = int(time.time() * 1000)
-        with api_rate_lock:
-            to_del_sig = [s for s, t in used_signatures.items() if now_ms - t > 20000]
-            for s in to_del_sig: del used_signatures[s]
         try:
+            with api_rate_lock:
+                to_del_sig = [s for s, t in used_signatures.items() if now_ms - t > 20000]
+                for s in to_del_sig: del used_signatures[s]
+            
             db = load_db()
             changed = False
             with db_lock:
@@ -181,26 +182,29 @@ def get_real_ip():
 
 @app.before_request
 def firewall_and_csrf():
-    db = load_db()
-    banned_ips = set(db.get("banned_ips", []))
-    ip = get_real_ip()
-    if ip in banned_ips: return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL (IPS LVT-SECURE).", 403
+    try:
+        db = load_db()
+        banned_ips = set(db.get("banned_ips", []))
+        ip = get_real_ip()
+        if ip in banned_ips: return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL LVT.", 403
 
-    ua = request.headers.get('User-Agent', '').lower()
-    blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
-    if any(bot in ua for bot in blocked_bots):
-        return "Firewall Blocked Suspicious Bot/Scanner.", 403
-        
-    if request.path.startswith("/admin") and request.path != "/admin_login":
-        if session.get('role') != 'admin':
-            return redirect('/admin_login')
+        ua = (request.headers.get('User-Agent') or '').lower()
+        blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
+        if any(bot in ua for bot in blocked_bots): return "Firewall Blocked Suspicious Bot/Scanner.", 403
+            
+        if request.path.startswith("/admin") and request.path not in ["/admin_login", "/login", "/register", "/logout"]:
+            if session.get('role') != 'admin':
+                return redirect('/admin_login')
+    except: pass # Chống sập Web tuyệt đối
 
 @app.errorhandler(404)
 def not_found_trap(e):
-    ip = get_real_ip()
-    suspicious_paths = ['.env', 'wp-admin', 'wp-login.php', 'config.php', 'backup.zip', '.git', 'phpmyadmin']
-    if any(s in request.path for s in suspicious_paths):
-        report_bad_signature(ip)
+    try:
+        ip = get_real_ip()
+        suspicious_paths = ['.env', 'wp-admin', 'wp-login.php', 'config.php', 'backup.zip', '.git', 'phpmyadmin']
+        if any(s in request.path for s in suspicious_paths):
+            report_bad_signature(ip)
+    except: pass
     return "Not Found", 404
 
 def report_bad_signature(ip):
@@ -212,22 +216,24 @@ def report_bad_signature(ip):
         with db_lock:
             if ip not in db.setdefault("banned_ips", []):
                 db["banned_ips"].append(ip)
-                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "id": ip, "reason": "Quét thư mục ẩn"})
+                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "id": ip, "reason": "Dò mật khẩu / Quét thư mục ẩn"})
                 save_db(db)
 
 # ========================================================
-# API SPOOFER & CẤP PHÉP BƠM CODE (CÓ CHẶN GHIM OLM)
+# API SPOOFER & CẤP PHÉP BƠM CODE
 # ========================================================
 def check_api_rate_limit(ip):
-    now = time.time()
-    with api_rate_lock:
-        if len(api_rate_cache) > 5000: api_rate_cache.clear()
-        history = api_rate_cache.get(ip, [])
-        history = [t for t in history if now - t < 5] 
-        if len(history) >= 15: return False
-        history.append(now)
-        api_rate_cache[ip] = history
-        return True
+    try:
+        now = time.time()
+        with api_rate_lock:
+            if len(api_rate_cache) > 5000: api_rate_cache.clear()
+            history = api_rate_cache.get(ip, [])
+            history = [t for t in history if now - t < 5] 
+            if len(history) >= 15: return False
+            history.append(now)
+            api_rate_cache[ip] = history
+            return True
+    except: return True
 
 def verify_request_signature(data):
     try:
@@ -246,7 +252,7 @@ def verify_request_signature(data):
 def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
     now = int(time.time() * 1000)
     with db_lock:
-        if key not in db["keys"]: return False, "Key không tồn tại hoặc đã bị xóa!"
+        if key not in db["keys"]: return False, "Mã Key không tồn tại!"
         kd = db["keys"][key]
         if kd.get('status') == 'banned': return False, "TÀI KHOẢN BỊ KHÓA: Key của bạn đã bị Admin ban vĩnh viễn!"
         
@@ -263,14 +269,13 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
         if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): 
             return False, "KEY HẾT HẠN: Vui lòng lên Web mua Key mới!"
         
-        # LOGIC GHIM OLM CỰC CHẶT
         bound_olm = kd.get("bound_olm", "").strip()
         if bound_olm and req_olm_name != "N/A":
             if bound_olm.lower() != req_olm_name.lower():
-                kd["status"] = "banned" # Auto Ban
+                kd["status"] = "banned"
                 db.setdefault("security_alerts", []).insert(0, {"time": now, "id": ip, "user": req_olm_name, "reason": f"Sử dụng Key ({key}) sai tài khoản chỉ định ({bound_olm})"})
                 save_db(db)
-                return False, f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Bạn dùng cho [{req_olm_name}] -> Key đã bị KHÓA VĨNH VIỄN!"
+                return False, f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Bạn dùng cho [{req_olm_name}]. Key đã bị Khóa Vĩnh Viễn!"
 
         if deviceId:
             devices = kd.setdefault("devices", [])
@@ -284,133 +289,192 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_api():
-    ip = get_real_ip()
-    if not check_api_rate_limit(ip): return jsonify({"status": "error", "message": "Spam API!"}), 429
-    if request.method == 'OPTIONS': return make_response("ok", 200)
-    
-    data = request.json or {}
-    if not verify_request_signature(data):
-        return jsonify({"status": "error", "message": "Chữ ký mã hóa API không hợp lệ. Vui lòng tải lại Script!"}), 403
+    try:
+        ip = get_real_ip()
+        if not check_api_rate_limit(ip): return jsonify({"status": "error", "message": "Spam API!"}), 429
+        if request.method == 'OPTIONS': return make_response("ok", 200)
+        
+        data = request.json or {}
+        if not verify_request_signature(data):
+            return jsonify({"status": "error", "message": "Chữ ký API không hợp lệ. Hãy làm lại theo hướng dẫn!"}), 403
 
-    key = data.get('key', '')[:100]
-    deviceId = data.get('deviceId', '')[:100]
-    olm_name = data.get('olm_name', 'N/A')[:100]
-    
-    db = load_db()
-    valid, msg = _core_validate(db, key, deviceId, olm_name, ip)
-    if not valid: return jsonify({"status": "error", "message": msg}), 400
+        key = data.get('key', '')[:100]
+        deviceId = data.get('deviceId', '')[:100]
+        olm_name = data.get('olm_name', 'N/A')[:100]
+        
+        db = load_db()
+        valid, msg = _core_validate(db, key, deviceId, olm_name, ip)
+        if not valid: return jsonify({"status": "error", "message": msg}), 400
 
-    return jsonify({"status": "success", "loader_enabled": db["keys"][key].get("loader_enabled", True)})
+        return jsonify({"status": "success", "loader_enabled": db["keys"][key].get("loader_enabled", True)})
+    except Exception as e: return jsonify({"status": "error", "message": "Lỗi API Check"}), 500
 
 @app.route('/api/core', methods=['POST', 'OPTIONS'])
 def serve_core_payload():
-    ip = get_real_ip()
-    if not check_api_rate_limit(ip): return jsonify({"status": "error"}), 429
-    if request.method == 'OPTIONS': return make_response("ok", 200)
-
-    data = request.json or {}
-    if not verify_request_signature(data): return jsonify({"status": "error"}), 403
-    
-    key = data.get('key', '')
-    deviceId = data.get('deviceId', '')
-    olm_name = data.get('olm_name', 'N/A')
-    
-    db = load_db()
-    valid, _ = _core_validate(db, key, deviceId, olm_name, ip)
-    if not valid: return jsonify({"status": "error"}), 403
-
-    # Lấy Script từ Admin
-    custom_script = db["users"].get("admin", {}).get("custom_script", "")
-
-    encoded_core = base64.b64encode(custom_script.encode('utf-8')).decode('utf-8')
-    reversed_core = encoded_core[::-1]
-    return jsonify({"status": "success", "payload": reversed_core})
-
-@app.route('/api/script_ping', methods=['POST'])
-def script_ping():
-    ip = get_real_ip()
-    if not check_api_rate_limit(ip): return "Too Many Requests", 429
-    data = request.json or {}
-    key = data.get("key")
-    db = load_db()
-    now = int(time.time() * 1000)
-    
-    with db_lock:
-        if key in db.get("keys", {}):
-            kd = db["keys"][key]
-            known_ips = kd.setdefault("known_ips", {})
-            to_del = [i for i, t in known_ips.items() if now - t > 120000]
-            for i in to_del: del known_ips[i]
-            
-            known_ips[ip] = now
-            if len(known_ips) > kd.get("maxDevices", 1):
-                kd["violations"] = kd.get("violations", 0) + 1
-                v = kd["violations"]
-                if v == 1:
-                    kd["temp_ban_until"] = now + (30 * 60 * 1000)
-                    log_admin_action(db, f"Phạt 30 Phút Key {key} (Share IP)")
-                elif v == 2:
-                    kd["temp_ban_until"] = now + (12 * 3600 * 1000)
-                    log_admin_action(db, f"Phạt 12 Giờ Key {key} (Share IP)")
-                else:
-                    kd["status"] = "banned"
-                    log_admin_action(db, f"Banned Vĩnh Viễn Key {key} (Share IP)")
-                kd["known_ips"] = {}
-                save_db(db)
-                return "Banned for sharing", 403
-            return "ok", 200
-    return "invalid", 403
-
-# ========================================================
-# TÍNH NĂNG V2.0: MÔI TRƯỜNG ẢO HÓA (AUTO BƠM SCRIPT OLM)
-# ========================================================
-@app.route('/play_hack/<key>')
-def play_hack(key):
     try:
-        if 'username' not in session: return redirect('/login')
-        db = load_db()
         ip = get_real_ip()
+        if not check_api_rate_limit(ip): return jsonify({"status": "error"}), 429
+        if request.method == 'OPTIONS': return make_response("ok", 200)
+
+        data = request.json or {}
+        if not verify_request_signature(data): return jsonify({"status": "error"}), 403
         
-        valid, msg = _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=ip)
-        if not valid:
-            session.pop('active_key', None)
-            return swal_redirect("TRỤC XUẤT", msg, "error", "/dashboard")
+        key = data.get('key', '')
+        deviceId = data.get('deviceId', '')
+        olm_name = data.get('olm_name', 'N/A')
+        
+        db = load_db()
+        valid, _ = _core_validate(db, key, deviceId, olm_name, ip)
+        if not valid: return jsonify({"status": "error"}), 403
 
-        custom_script = db["users"].get("admin", {}).get("custom_script", "")
+        # Lấy Script Mặc Định từ Admin (Khách hàng không được phép sửa nữa)
+        custom_script = db.get("users", {}).get("admin", {}).get("custom_script", "")
 
-        return f"""
-        <!DOCTYPE html>
-        <html lang="vi">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-            <title>LVT HACK - OLM.VN</title>
-            <style>
-                body, html {{ margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: #000; }}
-                #olm-frame {{ width: 100%; height: 100%; border: none; position: absolute; top: 0; left: 0; z-index: 1; }}
-                #lvt-overlay-ui {{ position: absolute; top:0; left:0; width:100%; height:100%; pointer-events: none; z-index: 99999; }}
-            </style>
-        </head>
-        <body>
-            <iframe id="olm-frame" src="https://olm.vn"></iframe>
-            <div id="lvt-overlay-ui"></div>
-            <script>
-                try {{ {custom_script} }} catch(e) {{ console.error("Lỗi Script:", e); }}
-                setInterval(() => {{
-                    fetch('/api/script_ping', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{key: "{key}"}})
-                    }}).then(r=>r.text()).then(res => {{
-                        if(res === "Banned for sharing") {{
-                            alert("⚠️ HỆ THỐNG: Phát hiện Share Key hoặc vi phạm. Bạn đã bị đá về Web!"); 
-                            window.top.location.href = "/key_dashboard";
-                        }}
-                    }});
+        encoded_core = base64.b64encode(custom_script.encode('utf-8')).decode('utf-8')
+        reversed_core = encoded_core[::-1]
+        return jsonify({"status": "success", "payload": reversed_core})
+    except: return jsonify({"status": "error"}), 500
+
+@app.route('/api/script_ping', methods=['POST', 'OPTIONS'])
+def script_ping():
+    try:
+        ip = get_real_ip()
+        if not check_api_rate_limit(ip): return "Too Many Requests", 429
+        if request.method == 'OPTIONS': return make_response("ok", 200)
+        data = request.json or {}
+        key = data.get("key")
+        db = load_db()
+        now = int(time.time() * 1000)
+        
+        with db_lock:
+            if key in db.get("keys", {}):
+                kd = db["keys"][key]
+                known_ips = kd.setdefault("known_ips", {})
+                to_del = [i for i, t in known_ips.items() if now - t > 120000]
+                for i in to_del: del known_ips[i]
+                
+                known_ips[ip] = now
+                if len(known_ips) > kd.get("maxDevices", 1):
+                    kd["violations"] = kd.get("violations", 0) + 1
+                    v = kd["violations"]
+                    if v == 1:
+                        kd["temp_ban_until"] = now + (30 * 60 * 1000)
+                        log_admin_action(db, f"Phạt 30 Phút Key {key} (Share IP)")
+                    elif v == 2:
+                        kd["temp_ban_until"] = now + (12 * 3600 * 1000)
+                        log_admin_action(db, f"Phạt 12 Giờ Key {key} (Share IP)")
+                    else:
+                        kd["status"] = "banned"
+                        log_admin_action(db, f"Banned Vĩnh Viễn Key {key} (Share IP)")
+                    kd["known_ips"] = {}
+                    save_db(db)
+                    return "Banned for sharing", 403
+                active_sessions[key] = {"ip": ip, "key": key, "last_seen": time.time()}
+                return "ok", 200
+        return "invalid", 403
+    except: return "error", 500
+
+# ========================================================
+# LOADER DYNAMIC (CÀI VÀO VIOLENTMONKEY HOẶC DÙNG BOOKMARKLET)
+# ========================================================
+@app.route('/api/script/lvt_vip_loader.user.js')
+def serve_dynamic_script():
+    try:
+        direct_key = request.args.get('k', '')
+        js_code = f"""// ==UserScript==
+// @name         LVT TOOL VIP LOADER v2.0
+// @namespace    http://tampermonkey.net/
+// @match        *://olm.vn/*
+// @grant        none
+// @run-at       document-start
+// ==/UserScript==
+
+(function() {{
+    'use strict';
+    const SERVER_URL = "{WEB_URL}"; 
+    const DIRECT_KEY = "{direct_key}";
+    
+    function getHWID() {{
+        let n = navigator.userAgent + screen.width; let hash = 0;
+        for(let i=0; i<n.length; i++) {{ hash = ((hash<<5)-hash)+n.charCodeAt(i); hash = hash & hash; }}
+        return "HW-" + Math.abs(hash).toString(16);
+    }}
+    let deviceId = localStorage.getItem('lvt_hwid') || getHWID();
+    localStorage.setItem('lvt_hwid', deviceId);
+
+    function getRealUser() {{
+        let found = "N/A";
+        try {{ let cookies = document.cookie.split(';'); for (let i=0; i<cookies.length; i++) {{ let c = cookies[i].trim(); if (c.startsWith("username=")) {{ found = decodeURIComponent(c.substring(9)).replace(/^"|"$/g, '').trim(); }} }} }} catch(e) {{}}
+        return found; 
+    }}
+
+    async function reqApi(path, bodyObj) {{
+        let ts = Date.now();
+        let msg = bodyObj.key + ts + bodyObj.key;
+        let sig = "";
+        if(window.crypto && window.crypto.subtle) {{
+            let encoder = new TextEncoder();
+            let data = encoder.encode(msg);
+            let hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            let hashArray = Array.from(new Uint8Array(hashBuffer));
+            sig = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }}
+        bodyObj.timestamp = ts; bodyObj.signature = sig; bodyObj.olm_name = getRealUser();
+        return fetch(SERVER_URL + path, {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify(bodyObj) }}).then(r=>r.json());
+    }}
+
+    function kickUserToWeb(msg) {{
+        let kickDiv = document.createElement('div');
+        kickDiv.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.95);z-index:9999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;text-align:center;padding:20px;";
+        kickDiv.innerHTML = `<div style="font-size:50px;">⚠️</div><h2 style="color:#ff3333;margin:10px 0;">TRUY CẬP BỊ TỪ CHỐI</h2><p style="color:#ccc;font-size:16px;">${{msg}}</p><p style="margin-top:20px;font-size:12px;color:#888;">Đang chuyển hướng về trang chủ...</p>`;
+        if(document.body) document.body.appendChild(kickDiv);
+        localStorage.removeItem('lvt_saved_key'); 
+        setTimeout(() => {{ window.location.href = SERVER_URL + "/key_login"; }}, 4000);
+    }}
+
+    async function loadCore(key) {{
+        try {{
+            let res = await reqApi('/api/core', {{ key: key, deviceId: deviceId }});
+            if(res.status === 'success' && res.payload) {{
+                let reversed = res.payload.split('').reverse().join('');
+                let decodedCore = decodeURIComponent(escape(window.atob(reversed)));
+                let s = document.createElement('script'); s.textContent = decodedCore;
+                document.documentElement.appendChild(s); s.remove();
+                
+                setInterval(() => {{ 
+                    reqApi('/api/script_ping', {{ key: key }}).catch(e=>{{}}); 
                 }}, 30000);
-            </script>
-        </body>
-        </html>
-        """
-    except Exception as e:
-        return swal_redirect("Lỗi Hệ Thống", str(e), "error", "/dashboard")
+                
+                let toast = document.createElement('div');
+                toast.style.cssText = "position:fixed;top:20px;right:20px;background:rgba(0,30,10,0.9);border-left:4px solid #00ffcc;color:#fff;padding:15px;border-radius:5px;z-index:999999;font-family:sans-serif;box-shadow:0 0 15px rgba(0,255,204,0.3);animation:slideIn 0.5s ease-out;";
+                toast.innerHTML = `<style>@keyframes slideIn{{from{{transform:translateX(100%);}}to{{transform:translateX(0);}}}}</style><strong style="color:#00ffcc;">⚡ LVT HACK V2.0</strong><br><span style="font-size:12px;">Đã tiêm mã nguồn thành công!</span>`;
+                if(document.body) document.body.appendChild(toast);
+                setTimeout(()=>toast.remove(), 3500);
+
+            }} else {{ kickUserToWeb(res.message || "Lỗi tải Core"); }}
+        }} catch(e) {{ kickUserToWeb("Lỗi kết nối máy chủ bảo mật!"); }}
+    }}
+
+    let finalKey = DIRECT_KEY || localStorage.getItem('lvt_saved_key');
+    if(finalKey) {{
+        localStorage.setItem('lvt_saved_key', finalKey);
+        reqApi('/api/check', {{ key: finalKey, deviceId: deviceId }}).then(res => {{
+            if(res.status === 'success') {{
+                if(res.loader_enabled) loadCore(finalKey);
+                else alert("Admin đã tắt Spoofer cho Key này!");
+            }} else {{ kickUserToWeb(res.message); }}
+        }}).catch(e => console.log(e));
+    }} else {{
+        if(window.location.href.includes("olm.vn")) {{
+            kickUserToWeb("Bạn chưa nhập Key bảo mật. Hệ thống tự động đá bạn về trang chủ.");
+        }}
+    }}
+}})();
+"""
+        resp = make_response(js_code)
+        resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+        return resp
+    except Exception as e: return f"LỖI: {str(e)}", 500
 
 # ========================================================
 # GIAO DIỆN CSS & HTML TOÀN CỤC Y HỆT ẢNH
@@ -423,8 +487,8 @@ body { background-color: #05050A !important; color: #fff !important; font-family
 h2, h3, h4, h5 { color: #00ffcc !important; font-weight: 900 !important; letter-spacing: 1px !important; }
 .text-neon { color: #00ffcc !important; text-shadow: 0 0 10px rgba(0,255,204,0.5) !important; }
 .text-purple { color: #bd00ff !important; text-shadow: 0 0 10px rgba(189,0,255,0.5) !important; }
-.form-control, .form-select { background-color: #0a0a12 !important; border: 1px solid #444 !important; color: #fff !important; padding: 12px; border-radius: 8px; margin-bottom: 15px; }
-.form-control:focus, .form-select:focus { border-color: #00ffcc !important; box-shadow: 0 0 10px rgba(0,255,204,0.3) !important; outline: none !important; }
+.form-control, .form-select, textarea { background-color: #0a0a12 !important; border: 1px solid #444 !important; color: #fff !important; padding: 12px; border-radius: 8px; margin-bottom: 15px; }
+.form-control:focus, .form-select:focus, textarea:focus { border-color: #00ffcc !important; box-shadow: 0 0 10px rgba(0,255,204,0.3) !important; outline: none !important; }
 .btn-neon { background: linear-gradient(45deg, #00ffcc, #bd00ff) !important; border: none !important; color: #000 !important; font-weight: bold !important; width: 100%; padding: 12px; border-radius: 8px; transition: 0.3s !important; cursor: pointer; }
 .btn-neon:hover { transform: translateY(-2px) !important; box-shadow: 0 5px 20px rgba(0,255,204,0.4) !important; }
 a.link-neon { color: #bd00ff !important; text-decoration: none !important; font-weight: bold !important; transition: 0.3s !important; }
@@ -458,7 +522,7 @@ def home():
             welcome_script = "Swal.fire({ title: 'CHÀO MỪNG ĐẾN VỚI LVT TOOL!', html: '<b style=\"color:#00ffcc\">Hệ thống tự động hóa và bảo mật đỉnh cao.</b><br><br>👉 Vui lòng Đăng nhập hoặc Đăng ký để trải nghiệm!', icon: 'success', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', confirmButtonText: 'ĐÃ HIỂU' });"
 
         return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT TOOL - Trang Chủ</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS} .hero{{background:linear-gradient(135deg,#000,#0a192f);padding:80px 20px;text-align:center;border-bottom:1px solid #00ffcc;}}</style></head><body>
-        <div class="hero"><h1 class="text-neon fw-bold mb-3">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1><p class="text-secondary fs-5 mb-4">Tự động hóa thông minh - Bảo mật đa tầng - Kích hoạt di động dễ dàng</p><a href="#shop" class="btn btn-lg fw-bold mb-2" style="background:#00ffcc;color:#000;">XEM BẢNG GIÁ</a> <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-md-2 mb-2">ĐĂNG NHẬP</a> <a href="/register" class="btn btn-outline-light btn-lg fw-bold ms-md-2 mb-2">ĐĂNG KÝ</a></div>
+        <div class="hero"><h1 class="text-neon fw-bold mb-3">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1><p class="text-secondary fs-5 mb-4">Tự động hóa thông minh - Bảo mật đa tầng - Kích hoạt trên thiết bị cực dễ</p><a href="#shop" class="btn btn-lg fw-bold mb-2" style="background:#00ffcc;color:#000;">XEM BẢNG GIÁ</a> <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-md-2 mb-2">ĐĂNG NHẬP LẤY KEY</a> <a href="/register" class="btn btn-outline-light btn-lg fw-bold ms-md-2 mb-2">ĐĂNG KÝ</a></div>
         <div class="container py-5" id="shop"><h2 class="text-center text-neon fw-bold mb-5">BẢNG GIÁ DỊCH VỤ</h2><div class="row justify-content-center">{shop_html}</div></div><script>{welcome_script}</script></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
@@ -660,7 +724,7 @@ def buy_key():
             user_data.setdefault("purchased_keys", []).insert(0, {"key": nk, "package_name": pkg['name'], "buy_time": int(time.time() * 1000)})
             save_db(db)
             
-        html_msg = f"""<div style='text-align:left; font-size:14px;'><p>Gói mua: <b class='text-purple'>{pkg['name']}</b> ({'iOS' if os_type=='ios' else 'Android/PC'})</p><p>Ghim OLM: <b style='color:#ff3366'>{olm_name}</b></p><p>Mã Key của bạn là:</p>
+        html_msg = f"""<div style='text-align:left; font-size:14px;'><p>Gói mua: <b class='text-purple'>{pkg['name']}</b> ({'iOS' if os_type=='ios' else 'Android/PC'})</p><p>Ghim OLM: <b style='color:#ff3366'>{escape(olm_name)}</b></p><p>Mã Key của bạn là:</p>
             <div style='background:#000; padding:10px; border:1px dashed #00ffcc; border-radius:5px; text-align:center; font-family:monospace; font-size:18px; color:#00ffcc; margin-bottom:15px; cursor:pointer;' onclick='navigator.clipboard.writeText("{nk}");Swal.showValidationMessage("Đã copy!");'>{nk}</div></div>"""
         return swal_redirect("🎉 MUA KEY THÀNH CÔNG!", html_msg, "success", "/key_dashboard")
     except Exception as e: return swal_back("Lỗi", f"Có lỗi xảy ra: {str(e)}", "error")
@@ -702,6 +766,7 @@ def key_dashboard():
 
         now = int(time.time() * 1000)
         
+        # KHIÊN CHẶN ĐÁ VĂNG
         if kd.get("status") == "banned":
             session.pop('active_key', None)
             return swal_redirect("BỊ KHÓA TỬ HÌNH", "Key của bạn đã bị BAN vĩnh viễn do vi phạm (Sai OLM chỉ định hoặc Spam IP)!", "error", "/dashboard")
@@ -724,8 +789,7 @@ def key_dashboard():
         
         rc = kd.get("reset_count", 0)
         reset_txt = "Miễn phí (Lần 1)" if rc == 0 else "Trừ 10,000đ"
-
-        bm_code = f"javascript:(function(){{let s=document.createElement('script');s.src='{WEB_URL}/api/script/lvt_vip_loader.user.js?k={active_key}';document.head.appendChild(s);}})();"
+        os_type = kd.get("os", "android")
 
         return f'''
         <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Phòng Điều Khiển</title>
@@ -735,7 +799,7 @@ def key_dashboard():
         <body class="p-3">
         <div class="container" style="max-width:800px;">
             <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-2">
-                <h3 style="color:{vip_color};margin:0;">⚡ KHOANG LÁI HACK</h3>
+                <h3 style="color:{vip_color};margin:0;font-weight:900;">⚡ KHOANG LÁI HACK</h3>
                 <a href="/dashboard" class="btn btn-outline-light btn-sm fw-bold">Về Shop</a>
             </div>
             
@@ -743,7 +807,7 @@ def key_dashboard():
                 <div class="badge mb-3" style="background:{vip_color}; font-size:16px;">{vip_text}</div>
                 <h2 class="text-white mb-2" style="font-family:monospace;letter-spacing:2px;cursor:pointer;" onclick="copyT('{active_key}')">{active_key} <i class="fas fa-copy" style="font-size:14px;color:#888;"></i></h2>
                 <p class="text-muted mb-0">Hạn dùng: <b class="text-white">{exp_str}</b></p>
-                <p class="text-danger mt-2 mb-0" style="font-size:13px;">Định danh: <b class="text-warning">{kd.get("bound_olm", "N/A")}</b></p>
+                <p class="text-danger mt-2 mb-0" style="font-size:13px;">Định danh: <b class="text-warning">{escape(kd.get("bound_olm", "N/A"))}</b></p>
                 <div class="d-flex justify-content-center gap-5 mt-3 pt-3 border-top border-secondary">
                     <div><small class="text-secondary">Thiết Bị</small><br><b class="fs-4 text-info">{len(kd.get('devices', []))}/{kd.get('maxDevices', 1)}</b></div>
                     <div><small class="text-secondary">Đã Reset</small><br><b class="fs-4 text-warning">{rc} Lần</b></div>
@@ -759,7 +823,7 @@ def key_dashboard():
                     </div>
                 </div>
                 <div class="col-12 mt-4">
-                    <button class="btn w-100 p-3 fw-bold fs-5" style="background:linear-gradient(45deg,#00ffcc,#0099ff);color:#000;box-shadow:0 0 20px rgba(0,255,204,0.4);border-radius:12px;" onclick="activateHackAuto('{active_key}')">🚀 KÍCH HOẠT HACK V2.0 (VÀO OLM NGAY)</button>
+                    <button class="btn w-100 p-3 fw-bold fs-5" style="background:linear-gradient(45deg,#00ffcc,#0099ff);color:#000;box-shadow:0 0 20px rgba(0,255,204,0.4);border-radius:12px;" onclick="activateHackAuto('{active_key}', '{os_type}')">🚀 KÍCH HOẠT HACK V2.0 (VÀO OLM NGAY)</button>
                 </div>
             </div>
         </div>
@@ -767,18 +831,25 @@ def key_dashboard():
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script>
             function copyT(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã sao chép Key!',showConfirmButton:false,timer:1500,background:'#111',color:'#fff'}}); }}
-            function activateHackAuto(key) {{
-                let code = `{bm_code}`;
+            function activateHackAuto(key, os) {{
+                let code = `javascript:(function(){{let s=document.createElement('script');s.src='{WEB_URL}/api/script/lvt_vip_loader.user.js?k=${{key}}';document.head.appendChild(s);}})();`;
+                let instruction = '';
+                if (os === 'ios') {{
+                    instruction = `<b>📱 Hướng dẫn iOS (iPhone):</b><br>1. Ấn <b>COPY MÃ</b>.<br>2. Lưu trang OLM làm Dấu Trang.<br>3. Sửa Dấu trang đó: Dán đè đoạn mã vào phần Địa chỉ URL.<br>4. Sang <a href="https://olm.vn" target="_blank" style="color:#00ffcc;">olm.vn</a> bấm Dấu Trang là XONG!`;
+                }} else {{
+                    instruction = `<b>📱 Hướng dẫn Android/PC:</b><br>1. Ấn <b>COPY MÃ</b>.<br>2. Vào <a href="https://olm.vn" target="_blank" style="color:#00ffcc;">olm.vn</a>.<br>3. Nhấn vào thanh tìm kiếm trên cùng, dán đoạn mã vào (Nếu mất chữ "javascript:" ở đầu thì gõ thêm vào). Ấn Đi (Enter) là XONG!`;
+                }}
+
                 Swal.fire({{
-                    title: 'HƯỚNG DẪN KÍCH HOẠT',
-                    html: `<div style="text-align:left;font-size:14px;"><p>Mã Hack OLM dành riêng cho bạn:</p><div style="background:#000;padding:10px;color:#00ffcc;border:1px dashed #00ffcc;border-radius:5px;word-break:break-all;font-size:11px;margin-bottom:10px;">${{code}}</div><p><b>Cách dùng trên điện thoại:</b></p>1. Ấn COPY MÃ bên dưới.<br>2. Lưu trang OLM làm Dấu Trang (Bookmark).<br>3. Sửa Dấu trang đó: Dán đè đoạn mã này vào phần URL.<br>4. Mở OLM, bấm vào Dấu Trang là HACK BẬT!</div>`,
+                    title: '🚀 KÍCH HOẠT HACK',
+                    html: `<div style="text-align:left;font-size:14px;"><p>Mã đã tạo riêng cho bạn:</p><div style="background:#000;padding:10px;color:#00ffcc;border:1px dashed #00ffcc;border-radius:5px;word-break:break-all;font-size:10px;margin-bottom:15px;max-height:80px;overflow-y:auto;">${{code}}</div>${{instruction}}</div>`,
                     icon: 'info', background: '#11111A', color: '#fff',
                     confirmButtonColor: '#bd00ff', confirmButtonText: '<i class="fas fa-copy"></i> COPY MÃ & MỞ OLM', showCancelButton:true, cancelButtonText: 'ĐÓNG',
                     customClass: {{ popup: 'border border-info' }}
                 }}).then((r) => {{
                     if(r.isConfirmed) {{
                         navigator.clipboard.writeText(code);
-                        Swal.fire({{toast:true, position:'top-end', icon:'success', title:'Đã Copy Mã! Đang qua OLM...', showConfirmButton:false, timer:2000, background:'#111', color:'#fff'}}).then(()=>{{ window.open('https://olm.vn', '_blank'); }});
+                        Swal.fire({{toast:true, position:'top-end', icon:'success', title:'Đã Copy Mã! Đang qua OLM...', showConfirmButton:false, timer:2500, background:'#111', color:'#fff'}}).then(()=>{{ window.open('https://olm.vn', '_blank'); }});
                     }}
                 }});
             }}
@@ -813,7 +884,7 @@ def user_reset_hwid():
     except Exception as e: return swal_back("Lỗi", str(e), "error")
 
 # ========================================================
-# GIAO DIỆN WEB ADMIN QUẢN LÝ TỔNG
+# GIAO DIỆN WEB ADMIN QUẢN LÝ TỔNG TÀI KHOẢN VÀ KEY
 # ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
@@ -849,6 +920,10 @@ def admin_dashboard():
             admin_logs = list(db.get("admin_logs", []))
 
         now_ms = int(time.time() * 1000)
+        
+        # Bóc tách và mã hoá an toàn Script để không bị lỗi {}
+        admin_script_raw = db.get("users", {}).get("admin", {}).get("custom_script", "")
+        safe_admin_script = escape(admin_script_raw)
 
         users_html = ""
         for uname, udata in users_items:
@@ -957,7 +1032,7 @@ def admin_dashboard():
                                     <div class="col-12 mt-2"><button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#bd00ff;color:white;">🚀 TẠO NGAY</button></div>
                                 </form>
                                 <hr class="border-secondary my-3">
-                                <h5 style="color:#ff9900;"><i class="fas fa-code"></i> SCRIPT BƠM MẶC ĐỊNH</h5>
+                                <h5 style="color:#ff9900;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH CHO SERVER</h5>
                                 <button class="btn btn-sm btn-outline-warning w-100 fw-bold" data-bs-toggle="modal" data-bs-target="#adminScriptModal">Mở Bảng Mã Nguồn</button>
                             </div>
                         </div>
@@ -996,7 +1071,7 @@ def admin_dashboard():
             <div class="modal-content" style="background:#11111A; border:1px solid #ff9900;">
               <form action="/admin/update_script" method="POST">
                   <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ff9900;font-weight:bold;">TÙY CHỈNH MÃ NGUỒN HACK (LÕI)</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-                  <div class="modal-body"><textarea name="script_content" class="form-control bg-dark text-light border-warning" rows="15" style="font-family:monospace; font-size:12px;">{escape(db.get("users", {{}}).get("admin", {{}}).get("custom_script", ""))}</textarea></div>
+                  <div class="modal-body"><textarea name="script_content" class="form-control bg-dark text-light border-warning" rows="15" style="font-family:monospace; font-size:12px;">{safe_admin_script}</textarea></div>
                   <div class="modal-footer border-secondary"><button type="submit" class="btn btn-warning fw-bold w-100 text-dark">LƯU CÀI ĐẶT</button></div>
               </form>
             </div>
@@ -1026,6 +1101,8 @@ def add_balance():
             if username in db.get("users", {}):
                 db["users"][username]["balance"] += amt
                 if db["users"][username]["balance"] < 0: db["users"][username]["balance"] = 0
+                if amt > 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa nạp cho bạn +{amt:,}đ")
+                elif amt < 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa trừ của bạn {amt:,}đ")
                 log_admin_action(db, f"Cộng/Trừ {amt}đ cho tài khoản {username}")
                 save_db(db)
         return redirect('/admin')
