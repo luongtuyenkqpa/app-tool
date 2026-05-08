@@ -36,16 +36,18 @@ _last_mtime_check = 0
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
 # ========================================================
-# SCRIPT VIOLENTMONKEY MẶC ĐỊNH (SẼ ĐƯỢC LƯU VÀO DATABASE)
+# SCRIPT VIOLENTMONKEY MẶC ĐỊNH V13.0 (SẼ ĐƯỢC LƯU VÀO DATABASE)
 # ========================================================
 DEFAULT_OLM_SCRIPT = """// ==UserScript==
-// @name         OLM GOD MODE VIP - DEV.TIỆP (CLOUD AUTH + WEB SYNC + NEW UI)
+// @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE: VIP & NORMAL)
 // @namespace    http://tampermonkey.net/
-// @version      9.0
-// @description  Hệ thống bảo vệ đa tầng. Giao diện mới yêu cầu đăng nhập từ Web, ẩn hoàn toàn ô nhập Key thủ công.
+// @version      13.0
+// @description  Hệ thống bảo vệ đa tầng. Phân luồng Key VIP (OLM MODE) và Key Thường (Study Assistant Vũ Trụ).
 // @author       DEV.TIỆP
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
+// @grant        unsafeWindow
+// @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -55,18 +57,57 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
 (function() {
     'use strict';
 
-    // LƯU TRỮ TÊN TÀI KHOẢN THẬT (Để API Vòng ngoài hoạt động bình thường)
-    let REAL_USERNAME = "N/A";
-    try { 
-        let cookies = document.cookie.split(';'); 
-        for (let i = 0; i < cookies.length; i++) { 
-            let c = cookies[i].trim(); 
-            if (c.startsWith("username=")) { 
-                REAL_USERNAME = decodeURIComponent(c.substring(9)).replace(/^"|"$/g, '').trim(); 
-            } 
-        } 
-    } catch(e) {}
+    const Config = {
+        VERSION: '13.0',
+        API_KEYWORDS: ['get-question-of-ids', 'get-question?belongs=1']
+    };
 
+    // =========================================================================
+    // [PHẦN 0]: HÀM LẤY TÊN TÀI KHOẢN THẬT NHÌN XUYÊN MẶT NẠ (CON MẮT CHÂN LÝ)
+    // =========================================================================
+    const originalCookieGetter = (() => {
+        let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+        return desc ? desc.get : null;
+    })();
+
+    function getRealUsername() {
+        let found = "N/A";
+        try {
+            let rawCookie = originalCookieGetter ? originalCookieGetter.call(document) : document.cookie;
+            if (rawCookie) {
+                let cookies = rawCookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    let c = cookies[i].trim();
+                    if (c.startsWith("username=")) {
+                        found = decodeURIComponent(c.substring(9)).replace(/^"|"$/g, '').trim();
+                    }
+                }
+            }
+        } catch(e) {}
+
+        if (found === "N/A" || found === "hp_luongvantuyen") {
+            try {
+                let scripts = document.getElementsByTagName('script');
+                for (let i = 0; i < scripts.length; i++) {
+                    let text = scripts[i].innerHTML;
+                    if (text && text.includes('"username"')) {
+                        let match = text.match(/"username"\s*:\s*"([^"]+)"/);
+                        if (match && match[1] && match[1] !== "hp_luongvantuyen") {
+                            found = match[1].trim();
+                            break; 
+                        }
+                    }
+                }
+            } catch(e) {}
+        }
+        return found;
+    }
+
+    let REAL_USERNAME = getRealUsername();
+
+    // =========================================================================
+    // [PHẦN 1]: CẤU HÌNH API ĐÁM MÂY (VÒNG NGOÀI)
+    // =========================================================================
     const SERVER_URL = "https://app-tool-trlp.onrender.com"; 
     let savedKey = GM_getValue('lvt_olm_vip_key', '');
 
@@ -76,13 +117,11 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
         ctx.textBaseline = "top"; ctx.font = "14px 'Arial'"; ctx.fillStyle = "#f60"; ctx.fillRect(125,1,62,20);
         ctx.fillStyle = "#069"; ctx.fillText("OLM_LVT_VIP", 2, 15); ctx.fillStyle = "rgba(102, 204, 0, 0.7)"; ctx.fillText("OLM_LVT_VIP", 4, 17);
         let b64 = canvas.toDataURL().replace("data:image/png;base64,","");
-        
         let nav = navigator.userAgent + navigator.hardwareConcurrency + navigator.language + screen.width + screen.height;
-        let combined = b64 + nav;
         let hash = 0;
+        let combined = b64 + nav;
         for(let i=0; i<combined.length; i++) {
-            let char = combined.charCodeAt(i);
-            hash = ((hash<<5)-hash)+char;
+            hash = ((hash<<5)-hash)+combined.charCodeAt(i);
             hash = hash & hash;
         }
         return "HWID-" + Math.abs(hash).toString(16).toUpperCase();
@@ -95,18 +134,14 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
         let ts = Date.now();
         let msg = bodyObj.key + ts + bodyObj.key;
         let sig = "";
-        
         if (window.crypto && window.crypto.subtle) {
             let encoder = new TextEncoder();
-            let data = encoder.encode(msg);
-            let hashBuffer = await crypto.subtle.digest('SHA-256', data);
-            let hashArray = Array.from(new Uint8Array(hashBuffer));
-            sig = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            let hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(msg));
+            sig = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
-        
         bodyObj.timestamp = ts;
         bodyObj.signature = sig;
-        bodyObj.olm_name = REAL_USERNAME; 
+        bodyObj.olm_name = getRealUsername(); 
         
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
@@ -114,104 +149,572 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
                 url: SERVER_URL + path,
                 headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify(bodyObj),
-                onload: (response) => {
-                    try { resolve(JSON.parse(response.responseText)); } 
-                    catch(e) { reject("Lỗi phân tích dữ liệu từ Server."); }
+                onload: (res) => {
+                    try { resolve(JSON.parse(res.responseText)); } 
+                    catch(e) { reject("Lỗi phân tích JSON."); }
                 },
-                onerror: (e) => reject("Lỗi kết nối mạng hoặc Server đang ngủ.")
+                onerror: () => reject("Lỗi kết nối mạng.")
             });
         });
     }
 
-    function showWelcomePopup(username) {
+    // =========================================================================
+    // [PHẦN 2]: MODULE STUDY ASSISTANT (DÀNH CHO KEY THƯỜNG)
+    // =========================================================================
+    const Utils = {
+        decodeBase64(base64) {
+            if (!base64) return null;
+            try { return new TextDecoder('utf-8').decode(new Uint8Array(atob(base64).split('').map(c => c.charCodeAt(0)))); } 
+            catch (e) { return null; }
+        },
+        createElement(tag, { id, className, style, children, innerHTML, ...attrs } = {}) {
+            const el = document.createElement(tag);
+            if (id) el.id = id;
+            if (className) el.className = className;
+            if (style) Object.assign(el.style, style);
+            if (innerHTML !== undefined) el.innerHTML = innerHTML;
+            Object.keys(attrs).forEach(key => el.setAttribute(key, attrs[key]));
+            if (children) children.forEach(child => {
+                if (typeof child === 'string') el.appendChild(document.createTextNode(child));
+                else if (child instanceof Node) el.appendChild(child);
+            });
+            return el;
+        },
+        sleep: (ms) => new Promise(res => setTimeout(res, ms)),
+        formatNumber: (num) => (typeof num === 'number' ? num.toLocaleString('vi-VN') : '0')
+    };
+
+    const HintParser = {
+        _extractTextFromNode(node) {
+            let text = '';
+            if (!node) return text;
+            if (node.text) text += node.text;
+            if (node.children && Array.isArray(node.children)) {
+                text += node.children.map(child => this._extractTextFromNode(child)).join('');
+            }
+            return text;
+        },
+        _deepScanJsonNode(node, hints, parentNode = null, q_type = 0) {
+            if (!node || typeof node !== 'object') return;
+            let identified = false;
+
+            if (q_type === 10 && node.name === 'group-list' && node.children) {
+                node.children.forEach((listItem, index) => {
+                    if (listItem.type !== 'olm-list-item' || !listItem.children) return;
+                    const titleNode = listItem.children.find(c => c.type === 'group-title');
+                    const title = titleNode ? this._extractTextFromNode(titleNode).trim() : 'Nhóm';
+                    const answers = listItem.children.filter(c => c.position === 'group').map(c => this._extractTextFromNode(c).trim()).filter(Boolean);
+                    if (answers.length > 0) {
+                        hints.push({ type: 'Kéo nhóm', content: `${title}: ${answers.join(', ')}`, subIndex: index + 1 });
+                    }
+                });
+                identified = true;
+            }
+
+            if (!identified && (q_type === 2 || q_type === 3) && node.type === 'paragraph' && node.children) {
+                const firstChild = node.children[0];
+                if (firstChild && firstChild.text && /^\d+\.\s/.test(firstChild.text.trim())) {
+                    const match = firstChild.text.trim().match(/^(\d+)\./);
+                    const qNum = match ? match[1] : '0';
+                    const inputs = node.children.filter(c => (c.type === 'fillme-input' || c.type === 'olm-input-text') && c.content);
+                    if (inputs.length > 0) {
+                        inputs.forEach(input => {
+                            input.content.split('||').map(s => s.trim()).filter(Boolean).forEach(part => {
+                                hints.push({ type: 'Điền từ', content: part, subIndex: qNum });
+                            });
+                        });
+                        identified = true;
+                    }
+                }
+            }
+
+            if (!identified && node.correct === true && (node.type === 'olm-list-item' || node.type === 'list-item')) {
+                const text = this._extractTextFromNode(node).trim();
+                if (text) {
+                    const type = (node.name === 'true-false' || (parentNode && parentNode.name === 'true-false')) ? 'Đúng/Sai' : 'Trắc nghiệm';
+                    hints.push({ type, content: text.replace(/^#/, '').trim(), subIndex: null });
+                    identified = true;
+                }
+            }
+
+            if (!identified && q_type !== 2 && q_type !== 3) {
+                if (node.type === 'fillme-input' && node.content) {
+                    node.content.split('||').map(s => s.trim()).filter(Boolean).forEach(part => hints.push({ type: 'Điền từ', content: part, subIndex: null }));
+                    identified = true;
+                }
+                if (!identified && node.type === 'olm-input-text' && node.name === 'dragtext' && node.content) {
+                    node.content.split('||').map(s => s.trim()).filter(Boolean).forEach(part => hints.push({ type: 'Điền từ', content: part, subIndex: null }));
+                    identified = true;
+                }
+                if (!identified && node.type === 'drag-more-item' && node.children) {
+                    const text = this._extractTextFromNode(node).trim();
+                    if (text) { hints.push({ type: 'Kéo thả', content: text, subIndex: null }); identified = true; }
+                }
+            }
+
+            if (!identified && node.type === 'olm-list-item' && parentNode && parentNode.name === 'link-list' && Array.isArray(node.children)) {
+                const leftNode = node.children.find(c => c.position === 'left');
+                const rightNode = node.children.find(c => c.position === 'right');
+                if (leftNode && rightNode) {
+                    const leftText = this._extractTextFromNode(leftNode).trim();
+                    const rightText = this._extractTextFromNode(rightNode).trim();
+                    if (leftText && rightText) { hints.push({ type: 'Nối', content: `${leftText} ➔ ${rightText}`, subIndex: null }); identified = true; }
+                }
+            }
+
+            if (!identified && Array.isArray(node.children) && node.children.length >= 3) {
+                const pieces = node.children.map(ch => (ch.text || '').trim()).filter(Boolean);
+                if (pieces.length >= 3 && pieces.every(t => /^[A-Za-zÀ-ỹ0-9'’.,!?-]+$/.test(t))) {
+                    hints.push({ type: 'Sắp xếp', content: pieces.join(' '), subIndex: null });
+                    identified = true;
+                }
+            }
+
+            if (!identified && node.name === 'exp' && (q_type === 18 || q_type === 11) && node.children) {
+                const text = this._extractTextFromNode(node).trim();
+                const cleanText = text.replace(/^Hư[ơớ]ng d[ẫâ]n gi[aả]i:?/i, '').trim();
+                if (cleanText) { hints.push({ type: (q_type === 11) ? 'Chọn từ' : 'Tự luận', content: cleanText, subIndex: null }); identified = true; }
+            }
+
+            if (!identified && node.children && Array.isArray(node.children)) {
+                 node.children.forEach(child => this._deepScanJsonNode(child, hints, node, q_type));
+            }
+        },
+        parse(question) {
+            const hints = [];
+            if (question.json_content) {
+                try {
+                    const data = typeof question.json_content === 'string' ? JSON.parse(question.json_content) : question.json_content;
+                    if (data && data.root) this._deepScanJsonNode(data.root, hints, null, question.q_type);
+                } catch (e) {}
+            }
+            if (question.content) {
+                const htmlContent = Utils.decodeBase64(question.content);
+                if (htmlContent) {
+                    const tempDiv = Utils.createElement('div', { innerHTML: htmlContent });
+                    tempDiv.querySelectorAll('.correctAnswer, .correct-answer').forEach(el => {
+                        const text = el.textContent.trim();
+                        if (text) hints.push({ type: 'Gợi ý (cũ)', content: text });
+                    });
+                    const inputAccept = tempDiv.querySelector('input[data-accept]');
+                    if (inputAccept) {
+                        (inputAccept.getAttribute('data-accept') || '').split('|').forEach(ans => {
+                            if (ans.trim()) hints.push({ type: 'Điền từ (cũ)', content: ans.trim() });
+                        });
+                    }
+                    if (question.q_type === 18 || question.q_type === 11) {
+                        const explanationDiv = tempDiv.querySelector('.exp .exp-in');
+                        if (explanationDiv) {
+                            const expText = Array.from(explanationDiv.childNodes).map(n => (n.textContent || '').trim()).filter(Boolean).join('\n');
+                            if (expText) hints.push({ type: (question.q_type === 11) ? 'Chọn từ' : 'Tự luận', content: expText });
+                        }
+                    }
+                }
+            }
+            const uniqueHints = [];
+            const seen = new Set();
+            for (const hint of hints) {
+                const key = (hint.content || '').toLowerCase();
+                if (!key || seen.has(key)) continue;
+                seen.add(key);
+                uniqueHints.push(hint);
+            }
+            return uniqueHints;
+        }
+    };
+
+    class StudyPanel {
+        constructor() {
+            this.isCollapsed = GM_getValue('isPanelCollapsed', false);
+            this.position = GM_getValue('panelPosition', { x: window.innerWidth - 470, y: 100 });
+            this.container = null; this.header = null; this.summaryBar = null; this.contentArea = null; this.footer = null; this.collapseButton = null;
+        }
+        init() {
+            this.container = this._createPanelContainer();
+            this._addEventListeners();
+            document.body.appendChild(this.container);
+            this.updateCollapseState(true);
+        }
+        _createPanelContainer() {
+            this.contentArea = Utils.createElement('div', { id: 'study-assistant-content' });
+            this.collapseButton = Utils.createElement('button', { className: 'study-control-btn', children: ['−'], title: 'Thu gọn/Mở rộng' });
+            const closeButton = Utils.createElement('button', { className: 'study-control-btn', children: ['×'], title: 'Đóng panel' });
+            closeButton.onclick = () => this.setVisible(false);
+            const renderMathButton = Utils.createElement('button', { className: 'study-control-btn', children: ['∑'], title: 'Render lại Toán' });
+            renderMathButton.onclick = () => this.finalizeRender();
+            const settingsButton = Utils.createElement('button', { className: 'study-control-btn', children: ['⚙'], title: 'Thông tin' });
+            settingsButton.onclick = () => { alert(`Study Assistant Pro v${Config.VERSION}\\nThiết bị: ${deviceId}\\nKey: ${savedKey}`); };
+            
+            const titleSpan = Utils.createElement('span', {
+                className: 'study-header-title',
+                children: [ '🎓 Study Assistant Pro', Utils.createElement('span', { className: 'study-status-badge', children: ['NORMAL'] }) ]
+            });
+            this.header = Utils.createElement('div', {
+                className: 'study-assistant-header',
+                children: [ titleSpan, Utils.createElement('div', { className: 'study-controls', children: [renderMathButton, settingsButton, this.collapseButton, closeButton] }) ]
+            });
+            this.summaryBar = Utils.createElement('div', {
+                className: 'study-summary',
+                children: [
+                    Utils.createElement('div', { className: 'summary-pill summary-questions', children: [ Utils.createElement('span', { className: 'summary-label', children: ['Câu hỏi'] }), Utils.createElement('span', { className: 'summary-value', children: ['0'] }) ] }),
+                    Utils.createElement('div', { className: 'summary-pill summary-hints', children: [ Utils.createElement('span', { className: 'summary-label', children: ['Gợi ý'] }), Utils.createElement('span', { className: 'summary-value', children: ['0'] }) ] }),
+                    Utils.createElement('div', { className: 'summary-pill summary-status', children: [ Utils.createElement('span', { className: 'summary-label', children: ['Trạng thái'] }), Utils.createElement('span', { className: 'summary-value summary-status-text', children: ['Chờ dữ liệu...'] }) ] })
+                ]
+            });
+            this.footer = Utils.createElement('div', {
+                className: 'study-footer',
+                children: [
+                    Utils.createElement('span', { className: 'study-footer-left', children: ['Tiệp Gà Cui • OLM Assistant'] }),
+                    Utils.createElement('button', { className: 'study-footer-btn', children: ['🧹 Xóa panel'], onclick: () => this.clearData() })
+                ]
+            });
+            return Utils.createElement('div', {
+                id: 'study-assistant-container',
+                style: { left: `${this.position.x}px`, top: `${this.position.y}px` },
+                children: [this.header, this.summaryBar, this.contentArea, this.footer]
+            });
+        }
+        _addEventListeners() {
+            this.collapseButton.addEventListener('click', (e) => { e.stopPropagation(); this.toggleCollapse(); });
+            this.header.addEventListener('dblclick', () => this.toggleCollapse());
+            this.header.addEventListener('click', () => { if (this.isCollapsed) this.toggleCollapse(); });
+            this._setupDragEvents();
+        }
+        _setupDragEvents() {
+            let isDragging = false; let startX, startY, initialX, initialY;
+            const startDrag = (e) => {
+                if (e.target.classList.contains('study-control-btn') || this.isCollapsed) return;
+                isDragging = true; this.container.classList.add('dragging');
+                const touch = e.touches ? e.touches[0] : e;
+                startX = touch.clientX; startY = touch.clientY;
+                const rect = this.container.getBoundingClientRect();
+                initialX = rect.left; initialY = rect.top;
+                document.addEventListener('mousemove', onDrag, { passive: false }); document.addEventListener('touchmove', onDrag, { passive: false });
+                document.addEventListener('mouseup', stopDrag); document.addEventListener('touchend', stopDrag);
+                e.preventDefault();
+            };
+            const onDrag = (e) => {
+                if (!isDragging) return;
+                const touch = e.touches ? e.touches[0] : e;
+                let newX = Math.max(10, Math.min(initialX + (touch.clientX - startX), window.innerWidth - this.container.offsetWidth - 10));
+                let newY = Math.max(10, Math.min(initialY + (touch.clientY - startY), window.innerHeight - this.container.offsetHeight - 10));
+                this.container.style.left = `${newX}px`; this.container.style.top = `${newY}px`;
+                e.preventDefault();
+            };
+            const stopDrag = () => {
+                isDragging = false; this.container.classList.remove('dragging');
+                document.removeEventListener('mousemove', onDrag); document.removeEventListener('touchmove', onDrag);
+                document.removeEventListener('mouseup', stopDrag); document.removeEventListener('touchend', stopDrag);
+                this.position = { x: this.container.getBoundingClientRect().left, y: this.container.getBoundingClientRect().top };
+                GM_setValue('panelPosition', this.position);
+            };
+            this.header.addEventListener('mousedown', startDrag); this.header.addEventListener('touchstart', startDrag);
+        }
+        toggleCollapse() { this.isCollapsed = !this.isCollapsed; this.updateCollapseState(); GM_setValue('isPanelCollapsed', this.isCollapsed); }
+        updateCollapseState(isInitial = false) {
+            if (!isInitial) this.container.style.transition = 'all 0.25s ease';
+            this.container.classList.toggle('collapsed', this.isCollapsed);
+            this.collapseButton.innerHTML = this.isCollapsed ? '+' : '−';
+            if (!isInitial) setTimeout(() => { this.container.style.transition = ''; }, 260);
+        }
+        setVisible(isVisible) { if (this.container) this.container.style.display = isVisible ? 'flex' : 'none'; }
+        clearData() {
+            if (!this.contentArea) return;
+            this.contentArea.innerHTML = '';
+            this.contentArea.appendChild(Utils.createElement('div', { className: 'study-no-data', children: ['🔍 Đang chờ dữ liệu câu hỏi từ OLM...'] }));
+            this.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Chờ dữ liệu...' });
+        }
+        setSummary({ questionCount, hintCount, statusText }) {
+            if (!this.summaryBar) return;
+            const qEl = this.summaryBar.querySelector('.summary-questions .summary-value');
+            const hEl = this.summaryBar.querySelector('.summary-hints .summary-value');
+            const sEl = this.summaryBar.querySelector('.summary-status-text');
+            if (qEl) qEl.textContent = Utils.formatNumber(questionCount || 0);
+            if (hEl) hEl.textContent = Utils.formatNumber(hintCount || 0);
+            if (sEl) sEl.textContent = statusText || 'Đã cập nhật';
+        }
+        appendQuestion(item) {
+            if (!this.contentArea) return;
+            if (this.contentArea.querySelector('.study-no-data')) this.contentArea.innerHTML = '';
+
+            const hintSpans = item.hints.map(hint => {
+                const isHiddenType = (hint.type === 'Trắc nghiệm' || hint.type === 'Đúng/Sai' || (hint.type === 'Điền từ' && hint.subIndex) || hint.type === 'Chọn từ');
+                const label = Utils.createElement('span', { className: 'hint-type-label', children: [`[${hint.type}]`], style: { display: isHiddenType ? 'none' : 'inline-block' } });
+                const body = Utils.createElement('span', { className: 'hint-text', innerHTML: (hint.content || '').replace(/\\n/g, '<br>') });
+                return Utils.createElement('li', { children: [label, body], style: { borderLeftColor: (hint.type === 'Trắc nghiệm' || hint.type === 'Chọn từ') ? '#22c55e' : '#6366f1' } });
+            });
+
+            this.contentArea.appendChild(Utils.createElement('div', {
+                className: 'study-reference-item',
+                children: [
+                    Utils.createElement('div', { className: 'study-reference-title', children: [`📝 ${item.title} (${item.hints.length} gợi ý)`] }),
+                    Utils.createElement('div', { className: 'study-reference-body', children: [ hintSpans.length > 0 ? Utils.createElement('ul', { children: hintSpans }) : Utils.createElement('div', { style: { color: '#a0aec0', textAlign: 'center', padding: '10px' }, children: ['Không tìm thấy gợi ý cụ thể.'] }) ] })
+                ]
+            }));
+        }
+        finalizeRender() {
+            const render = () => {
+                try { if (typeof unsafeWindow.MathJax !== 'undefined' && unsafeWindow.MathJax.typesetPromise) unsafeWindow.MathJax.typesetPromise([this.contentArea]).catch(err => {}); } catch (e) {}
+            };
+            if (typeof unsafeWindow.MathJax !== 'undefined') { render(); } else {
+                unsafeWindow.MathJax = { tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }, svg: { fontCache: 'global' } };
+                const script = Utils.createElement('script', { src: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js', async: true });
+                script.onload = render; document.head.appendChild(script);
+            }
+        }
+    }
+
+    const ApiInterceptor = {
+        _initialized: false,
+        init(callback) {
+            if (this._initialized) return;
+            this._initialized = true;
+            this._patchFetch(callback);
+            this._patchXHR(callback);
+        },
+        _processResponse(textData, url) {
+            if (Config.API_KEYWORDS.some(k => url.includes(k))) {
+                try { const d = JSON.parse(textData); const q = d?.questions || d; if (Array.isArray(q) && q.length > 0) return q; } catch (e) {}
+            }
+            return null;
+        },
+        _patchFetch(callback) {
+            const originalFetch = unsafeWindow.fetch;
+            if (!originalFetch) return;
+            unsafeWindow.fetch = async (...args) => {
+                const response = await originalFetch.apply(this, args);
+                const requestUrl = args[0] instanceof Request ? args[0].url : args[0];
+                if (response && response.ok) {
+                    response.clone().text().then(text => { const qs = this._processResponse(text, requestUrl); if (qs) callback(qs); });
+                }
+                return response;
+            };
+        },
+        _patchXHR(callback) {
+            const originalSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.send = function (...args) {
+                this.addEventListener('load', () => {
+                    if (this.status === 200) { const qs = ApiInterceptor._processResponse(this.responseText, this.responseURL || ''); if (qs) callback(qs); }
+                });
+                return originalSend.apply(this, args);
+            };
+        }
+    };
+
+    const StudyAssistantManager = {
+        isPanelEnabled: GM_getValue('isScriptEnabled', true), 
+        panel: null,
+        toggleButton: null,
+        init() {
+            this._injectStyles();
+            this.panel = new StudyPanel();
+            this.panel.init();
+            this.panel.clearData();
+            this.toggleButton = this._createMasterToggle();
+            this.updateUIState();
+            ApiInterceptor.init(this.processApiData.bind(this));
+        },
+        updateUIState() {
+            this.toggleButton.classList.add('valid');
+            if (this.isPanelEnabled) {
+                this.toggleButton.innerHTML = '🚀'; this.toggleButton.title = 'Tắt hỗ trợ học tập';
+            } else {
+                this.toggleButton.innerHTML = '🔓'; this.toggleButton.title = 'Bật hỗ trợ học tập';
+            }
+            this.panel.setVisible(this.isPanelEnabled);
+        },
+        _createMasterToggle() {
+            const toggle = Utils.createElement('div', { id: 'study-master-toggle' });
+            toggle.addEventListener('click', () => {
+                this.isPanelEnabled = !this.isPanelEnabled;
+                GM_setValue('isScriptEnabled', this.isPanelEnabled);
+                this.updateUIState();
+            });
+            document.body.appendChild(toggle);
+            return toggle;
+        },
+        highlightHintsOnPage(processedQuestions) {
+            document.querySelectorAll('[data-highlighted-by-study]').forEach(el => { el.style.backgroundColor = ''; el.style.border = ''; el.style.borderRadius = ''; el.removeAttribute('data-highlighted-by-study'); });
+            const domQuestions = Array.from(document.querySelectorAll('.question-item, [data-question-id], div[id^="question_"], div[id^="elm-question-"]'));
+            const getNumberFromDom = (container) => {
+                if (!container) return null;
+                for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
+                    const txt = (el.textContent || '').trim();
+                    const m = txt.match(/(?:Question|Câu)\\s+(\\d+)/i);
+                    if (m) { const num = parseInt(m[1], 10); if (!isNaN(num)) return num; }
+                }
+                return null;
+            };
+            const getAllNumbersFromDom = (container) => {
+                const numbers = [];
+                if (!container) return numbers;
+                for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
+                    const txt = (el.textContent || '').trim();
+                    const m = txt.match(/(?:Question|Câu)\\s+(\\d+)/i);
+                    if (m) { const num = parseInt(m[1], 10); if (!isNaN(num) && !numbers.includes(num)) numbers.push(num); }
+                }
+                return numbers.sort((a, b) => a - b);
+            };
+            processedQuestions.forEach(item => {
+                const question = item.question; const hints = item.hints || [];
+                if (!hints.length) return;
+                let questionElement = (question._id ? document.querySelector(`.question-item[data-id="${question._id}"]`) || document.querySelector(`div[id^="question_${question._id}"]`) : null) 
+                                   || (question.id ? document.querySelector(`div[id="elm-question-${question.id}"]`) || document.querySelector(`div[data-id="${question.id}"]`) : null);
+                if (!questionElement) return;
+                const container = questionElement.closest('.question-item, [data-question-id]') || questionElement;
+                if (question.q_type === 21 || question.q_type === 22) {
+                    const displayNumbers = getAllNumbersFromDom(container);
+                    if (displayNumbers.length > 0) question._displayIndices = displayNumbers;
+                } else {
+                    let displayIndex = getNumberFromDom(container);
+                    if (!displayIndex) { const idx = domQuestions.indexOf(container); if (idx !== -1) displayIndex = idx + 1; }
+                    if (displayIndex) question._displayIndex = displayIndex;
+                }
+                const hintTexts = hints.map(h => h.content).filter(Boolean);
+                if (!hintTexts.length) return;
+                container.querySelectorAll('.answer-option, .option, li, input, textarea, .dragmore, .selecttext').forEach(option => {
+                    const cleanOptionText = (option.textContent || option.value || '').trim().replace(/\\s+/g, ' ').replace(/\\s/g, '').replace(/&nbsp;/g, '');
+                    if (!cleanOptionText) return;
+                    if (hintTexts.some(hint => {
+                        const cleanHint = (hint || '').replace(/\\\\/g, '').replace(/\\s/g, '').replace(/&nbsp;/g, '');
+                        return cleanOptionText && (cleanOptionText.includes(cleanHint) || cleanHint.includes(cleanOptionText));
+                    })) {
+                        option.style.backgroundColor = 'rgba(72, 187, 120, 0.18)';
+                        option.style.border = '2px solid #48bb78'; option.style.borderRadius = '8px';
+                        option.style.transition = 'background-color 0.2s ease, transform 0.1s ease';
+                        option.setAttribute('data-highlighted-by-study', 'true');
+                    }
+                });
+            });
+        },
+        async processApiData(rawQuestions) {
+            if (!this.isPanelEnabled) return;
+            const processed = rawQuestions.map(q => ({ question: q, hints: HintParser.parse(q) }));
+            this.highlightHintsOnPage(processed);
+            this.panel.clearData(); this.panel.setVisible(true);
+            this.panel.setSummary({ questionCount: processed.length, hintCount: processed.reduce((sum, item) => sum + (item.hints?.length || 0), 0), statusText: 'Đã lấy dữ liệu' });
+            let fallbackIndex = 1;
+            for (const item of processed) {
+                const q = item.question;
+                const baseTitle = (q.title && String(q.title).trim()) || (q._id ? `ID: ${String(q._id).slice(-4)}` : (q.id || '?'));
+                if (!item.hints.some(h => h.subIndex)) {
+                    const displayIndex = q._displayIndex || fallbackIndex++;
+                    if (item.hints.length > 0) this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: item.hints });
+                } else {
+                    const groupedHints = {};
+                    item.hints.forEach(hint => { const idx = hint.subIndex || 'general'; if (!groupedHints[idx]) groupedHints[idx] = []; groupedHints[idx].push(hint); });
+                    const displayIndices = q._displayIndices || []; let subIndexCounter = 0;
+                    for (const subIndex in groupedHints) {
+                        const hintsForPanel = groupedHints[subIndex];
+                        if (hintsForPanel.length === 0) continue;
+                        let displayIndex = (subIndex !== 'general' && !isNaN(parseInt(subIndex))) ? subIndex : (displayIndices.length > 0 ? (displayIndices[subIndexCounter] || (displayIndices[0] + subIndexCounter)) : (q._displayIndex || fallbackIndex) + subIndexCounter);
+                        if (hintsForPanel.length > 1 && hintsForPanel.every(h => h.type === 'Điền từ')) { hintsForPanel[0].content = hintsForPanel.map(h => h.content).join(' | '); hintsForPanel.splice(1); }
+                        this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: hintsForPanel });
+                        subIndexCounter++;
+                    }
+                    fallbackIndex += subIndexCounter;
+                }
+                await Utils.sleep(8);
+            }
+        },
+        _injectStyles() {
+            GM_addStyle(`
+                #study-assistant-container { font-family: system-ui, -apple-system, sans-serif; position: fixed; width: 460px; height: 520px; min-height: 220px; max-height: 80vh; border-radius: 18px; z-index: 10001; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(circle at top left, rgba(94, 234, 212, 0.25), transparent 55%), radial-gradient(circle at bottom right, rgba(129, 140, 248, 0.3), transparent 55%), linear-gradient(145deg, #020617, #020617); box-shadow: 0 18px 45px rgba(15, 23, 42, 0.85), 0 0 0 1px rgba(148, 163, 184, 0.3); border: 1px solid rgba(148, 163, 184, 0.65); backdrop-filter: blur(14px); color: #e5e7eb; }
+                #study-assistant-container::before { content: ''; position: absolute; inset: -40%; background: radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.4), transparent 60%), radial-gradient(circle at 100% 100%, rgba(244, 114, 182, 0.35), transparent 60%); opacity: 0.35; filter: blur(32px); z-index: -1; }
+                #study-assistant-container.dragging { transition: none !important; cursor: grabbing !important; }
+                .study-assistant-header { display: flex; justify-content: space-between; align-items: center; padding: 0 18px; height: 58px; cursor: move; flex-shrink: 0; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.6)); border-bottom: 1px solid rgba(148, 163, 184, 0.4); user-select: none; }
+                .study-header-title { background: linear-gradient(135deg, #60a5fa, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+                .study-status-badge { background: #22c55e; color: white; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+                .study-controls { display: flex; gap: 6px; }
+                .study-control-btn { width: 30px; height: 30px; border-radius: 10px; border: none; cursor: pointer; background: radial-gradient(circle at 30% 0, rgba(248, 250, 252, 0.08), transparent 60%), rgba(15, 23, 42, 0.9); color: #9ca3af; font-size: 15px; display: flex; align-items: center; justify-content: center; }
+                .study-control-btn:hover { color: #e5e7eb; box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.6); background: rgba(15, 23, 42, 1); }
+                #study-assistant-content { padding: 12px 14px 10px; flex: 1; overflow-y: auto; position: relative; }
+                #study-assistant-content::-webkit-scrollbar { width: 6px; }
+                #study-assistant-content::-webkit-scrollbar-thumb { background: linear-gradient(135deg, #6366f1, #a855f7); border-radius: 999px; }
+                .study-summary { display: flex; gap: 8px; padding: 8px 12px 6px; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.75)); border-bottom: 1px solid rgba(148, 163, 184, 0.35); flex-shrink: 0; }
+                .summary-pill { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 6px 9px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.6); }
+                .summary-questions { border-color: rgba(59, 130, 246, 0.75); } .summary-hints { border-color: rgba(16, 185, 129, 0.8); } .summary-status { border-style: dashed; }
+                .summary-label { font-size: 9px; text-transform: uppercase; color: #9ca3af; margin-bottom: 2px; } .summary-value { font-size: 13px; font-weight: 600; color: #e5e7eb; }
+                .study-reference-item { margin-bottom: 10px; padding: 11px 10px; background: rgba(15, 23, 42, 0.92); border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.5); }
+                .study-reference-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+                .study-reference-body ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+                .study-reference-body li { display: flex; gap: 6px; padding: 6px 8px; background: rgba(15, 23, 42, 0.9); border-radius: 9px; border-left: 2px solid #6366f1; font-size: 12px; }
+                .hint-type-label { font-size: 10px; border-radius: 999px; background: rgba(55, 65, 81, 0.9); padding: 2px 5px; flex-shrink: 0; }
+                .hint-text { line-height: 1.4; }
+                .study-no-data { text-align: center; padding: 40px 16px; color: #9ca3af; font-size: 13px; }
+                .study-footer { height: 32px; padding: 4px 10px 6px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(148, 163, 184, 0.4); font-size: 11px; color: #9ca3af; }
+                .study-footer-btn { border: 1px solid rgba(248, 113, 113, 0.6); padding: 4px 8px; border-radius: 999px; background: rgba(220, 38, 38, 0.15); color: #fecaca; cursor: pointer; }
+                #study-master-toggle { position: fixed; bottom: 20px; right: 20px; width: 58px; height: 58px; border-radius: 50%; cursor: pointer; z-index: 9999; display: flex; align-items: center; justify-content: center; font-size: 26px; color: white; background: linear-gradient(145deg, #6366f1, #7c3aed); box-shadow: 0 14px 28px rgba(79, 70, 229, 0.55); border: 2px solid rgba(255, 255, 255, 0.2); }
+                #study-master-toggle.valid { background: linear-gradient(145deg, #22c55e, #16a34a); box-shadow: 0 14px 28px rgba(34, 197, 94, 0.6); }
+                #study-assistant-container.collapsed { width: 60px !important; height: 60px !important; min-height: 0; border-radius: 16px; }
+                #study-assistant-container.collapsed .study-assistant-header { cursor: pointer; }
+                #study-assistant-container.collapsed .study-header-title, #study-assistant-container.collapsed #study-assistant-content, #study-assistant-container.collapsed .study-controls, #study-assistant-container.collapsed .study-summary, #study-assistant-container.collapsed .study-footer { display: none; }
+            `);
+        }
+    };
+
+    // =========================================================================
+    // [PHẦN 3]: GIAO DIỆN CHUYỂN HƯỚNG WEB & CẢNH BÁO
+    // =========================================================================
+    function showWelcomePopup(username, isVIP) {
         if(document.getElementById('tiep-welcome-overlay')) return;
         let overlay = document.createElement('div');
         overlay.id = 'tiep-welcome-overlay';
         overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);";
+        let tierColor = isVIP ? "#bd00ff" : "#00ffcc";
+        let tierName = isVIP ? "VIP PRO" : "STANDARD";
         overlay.innerHTML = `
-            <div style="background:#0a0a12; border:2px solid #00ffcc; padding:40px; border-radius:15px; text-align:center; box-shadow:0 0 40px rgba(0,255,204,0.4); animation: zoomInTiep 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
-                <style>@keyframes zoomInTiep { from {transform:scale(0.5); opacity:0;} to {transform:scale(1); opacity:1;} }</style>
+            <div style="background:#0a0a12; border:2px solid ${tierColor}; padding:40px; border-radius:15px; text-align:center; box-shadow:0 0 40px ${isVIP?'rgba(189,0,255,0.4)':'rgba(0,255,204,0.4)'};">
                 <div style="font-size:50px; margin-bottom:10px;">🎉</div>
-                <h1 style="color:#00ffcc; margin:0 0 15px 0; font-family:'Orbitron', sans-serif; text-shadow:0 0 15px #00ffcc; letter-spacing:2px;">CHÚC MỪNG</h1>
-                <p style="color:#ccc; font-size:16px; font-family:sans-serif; line-height:1.6;">Tài khoản OLM đã định danh:<br>
-                <strong style="color:#ff3366; font-size:24px; display:block; margin-top:10px; text-shadow:0 0 10px rgba(255,51,102,0.5);">${username}</strong></p>
-                <p style="color:#888; font-size:13px; margin-top:15px;">Đăng nhập hệ thống VIP thành công!</p>
-                <button id="tiep-close-welcome" style="margin-top:25px; padding:12px 40px; background:linear-gradient(45deg, #00ffcc, #0099ff); color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer; font-size:16px; font-family:'Orbitron', sans-serif; transition:0.3s; text-transform:uppercase;">BẮT ĐẦU SỬ DỤNG</button>
+                <h1 style="color:${tierColor}; margin:0 0 15px 0; font-family:sans-serif; letter-spacing:2px;">CHÚC MỪNG</h1>
+                <p style="color:#ccc; font-size:16px;">Tài khoản định danh:<br><strong style="color:#ff3366; font-size:24px;">${username}</strong></p>
+                <p style="color:#888; font-size:13px; margin-top:15px;">Đăng nhập hệ thống [${tierName}] thành công!</p>
+                <button id="tiep-close-welcome" style="margin-top:25px; padding:12px 40px; background:${tierColor}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">BẮT ĐẦU SỬ DỤNG</button>
             </div>
         `;
         document.body.appendChild(overlay);
-        document.getElementById('tiep-close-welcome').onclick = () => {
-            overlay.style.opacity = '0';
-            overlay.style.transition = 'opacity 0.4s ease';
-            setTimeout(() => overlay.remove(), 400);
-        };
+        document.getElementById('tiep-close-welcome').onclick = () => overlay.remove();
     }
 
     function showKeyPrompt(errorMsg = "") {
         if(document.getElementById('tiep-auth-overlay')) return;
-        
-        const authStyle = document.createElement('style');
-        authStyle.textContent = `
-            @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
-            #tiep-auth-overlay { position: fixed; inset: 0; z-index: 2147483647; background: rgba(5, 5, 10, 0.98); backdrop-filter: blur(15px); display: flex; align-items: center; justify-content: center; font-family: 'Share Tech Mono', monospace; }
-            .auth-box { background: #0a0a12; border: 2px solid #00ffcc; padding: 40px; border-radius: 15px; box-shadow: 0 0 40px rgba(0,255,204,0.3); text-align: center; width: 400px; max-width: 90%; position: relative; overflow: hidden; }
-            .auth-box::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: conic-gradient(transparent, rgba(0,255,204,0.3), transparent 30%); animation: rotate 4s linear infinite; z-index: 0; opacity: 0.5; }
-            .auth-box::after { content: ''; position: absolute; inset: 2px; background: #0a0a12; border-radius: 13px; z-index: 1; }
-            @keyframes rotate { 100% { transform: rotate(1turn); } }
-            .auth-content { position: relative; z-index: 2; }
-            .auth-title { color: #00ffcc; font-size: 28px; font-weight: 900; margin-bottom: 5px; font-family: 'Orbitron', sans-serif; text-shadow: 0 0 15px rgba(0,255,204,0.6); letter-spacing: 2px; }
-            .auth-sub { color: #888; font-size: 12px; margin-bottom: 25px; letter-spacing: 1px; text-transform: uppercase; }
-            .auth-msg { color: #fff; font-size: 16px; margin: 25px 0; padding: 15px; background: rgba(0,255,204,0.1); border: 1px solid #00ffcc; border-radius: 8px; font-weight: bold; line-height: 1.5; text-shadow: 0 0 5px rgba(0,255,204,0.3); }
-            .auth-error { color: #ff3366; font-size: 14px; margin-top: 15px; display: block; font-weight: bold; text-shadow: 0 0 5px rgba(255,51,102,0.4); }
-            .auth-footer { margin-top: 30px; font-size: 14px; }
-            .auth-footer a { color: #00ffcc; text-decoration: none; font-weight: bold; border-bottom: 1px dashed #00ffcc; padding-bottom: 2px; transition: 0.3s; letter-spacing: 1px;}
-            .auth-footer a:hover { color: #fff; border-color: #fff; text-shadow: 0 0 10px #00ffcc; }
-        `;
-        document.head.appendChild(authStyle);
-
         const authDiv = document.createElement('div');
         authDiv.id = 'tiep-auth-overlay';
+        authDiv.style.cssText = "position:fixed;inset:0;background:rgba(5,5,10,0.98);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif;";
         authDiv.innerHTML = `
-            <div class="auth-box">
-                <div class="auth-content">
-                    <div class="auth-title">OLM VIP PRO</div>
-                    <div class="auth-sub">HỆ THỐNG BẢO MẬT & ĐỒNG BỘ ĐÁM MÂY</div>
-                    <div class="auth-msg">⚠️ VUI LÒNG ĐĂNG NHẬP KEY<br>Ở WEB ĐỂ SỬ DỤNG</div>
-                    <div id="tiep-auth-error" class="auth-error">${errorMsg}</div>
-                    <div class="auth-footer"><a href="${SERVER_URL}" target="_blank">🌍 ĐI TỚI WEBSITE MUA / NHẬP KEY</a></div>
-                </div>
+            <div style="background:#0a0a12; border:2px solid #00ffcc; padding:40px; border-radius:15px; text-align:center; width:400px;">
+                <h2 style="color:#00ffcc;">OLM VIP PRO</h2>
+                <div style="color:#fff; font-size:16px; margin:25px 0; padding:15px; background:rgba(0,255,204,0.1); border:1px solid #00ffcc; border-radius:8px; font-weight:bold;">⚠️ VUI LÒNG ĐĂNG NHẬP KEY<br>Ở WEB ĐỂ SỬ DỤNG</div>
+                <div style="color:#ff3366; font-size:14px; margin-top:15px; font-weight:bold;">${errorMsg}</div>
+                <div style="margin-top:30px;"><a href="${SERVER_URL}" target="_blank" style="color:#00ffcc; font-weight:bold; text-decoration:none; border-bottom:1px dashed #00ffcc;">🌍 ĐI TỚI WEBSITE</a></div>
             </div>
         `;
-
-        if (document.body) {
-            document.body.appendChild(authDiv);
-        } else {
-            window.addEventListener('DOMContentLoaded', () => document.body.appendChild(authDiv));
-        }
+        (document.body || document.documentElement).appendChild(authDiv);
     }
     
     function kickUserToWeb(msg) {
+        GM_setValue('lvt_olm_vip_key', ''); 
+        try {
+            let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+            if (desc && desc.set) desc.set.call(document, "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;");
+            else document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        } catch(e) { document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;"; }
+        sessionStorage.removeItem('tiep_welcomed');
+
         let kickDiv = document.createElement('div');
         kickDiv.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.98);z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;text-align:center;padding:20px;";
-        kickDiv.innerHTML = `<div style="font-size:60px;margin-bottom:10px;text-shadow:0 0 20px red;">⚠️</div><h1 style="color:#ff3366;margin:0 0 15px 0;font-weight:900;">TRUY CẬP BỊ TỪ CHỐI</h1><p style="color:#ccc;font-size:18px;max-width:600px;line-height:1.5;">${msg}</p><p style="margin-top:30px;font-size:14px;color:#888;">Đang làm sạch bộ nhớ và cấm hệ thống...</p>`;
-        
-        if(document.body) {
-            let old = document.getElementById('tiep-auth-overlay');
-            if(old) old.remove();
-            let oldPopup = document.getElementById('tiep-welcome-overlay');
-            if(oldPopup) oldPopup.remove();
-            document.body.appendChild(kickDiv);
-        }
-        
-        GM_setValue('lvt_olm_vip_key', ''); 
-        setTimeout(() => { window.location.href = SERVER_URL; }, 5000); 
+        kickDiv.innerHTML = `<div style="font-size:60px;margin-bottom:10px;">⚠️</div><h1 style="color:#ff3366;">TRUY CẬP BỊ TỪ CHỐI</h1><p style="color:#ccc;max-width:600px;">${msg}</p>`;
+        (document.body || document.documentElement).appendChild(kickDiv);
+        setTimeout(() => { window.location.href = window.location.pathname; }, 4000); 
     }
 
-    function initHackSystem(activeKey) {
+    // =========================================================================
+    // [PHẦN 4]: LÕI HACK CHÍNH & MẶT NẠ DÍNH KÈM (DÀNH CHO KEY VIP)
+    // =========================================================================
+    function initVipHackSystem(activeKey) {
         const CORE_URL = 'https://fakemoithu.io.vn/core.js';
         let cachedCore = GM_getValue('tiep_core_cache', '');
         const currentUrl = window.location.href;
-        
         const isTargetPage = currentUrl.includes('/chu-de/') || currentUrl.includes('/bai-kiem-tra/') || currentUrl.includes('/video') || currentUrl.includes('/luyen-tap');
         const hasSeenLoader = sessionStorage.getItem('tiep_loader_seen');
 
@@ -233,16 +736,12 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
                             set: function(v) { cookieDesc.set.call(this, v); }
                         });
                     }
-                    
                     const origGet = Storage.prototype.getItem;
                     Storage.prototype.getItem = function(k) {
                         let v = origGet.call(this, k);
-                        if (v && typeof v === 'string' && v.includes('"username"')) {
-                            return v.replace(/"username":"[^"]+"/, '"username":"' + TARGET + '"');
-                        }
+                        if (v && typeof v === 'string' && v.includes('"username"')) return v.replace(/"username":"[^"]+"/, '"username":"' + TARGET + '"');
                         return v;
                     };
-                    
                     const origParse = JSON.parse;
                     JSON.parse = function(text, reviver) {
                         let obj = origParse(text, reviver);
@@ -253,12 +752,9 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
                         }
                         return obj;
                     };
-
                     if (window.userData) window.userData.username = TARGET;
-                    console.log("[OLM VIP] Đã áp dụng FUSION MASK thành công. Lõi Hack đã bị Đánh lừa!");
                 } catch(e) {}
             })();\\n\\n`;
-
             scriptTag.textContent = fusedMask + scriptContent;
             (document.head || document.documentElement).appendChild(scriptTag);
             scriptTag.remove();
@@ -267,15 +763,12 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
         GM_xmlhttpRequest({
             method: 'GET',
             url: CORE_URL + '?t=' + new Date().getTime(),
-            onload: function(response) {
-                if (response.status === 200 && response.responseText !== cachedCore) {
-                    GM_setValue('tiep_core_cache', response.responseText);
+            onload: function(res) {
+                if (res.status === 200 && res.responseText !== cachedCore) {
+                    GM_setValue('tiep_core_cache', res.responseText);
                     if (!cachedCore) {
-                        if (isTargetPage) injectScript(response.responseText);
-                        else {
-                            sessionStorage.setItem('tiep_loader_seen', '1');
-                            showMatrixLoader(response.responseText);
-                        }
+                        if (isTargetPage) injectScript(res.responseText);
+                        else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(res.responseText); }
                     }
                 }
             }
@@ -283,27 +776,27 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
 
         if (cachedCore) {
             if (isTargetPage || hasSeenLoader) injectScript(cachedCore);
-            else {
-                sessionStorage.setItem('tiep_loader_seen', '1');
-                showMatrixLoader(cachedCore);
-            }
+            else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(cachedCore); }
         }
 
         function showMatrixLoader(scriptContent) {
             const style = document.createElement('style');
-            style.textContent = `@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap'); #tiep-matrix-loader { position: fixed; inset: 0; z-index: 2147483647; background: #020c06; font-family: 'Share Tech Mono', monospace; color: #00ff88; display: flex; align-items: center; justify-content: center; overflow: hidden; }`;
+            style.textContent = `@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap'); #tiep-matrix-loader { position: fixed; inset: 0; z-index: 2147483647; background: #020c06; font-family: 'Share Tech Mono', monospace; color: #00ff88; display: flex; align-items: center; justify-content: center; }`;
             document.head.appendChild(style);
-            
             setTimeout(() => {
                 let loader = document.getElementById('tiep-matrix-loader');
                 if (loader) loader.remove();
                 injectScript(scriptContent);
             }, 3000);
         }
-
-        setInterval(() => { secureApiCall('/api/script_ping', { key: activeKey }).catch(e => {}); }, 30000);
+        
+        setInterval(() => secureApiCall('/api/script_ping', { key: activeKey }).catch(e => {}), 30000);
     }
 
+    // =========================================================================
+    // [PHẦN 5]: BỘ KHỞI ĐỘNG CHÍNH (QUYẾT ĐỊNH LOAD MODULE NÀO)
+    // =========================================================================
+    
     let urlParams = new URLSearchParams(window.location.search);
     let webKey = urlParams.get('lvt_key');
     if (webKey) {
@@ -315,42 +808,71 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
     if (savedKey) {
         secureApiCall('/api/check', { key: savedKey, deviceId: deviceId }).then(res => {
             if (res.status === 'success') {
+                
                 let assignedUser = res.assigned_user || REAL_USERNAME;
-                if (res.assigned_user && REAL_USERNAME !== "N/A" && REAL_USERNAME !== res.assigned_user) {
+                let keyType = (res.key_type || 'NORMAL').toUpperCase(); // Server trả về 'VIP' hoặc 'NORMAL'
+
+                // Vòng lặp chống đổi nick trái phép
+                setInterval(() => {
+                    let currentUserNow = getRealUsername();
+                    if (assignedUser && currentUserNow !== "N/A" && currentUserNow !== "hp_luongvantuyen" && currentUserNow !== assignedUser) {
+                        secureApiCall('/api/ban_key', { key: savedKey, reason: "Đổi tài khoản trái phép sang: " + currentUserNow });
+                        kickUserToWeb(`GIAN LẬN: Cố tình đăng nhập nick lạ [${currentUserNow}]. Key này chỉ định cho [${assignedUser}]. ĐÃ BỊ KHÓA VĨNH VIỄN!`);
+                    }
+                }, 2000);
+
+                // Check ngay từ đầu
+                if (res.assigned_user && REAL_USERNAME !== "N/A" && REAL_USERNAME !== "hp_luongvantuyen" && REAL_USERNAME !== res.assigned_user) {
                     secureApiCall('/api/ban_key', { key: savedKey, reason: "Sử dụng sai tài khoản OLM" });
                     kickUserToWeb(`GIAN LẬN: Key này chỉ dành cho tài khoản [${res.assigned_user}]. Bạn đang dùng cho [${REAL_USERNAME}]. Key đã bị Khóa Vĩnh Viễn!`);
                     return;
                 }
 
                 if (!sessionStorage.getItem('tiep_welcomed')) {
-                    showWelcomePopup(assignedUser);
+                    showWelcomePopup(assignedUser, keyType === 'VIP');
                     sessionStorage.setItem('tiep_welcomed', '1');
                 }
 
-                if (res.loader_enabled) initHackSystem(savedKey); 
-                else showKeyPrompt("⚠️ ADMIN ĐÃ TẮT SPOOFER CHO KEY NÀY!");
+                if (!res.loader_enabled) {
+                    kickUserToWeb("⚠️ ADMIN ĐÃ TẮT HỆ THỐNG SPOOFER CHO KEY NÀY!");
+                    return;
+                }
+
+                // ===== RẼ NHÁNH GIAO DIỆN =====
+                if (keyType === 'VIP') {
+                    console.log("[LVT] Kích hoạt Hack VIP (OLM MODE)");
+                    initVipHackSystem(savedKey);
+                } else {
+                    console.log("[LVT] Kích hoạt Hack Thường (Study Assistant)");
+                    StudyAssistantManager.init();
+                }
+
             } else {
-                showKeyPrompt(res.message);
-                GM_setValue('lvt_olm_vip_key', '');
+                kickUserToWeb(res.message);
             }
         }).catch(e => {
-            console.log("[LVT VIP] Lỗi check ngầm:", e);
             showKeyPrompt("LỖI KẾT NỐI MÁY CHỦ BẢO MẬT");
         });
     } else {
         if (document.readyState === "loading") window.addEventListener('DOMContentLoaded', () => showKeyPrompt());
         else showKeyPrompt();
     }
+
 })();"""
 
 # ========================================================
-# CẤU HÌNH SHOP KEY
+# CẤU HÌNH SHOP KEY MỚI (BỔ SUNG GÓI THƯỜNG & TEST VIP)
 # ========================================================
 SHOP_PACKAGES = {
-    "TEST": {"name": "Key Test", "price": 10000, "dur_ms": 3600000, "vip": False, "desc": "Chỉ làm bài tập được tối đa 5 bài"},
-    "7D": {"name": "7 Ngày", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
-    "30D": {"name": "1 Tháng", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
-    "1Y": {"name": "1 Năm Học", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""}
+    "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
+    "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
+    "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
+    "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
+    
+    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
 }
 
 # HÀM BẢO VỆ CHỐNG SẬP WEB 500
@@ -619,10 +1141,15 @@ def check_api():
         valid, msg = _core_validate(db, key, deviceId, olm_name, ip)
         if not valid: return jsonify({"status": "error", "message": msg}), 400
 
+        # ---> ĐÃ THÊM: Trả về loại Key VIP hay NORMAL để v13.0 nhận diện <---
+        is_vip = db["keys"][key].get("vip", False)
+        key_type = "VIP" if is_vip else "NORMAL"
+
         return jsonify({
             "status": "success", 
             "loader_enabled": db["keys"][key].get("loader_enabled", True),
-            "assigned_user": db["keys"][key].get("bound_olm", "")
+            "assigned_user": db["keys"][key].get("bound_olm", ""),
+            "key_type": key_type 
         })
     except Exception as e: return jsonify({"status": "error", "message": "Lỗi API Check"}), 500
 
@@ -942,7 +1469,7 @@ def user_dashboard():
                 <div class="col-12">
                     <div class="card p-4 border-success text-center">
                         <h4 class="text-neon mb-2"><i class="fas fa-rocket"></i> VÀO PHÒNG ĐIỀU KHIỂN HACK</h4>
-                        <p class="text-muted mb-3">Vào phòng điều khiển để liên kết Key và kích hoạt Hack V9.0.</p>
+                        <p class="text-muted mb-3">Vào phòng điều khiển để liên kết Key và kích hoạt Hack V13.0.</p>
                         <a href="/key_login" class="btn fw-bold w-100 mt-2" style="background:linear-gradient(45deg,#00ffcc,#0099ff);color:#000;padding:12px; font-size:18px;">
                             ĐĂNG NHẬP VÀO KHOANG LÁI <i class="fas fa-arrow-right"></i>
                         </a>
@@ -1414,7 +1941,6 @@ def admin_dashboard():
             </div>
         </div>
 
-        <!-- MODAL GHIM OLM -->
         <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
             <div class="modal-dialog modal-sm modal-dialog-centered">
                 <div class="modal-content" style="background:#111;border:1px solid #ffcc00;">
@@ -1430,7 +1956,6 @@ def admin_dashboard():
             </div>
         </div>
         
-        <!-- MODAL SCRIPT LÕI (CORE) -->
         <div class="modal fade" id="adminScriptModal" tabindex="-1" data-bs-theme="dark">
           <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content" style="background:#11111A; border:1px solid #ff9900;">
@@ -1443,7 +1968,6 @@ def admin_dashboard():
           </div>
         </div>
 
-        <!-- MODAL SCRIPT VIOLENTMONKEY -->
         <div class="modal fade" id="vmScriptModal" tabindex="-1" data-bs-theme="dark">
           <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content" style="background:#11111A; border:1px solid #00ffcc;">
