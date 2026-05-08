@@ -347,10 +347,10 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
 # CẤU HÌNH SHOP KEY
 # ========================================================
 SHOP_PACKAGES = {
-    "1H": {"name": "1 Giờ", "price": 10000, "dur_ms": 3600000, "vip": False},
-    "7D": {"name": "7 Ngày", "price": 30000, "dur_ms": 604800000, "vip": True},
-    "30D": {"name": "1 Tháng", "price": 100000, "dur_ms": 2592000000, "vip": True},
-    "1Y": {"name": "1 Năm Học", "price": 150000, "dur_ms": 31536000000, "vip": True}
+    "TEST": {"name": "Key Test", "price": 10000, "dur_ms": 3600000, "vip": False, "desc": "Chỉ làm bài tập được tối đa 5 bài"},
+    "7D": {"name": "7 Ngày", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
+    "30D": {"name": "1 Tháng", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
+    "1Y": {"name": "1 Năm Học", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""}
 }
 
 # HÀM BẢO VỆ CHỐNG SẬP WEB 500
@@ -709,7 +709,6 @@ def script_ping():
 @app.route('/api/script/olm_vip.user.js')
 def serve_olm_script():
     db = load_db()
-    # Lấy Script mới nhất từ DB
     script_content = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     resp = make_response(script_content)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
@@ -748,11 +747,14 @@ def home():
         for pkg_id, pkg in SHOP_PACKAGES.items():
             vip_tag = '<div class="badge bg-danger mb-2">🔥 VIP PRO</div>' if pkg["vip"] else '<div class="badge bg-secondary mb-2">THƯỜNG</div>'
             border_c = "#bd00ff" if pkg["vip"] else "#0099ff"
+            desc_html = f'<p class="text-warning mb-1" style="font-size:12px;">{pkg["desc"]}</p>' if pkg.get("desc") else ''
+            
             shop_html += f'''
             <div class="col-md-3 col-6 mb-3">
                 <div class="card p-3 h-100 text-center" style="border-color:{border_c};">
                     {vip_tag}
                     <h5 class="text-white fw-bold">{pkg["name"]}</h5>
+                    {desc_html}
                     <div style="font-size:22px;font-weight:900;color:{border_c};margin:10px 0;">{pkg["price"]:,}đ</div>
                     <a href="/login" class="btn btn-outline-info w-100 mt-auto fw-bold">MUA NGAY</a>
                 </div>
@@ -843,11 +845,14 @@ def user_dashboard():
         for pkg_id, pkg in SHOP_PACKAGES.items():
             vip_tag = '<div class="badge bg-danger mb-2">🔥 VIP PRO</div>' if pkg["vip"] else '<div class="badge bg-secondary mb-2">THƯỜNG</div>'
             border_c = "#bd00ff" if pkg["vip"] else "#0099ff"
+            desc_html = f'<p class="text-warning mb-1" style="font-size:12px;">{pkg["desc"]}</p>' if pkg.get("desc") else ''
+            
             shop_html += f'''
             <div class="col-lg-3 col-6 mb-3">
                 <div class="card p-3 h-100 text-center" style="border-color:{border_c}; cursor:pointer;" onclick="confirmBuy('{pkg_id}', '{pkg['name']}', {pkg['price']})">
                     {vip_tag}
                     <h6 class="text-white fw-bold">{pkg['name']}</h6>
+                    {desc_html}
                     <h4 style="color:{border_c}; font-weight:900;">{pkg['price']:,}đ</h4>
                     <button class="btn btn-sm w-100 fw-bold mt-auto" style="background:{border_c}; color:#fff;">MUA NGAY</button>
                 </div>
@@ -860,12 +865,24 @@ def user_dashboard():
             kd = db["keys"].get(k)
             if not kd: continue 
             
+            # Tính toán trạng thái
+            st = kd.get('status', 'active')
+            is_banned = (st == 'banned')
+            temp_ban = kd.get('temp_ban_until', 0)
+            
+            status_html = '<span class="badge bg-success">Hoạt động</span>'
+            if is_banned: status_html = '<span class="badge bg-danger">Bị khóa</span>'
+            elif temp_ban > now: status_html = f'<span class="badge bg-warning text-dark">Phạt ({(temp_ban - now)//60000}p)</span>'
+
             exp = kd.get("exp")
             if exp == "permanent": exp_str = '<span class="text-success">Vĩnh viễn</span>'
             elif exp == "pending": exp_str = '<span class="text-info">Chưa KH</span>'
             else:
-                if exp < now: exp_str = '<span class="text-danger">Hết hạn</span>'
-                else: exp_str = f'<span class="text-warning">{time.strftime("%d/%m/%Y", time.localtime(exp/1000))}</span>'
+                if exp < now: 
+                    exp_str = '<span class="text-danger">Hết hạn</span>'
+                    if not is_banned: status_html = '<span class="badge bg-secondary">Hết hạn</span>'
+                else: 
+                    exp_str = f'<span class="text-warning">{time.strftime("%d/%m/%Y", time.localtime(exp/1000))}</span>'
                 
             rc = kd.get("reset_count", 0)
             vip_icon = "💎 " if kd.get("vip") else "🔑 "
@@ -874,9 +891,8 @@ def user_dashboard():
 
             my_keys_html += f'''
             <tr>
-                <td>
-                    <strong class="text-info" style="cursor:pointer;" onclick="copyMyKey('{k}')" title="Bấm Copy">{vip_icon}{k} <i class="fas fa-copy text-secondary fs-6"></i></strong>
-                </td>
+                <td><strong class="text-info" style="cursor:pointer;" onclick="copyMyKey('{k}')" title="Bấm Copy">{vip_icon}{k} <i class="fas fa-copy text-secondary fs-6"></i></strong></td>
+                <td>{status_html}</td>
                 <td>{exp_str}</td>
                 <td>{rc} lần</td>
                 <td>{bound_str}</td>
@@ -889,7 +905,7 @@ def user_dashboard():
             </tr>
             '''
         if not my_keys_html:
-            my_keys_html = '<tr><td colspan="5" class="text-muted py-4">Bạn chưa có Key nào. Vui lòng mua Key bên trên!</td></tr>'
+            my_keys_html = '<tr><td colspan="6" class="text-muted py-4">Bạn chưa có Key nào. Vui lòng mua Key bên trên!</td></tr>'
 
         return f'''
         <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Dashboard - User</title>
@@ -911,7 +927,7 @@ def user_dashboard():
                         <hr class="border-secondary">
                         <p class="text-warning mb-1" style="font-size:14px;"><i class="fas fa-university"></i> <b>CÁCH NẠP TIỀN AUTO</b></p>
                         <p class="text-muted" style="font-size:12px;">Chuyển khoản với nội dung:<br><strong class="text-white fs-6">NAP {username.upper()}</strong></p>
-                        <a href="https://zalo.me/123456789" target="_blank" class="btn btn-outline-info btn-sm fw-bold mt-auto">Liên hệ Admin (Zalo)</a>
+                        <a href="https://zalo.me/0343627516" target="_blank" class="btn btn-outline-info btn-sm fw-bold mt-auto">Liên hệ Admin (Zalo)</a>
                     </div>
                 </div>
                 <div class="col-md-8">
@@ -939,7 +955,7 @@ def user_dashboard():
                         <div class="table-responsive">
                             <table class="table table-dark table-hover table-sm align-middle text-center mb-0">
                                 <thead class="table-active">
-                                    <tr><th>🔑 Mã Key (Bấm copy)</th><th>⏳ Thời gian</th><th>🔄 Lượt Reset</th><th>👤 OLM Đã Ghim</th><th>⚙️ Thao tác</th></tr>
+                                    <tr><th>🔑 Mã Key (Bấm copy)</th><th>🟢 Trạng thái</th><th>⏳ Thời gian</th><th>🔄 Lượt Reset</th><th>👤 OLM Đã Ghim</th><th>⚙️ Thao tác</th></tr>
                                 </thead>
                                 <tbody>
                                     {my_keys_html}
@@ -1147,7 +1163,6 @@ def key_dashboard():
             function copyT(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã sao chép Key!',showConfirmButton:false,timer:1500,background:'#111',color:'#fff'}}); }}
             
             function checkInstallFirst(e, link) {{
-                // Hiển thị một SweetAlert nhỏ để nhắc nhở có thể tự nhấn chuyển trang
                 Swal.fire({{
                     toast: true, position: 'top', icon: 'info',
                     title: 'Đang mở khóa OLM...', text: 'Hãy chắc chắn bạn đã cài đặt tiện ích Script trước đó!',
@@ -1176,6 +1191,35 @@ def key_dashboard():
         '''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
+@app.route('/user_reset_hwid', methods=['POST'])
+def user_reset_hwid():
+    try:
+        if 'username' not in session: return redirect('/login')
+        active_key = session.get('active_key')
+        if not active_key: return redirect('/key_login')
+        
+        db = load_db()
+        with db_lock:
+            u = db["users"].get(session['username'])
+            kd = db["keys"].get(active_key)
+            if not kd: return swal_back("Lỗi", "Key không tồn tại", "error")
+            
+            rc = kd.get("reset_count", 0)
+            if rc == 0:
+                kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
+                save_db(db)
+                return swal_redirect("Reset Thành Công!", "Đã gỡ thiết bị và xóa định danh OLM miễn phí (Lần 1).", "success", "/key_dashboard")
+            else:
+                if u["balance"] < 10000: return swal_back("Thất bại!", "Bạn cần 10,000đ để Reset từ lần thứ 2 trở đi.", "error")
+                u["balance"] -= 10000
+                kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
+                save_db(db)
+                return swal_redirect("Reset Thành Công!", "Đã trừ 10,000đ và gỡ thiết bị thành công.", "success", "/key_dashboard")
+    except Exception as e: return swal_back("Lỗi", str(e), "error")
+
+# ========================================================
+# GIAO DIỆN WEB ADMIN QUẢN LÝ
+# ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
     try:
@@ -1370,6 +1414,7 @@ def admin_dashboard():
             </div>
         </div>
 
+        <!-- MODAL GHIM OLM -->
         <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
             <div class="modal-dialog modal-sm modal-dialog-centered">
                 <div class="modal-content" style="background:#111;border:1px solid #ffcc00;">
@@ -1385,6 +1430,7 @@ def admin_dashboard():
             </div>
         </div>
         
+        <!-- MODAL SCRIPT LÕI (CORE) -->
         <div class="modal fade" id="adminScriptModal" tabindex="-1" data-bs-theme="dark">
           <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content" style="background:#11111A; border:1px solid #ff9900;">
@@ -1397,6 +1443,7 @@ def admin_dashboard():
           </div>
         </div>
 
+        <!-- MODAL SCRIPT VIOLENTMONKEY -->
         <div class="modal fade" id="vmScriptModal" tabindex="-1" data-bs-theme="dark">
           <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content" style="background:#11111A; border:1px solid #00ffcc;">
