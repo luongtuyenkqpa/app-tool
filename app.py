@@ -1,5 +1,5 @@
 import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string
-from urllib.parse import urlparse
+import urllib.parse
 from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session
 
@@ -32,13 +32,73 @@ GLOBAL_DB = {}
 _last_db_mtime = 0
 _last_mtime_check = 0 
 
-# ĐỊA CHỈ WEB CỦA BẠN
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
 # ========================================================
-# SCRIPT VIOLENTMONKEY MẶC ĐỊNH V13.0 (SẼ ĐƯỢC LƯU VÀO DATABASE)
+# HÀM MÃ HOÁ SCRIPT CHỐNG BUG & CHỐNG SOI CODE SIÊU VIP
 # ========================================================
-DEFAULT_OLM_SCRIPT = """// ==UserScript==
+def obfuscate_js(js_code):
+    lines = js_code.split('\n')
+    header = []
+    body = []
+    in_header = False
+    for line in lines:
+        if line.strip().startswith('// ==UserScript=='):
+            in_header = True
+            header.append(line)
+        elif line.strip().startswith('// ==/UserScript=='):
+            in_header = False
+            header.append(line)
+        elif in_header:
+            header.append(line)
+        else:
+            body.append(line)
+    
+    header_str = '\n'.join(header)
+    body_str = '\n'.join(body)
+    
+    # Mã hóa an toàn cho Tiếng Việt / Kí tự đặc biệt
+    quoted_body = urllib.parse.quote(body_str)
+    b64 = base64.b64encode(quoted_body.encode('utf-8')).decode('utf-8')
+    rev_b64 = b64[::-1] # Đảo ngược chuỗi để khó bị decode thông thường
+    
+    # Bẫy chống F12 và Debugger
+    anti_debug = """
+    const _0x1a2b = function() {
+        let _0x = new Date().getTime();
+        setInterval(() => {
+            const _0y = new Date().getTime();
+            if (_0y - _0x > 1000) { while(true) {} }
+            _0x = new Date().getTime();
+            try { Function("debugger")(); } catch(e) {}
+        }, 500);
+    };
+    _0x1a2b();
+    document.addEventListener('contextmenu', e => e.preventDefault());
+    document.addEventListener('keydown', e => {
+        if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C'))) {
+            e.preventDefault();
+        }
+    });
+    """
+    
+    # Bọc thành kén thực thi
+    obf = f"""{header_str}
+(function() {{
+    {anti_debug}
+    const _0x3c = "{rev_b64}";
+    const _0x4d = _0x3c.split('').reverse().join('');
+    const _0x5e = decodeURIComponent(atob(_0x4d));
+    eval(_0x5e);
+}})();
+"""
+    return obf
+
+
+# ========================================================
+# SCRIPT VIOLENTMONKEY MẶC ĐỊNH V13.0
+# ========================================================
+DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE: VIP & NORMAL)
 // @namespace    http://tampermonkey.net/
 // @version      13.0
@@ -343,7 +403,7 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
             const renderMathButton = Utils.createElement('button', { className: 'study-control-btn', children: ['∑'], title: 'Render lại Toán' });
             renderMathButton.onclick = () => this.finalizeRender();
             const settingsButton = Utils.createElement('button', { className: 'study-control-btn', children: ['⚙'], title: 'Thông tin' });
-            settingsButton.onclick = () => { alert(`Study Assistant Pro v${Config.VERSION}\\nThiết bị: ${deviceId}\\nKey: ${savedKey}`); };
+            settingsButton.onclick = () => { alert(`Study Assistant Pro v${Config.VERSION}\nThiết bị: ${deviceId}\nKey: ${savedKey}`); };
             
             const titleSpan = Utils.createElement('span', {
                 className: 'study-header-title',
@@ -440,7 +500,7 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
             const hintSpans = item.hints.map(hint => {
                 const isHiddenType = (hint.type === 'Trắc nghiệm' || hint.type === 'Đúng/Sai' || (hint.type === 'Điền từ' && hint.subIndex) || hint.type === 'Chọn từ');
                 const label = Utils.createElement('span', { className: 'hint-type-label', children: [`[${hint.type}]`], style: { display: isHiddenType ? 'none' : 'inline-block' } });
-                const body = Utils.createElement('span', { className: 'hint-text', innerHTML: (hint.content || '').replace(/\\n/g, '<br>') });
+                const body = Utils.createElement('span', { className: 'hint-text', innerHTML: (hint.content || '').replace(/\n/g, '<br>') });
                 return Utils.createElement('li', { children: [label, body], style: { borderLeftColor: (hint.type === 'Trắc nghiệm' || hint.type === 'Chọn từ') ? '#22c55e' : '#6366f1' } });
             });
 
@@ -457,7 +517,7 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
                 try { if (typeof unsafeWindow.MathJax !== 'undefined' && unsafeWindow.MathJax.typesetPromise) unsafeWindow.MathJax.typesetPromise([this.contentArea]).catch(err => {}); } catch (e) {}
             };
             if (typeof unsafeWindow.MathJax !== 'undefined') { render(); } else {
-                unsafeWindow.MathJax = { tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }, svg: { fontCache: 'global' } };
+                unsafeWindow.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
                 const script = Utils.createElement('script', { src: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js', async: true });
                 script.onload = render; document.head.appendChild(script);
             }
@@ -540,7 +600,7 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
                 if (!container) return null;
                 for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
                     const txt = (el.textContent || '').trim();
-                    const m = txt.match(/(?:Question|Câu)\\s+(\\d+)/i);
+                    const m = txt.match(/(?:Question|Câu)\s+(\d+)/i);
                     if (m) { const num = parseInt(m[1], 10); if (!isNaN(num)) return num; }
                 }
                 return null;
@@ -550,7 +610,7 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
                 if (!container) return numbers;
                 for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
                     const txt = (el.textContent || '').trim();
-                    const m = txt.match(/(?:Question|Câu)\\s+(\\d+)/i);
+                    const m = txt.match(/(?:Question|Câu)\s+(\d+)/i);
                     if (m) { const num = parseInt(m[1], 10); if (!isNaN(num) && !numbers.includes(num)) numbers.push(num); }
                 }
                 return numbers.sort((a, b) => a - b);
@@ -573,10 +633,10 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
                 const hintTexts = hints.map(h => h.content).filter(Boolean);
                 if (!hintTexts.length) return;
                 container.querySelectorAll('.answer-option, .option, li, input, textarea, .dragmore, .selecttext').forEach(option => {
-                    const cleanOptionText = (option.textContent || option.value || '').trim().replace(/\\s+/g, ' ').replace(/\\s/g, '').replace(/&nbsp;/g, '');
+                    const cleanOptionText = (option.textContent || option.value || '').trim().replace(/\s+/g, ' ').replace(/\s/g, '').replace(/&nbsp;/g, '');
                     if (!cleanOptionText) return;
                     if (hintTexts.some(hint => {
-                        const cleanHint = (hint || '').replace(/\\\\/g, '').replace(/\\s/g, '').replace(/&nbsp;/g, '');
+                        const cleanHint = (hint || '').replace(/\\/g, '').replace(/\s/g, '').replace(/&nbsp;/g, '');
                         return cleanOptionText && (cleanOptionText.includes(cleanHint) || cleanHint.includes(cleanOptionText));
                     })) {
                         option.style.backgroundColor = 'rgba(72, 187, 120, 0.18)';
@@ -754,7 +814,7 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
                     };
                     if (window.userData) window.userData.username = TARGET;
                 } catch(e) {}
-            })();\\n\\n`;
+            })();\n\n`;
             scriptTag.textContent = fusedMask + scriptContent;
             (document.head || document.documentElement).appendChild(scriptTag);
             scriptTag.remove();
@@ -861,21 +921,19 @@ DEFAULT_OLM_SCRIPT = """// ==UserScript==
 })();"""
 
 # ========================================================
-# CẤU HÌNH SHOP KEY MỚI (BỔ SUNG GÓI THƯỜNG & TEST VIP)
+# CẤU HÌNH SHOP KEY
 # ========================================================
 SHOP_PACKAGES = {
     "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
     "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
     "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
     "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
-    
     "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở Rộng"},
     "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
     "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
     "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
 }
 
-# HÀM BẢO VỆ CHỐNG SẬP WEB 500
 def safe_int(val, default=0):
     try: return int(val)
     except: return default
@@ -897,9 +955,6 @@ def swal_back(title, text, icon):
         }}).then(() => {{ window.history.back(); }});
     </script></body></html>"""
 
-# ========================================================
-# DATABASE CORE & KHỞI TẠO ADMIN
-# ========================================================
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
     now = time.time()
@@ -1034,25 +1089,7 @@ def firewall_and_csrf():
 
 @app.errorhandler(404)
 def not_found_trap(e):
-    try:
-        ip = get_real_ip()
-        suspicious_paths = ['.env', 'wp-admin', 'wp-login.php', 'config.php', 'backup.zip', '.git', 'phpmyadmin']
-        if any(s in request.path for s in suspicious_paths):
-            report_bad_signature(ip)
-    except: pass
     return "Not Found", 404
-
-def report_bad_signature(ip):
-    global bad_sig_cache
-    if len(bad_sig_cache) > 5000: bad_sig_cache.clear()
-    bad_sig_cache[ip] = bad_sig_cache.get(ip, 0) + 1
-    if bad_sig_cache[ip] >= 3:
-        db = load_db()
-        with db_lock:
-            if ip not in db.setdefault("banned_ips", []):
-                db["banned_ips"].append(ip)
-                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "id": ip, "reason": "Dò mật khẩu / Quét thư mục ẩn"})
-                save_db(db)
 
 # ========================================================
 # API SPOOFER & CẤP PHÉP BƠM CODE
@@ -1108,9 +1145,9 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
         if bound_olm and req_olm_name != "N/A":
             if bound_olm.lower() != req_olm_name.lower():
                 kd["status"] = "banned"
-                db.setdefault("security_alerts", []).insert(0, {"time": now, "id": ip, "user": req_olm_name, "reason": f"Sử dụng Key ({key}) sai tài khoản chỉ định ({bound_olm})"})
+                db.setdefault("security_alerts", []).insert(0, {"time": now, "id": ip, "user": req_olm_name, "reason": f"Sử dụng sai định danh"})
                 save_db(db)
-                return False, f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Bạn dùng cho [{req_olm_name}]. Key đã bị Khóa Vĩnh Viễn!"
+                return False, f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Key đã bị Khóa Vĩnh Viễn!"
 
         if deviceId:
             devices = kd.setdefault("devices", [])
@@ -1141,7 +1178,6 @@ def check_api():
         valid, msg = _core_validate(db, key, deviceId, olm_name, ip)
         if not valid: return jsonify({"status": "error", "message": msg}), 400
 
-        # ---> ĐÃ THÊM: Trả về loại Key VIP hay NORMAL để v13.0 nhận diện <---
         is_vip = db["keys"][key].get("vip", False)
         key_type = "VIP" if is_vip else "NORMAL"
 
@@ -1164,8 +1200,6 @@ def api_ban_key():
         with db_lock:
             if key in db.get("keys", {}):
                 db["keys"][key]["status"] = "banned"
-                ip = get_real_ip()
-                db.setdefault("security_alerts", []).insert(0, {"time": int(time.time()*1000), "id": ip, "reason": reason})
                 save_db(db)
         return jsonify({"status": "success"})
     except: return jsonify({"status": "error"}), 500
@@ -1215,16 +1249,6 @@ def script_ping():
                 known_ips[ip] = now
                 if len(known_ips) > kd.get("maxDevices", 1):
                     kd["violations"] = kd.get("violations", 0) + 1
-                    v = kd["violations"]
-                    if v == 1:
-                        kd["temp_ban_until"] = now + (30 * 60 * 1000)
-                        log_admin_action(db, f"Phạt 30 Phút Key {key} (Share IP)")
-                    elif v == 2:
-                        kd["temp_ban_until"] = now + (12 * 3600 * 1000)
-                        log_admin_action(db, f"Phạt 12 Giờ Key {key} (Share IP)")
-                    else:
-                        kd["status"] = "banned"
-                        log_admin_action(db, f"Banned Vĩnh Viễn Key {key} (Share IP)")
                     kd["known_ips"] = {}
                     save_db(db)
                     return "Banned for sharing", 403
@@ -1236,35 +1260,49 @@ def script_ping():
 @app.route('/api/script/olm_vip.user.js')
 def serve_olm_script():
     db = load_db()
-    script_content = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
-    resp = make_response(script_content)
+    raw_script_content = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
+    
+    # BƯỚC MÃ HOÁ TỰ ĐỘNG CHỐNG BUG & CHỐNG SOI CODE SIÊU VIP
+    secure_script = obfuscate_js(raw_script_content)
+    
+    resp = make_response(secure_script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
 # ========================================================
-# GIAO DIỆN CSS & HTML TOÀN CỤC
+# GIAO DIỆN CSS & HTML TOÀN CỤC (CẢI TIẾN THẨM MỸ)
 # ========================================================
 CSS_GLASS = """
 body { background-color: #05050A !important; color: #fff !important; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0; }
-.glass-panel { background-color: #11111A !important; border: 1px solid #333 !important; border-radius: 20px !important; box-shadow: 0 10px 40px rgba(0,0,0,0.8) !important; padding: 40px; text-align: center; width: 100%; max-width: 400px; margin: 50px auto; }
-.card { background-color: #11111A !important; border-radius: 15px !important; border: 1px solid #333 !important; box-shadow: 0 5px 15px rgba(0,0,0,0.5) !important; transition: 0.3s; }
-.card:hover { border-color: #00ffcc !important; box-shadow: 0 0 15px rgba(0,255,204,0.2) !important; }
+.glass-panel { background-color: rgba(17, 17, 26, 0.8) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 20px !important; box-shadow: 0 10px 40px rgba(0,0,0,0.8) !important; padding: 40px; text-align: center; width: 100%; max-width: 400px; margin: 50px auto; backdrop-filter: blur(12px); }
+.card { background-color: rgba(17, 17, 26, 0.9) !important; border-radius: 16px !important; border: 1px solid rgba(255,255,255,0.05) !important; box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important; transition: 0.3s; backdrop-filter: blur(10px); }
+.card:hover { border-color: rgba(0,255,204,0.4) !important; transform: translateY(-3px); box-shadow: 0 10px 25px rgba(0,255,204,0.15) !important; }
 h2, h3, h4, h5 { color: #00ffcc !important; font-weight: 900 !important; letter-spacing: 1px !important; }
-.text-neon { color: #00ffcc !important; text-shadow: 0 0 10px rgba(0,255,204,0.5) !important; }
-.text-purple { color: #bd00ff !important; text-shadow: 0 0 10px rgba(189,0,255,0.5) !important; }
-.form-control, .form-select, textarea { background-color: #0a0a12 !important; border: 1px solid #444 !important; color: #fff !important; padding: 12px; border-radius: 8px; margin-bottom: 15px; }
-.form-control:focus, .form-select:focus, textarea:focus { border-color: #00ffcc !important; box-shadow: 0 0 10px rgba(0,255,204,0.3) !important; outline: none !important; }
-.btn-neon { background: linear-gradient(45deg, #00ffcc, #bd00ff) !important; border: none !important; color: #000 !important; font-weight: bold !important; width: 100%; padding: 12px; border-radius: 8px; transition: 0.3s !important; cursor: pointer; }
-.btn-neon:hover { transform: translateY(-2px) !important; box-shadow: 0 5px 20px rgba(0,255,204,0.4) !important; }
+.text-neon { color: #00ffcc !important; text-shadow: 0 0 12px rgba(0,255,204,0.6) !important; }
+.text-purple { color: #bd00ff !important; text-shadow: 0 0 12px rgba(189,0,255,0.6) !important; }
+
+/* USER BALANCE CARD CỰC GỌN */
+.balance-card { background: linear-gradient(135deg, rgba(0, 255, 204, 0.15), rgba(189, 0, 255, 0.1)); border: 1px solid rgba(0, 255, 204, 0.4); border-radius: 16px; padding: 20px 25px; display: flex; align-items: center; justify-content: space-between; backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,255,204,0.1); }
+.balance-card .balance-amount { font-size: 32px; font-weight: 900; color: #00ffcc; text-shadow: 0 0 15px rgba(0,255,204,0.5); line-height: 1; margin-top: 5px; }
+
+/* LAUNCH CARD */
+.launch-card { background: linear-gradient(135deg, rgba(189, 0, 255, 0.15), rgba(0, 153, 255, 0.1)); border: 1px solid rgba(189, 0, 255, 0.4); border-radius: 16px; padding: 20px 25px; display: flex; flex-direction: column; justify-content: center; backdrop-filter: blur(10px); text-align: center; height: 100%; transition: 0.3s; box-shadow: 0 10px 30px rgba(189,0,255,0.1); }
+.launch-card:hover { box-shadow: 0 10px 30px rgba(189,0,255,0.3); border-color: #bd00ff; cursor: pointer; }
+
+.form-control, .form-select, textarea { background-color: rgba(10, 10, 18, 0.8) !important; border: 1px solid rgba(255,255,255,0.1) !important; color: #fff !important; padding: 12px; border-radius: 10px; margin-bottom: 15px; }
+.form-control:focus, .form-select:focus, textarea:focus { border-color: #00ffcc !important; box-shadow: 0 0 12px rgba(0,255,204,0.3) !important; outline: none !important; }
+.btn-neon { background: linear-gradient(45deg, #00ffcc, #bd00ff) !important; border: none !important; color: #000 !important; font-weight: bold !important; width: 100%; padding: 12px; border-radius: 10px; transition: 0.3s !important; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 5px 15px rgba(0,255,204,0.2) !important; }
+.btn-neon:hover { transform: translateY(-2px) !important; box-shadow: 0 8px 25px rgba(0,255,204,0.5) !important; }
 a.link-neon { color: #bd00ff !important; text-decoration: none !important; font-weight: bold !important; transition: 0.3s !important; }
 a.link-neon:hover { color: #00ffcc !important; text-shadow: 0 0 10px #00ffcc !important; }
-.table { color: #fff !important; }
-.table-dark { --bs-table-bg: transparent !important; --bs-table-striped-bg: rgba(0, 255, 204, 0.05) !important; border-color: #333 !important; }
-.table-active { background-color: #1a1a2e !important; }
-.badge { font-size: 12px !important; padding: 5px 8px !important; }
-.vip-glow { animation: vipPulse 2s infinite alternate; border: 2px solid #bd00ff !important; box-shadow: 0 0 20px rgba(189,0,255,0.4) !important; }
-@keyframes vipPulse { from { box-shadow: 0 0 10px rgba(189,0,255,0.2); } to { box-shadow: 0 0 30px rgba(189,0,255,0.8); border-color: #ff00ff; } }
-.nor-glow { border: 2px solid #0099ff !important; }
+
+/* TABLE CUSTOMIZATION ADMIN */
+.table-container { border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05); }
+.table { color: #fff !important; margin-bottom: 0; }
+.table-dark { --bs-table-bg: transparent !important; --bs-table-striped-bg: rgba(0, 255, 204, 0.05) !important; border-color: rgba(255,255,255,0.05) !important; }
+.table-active { background-color: rgba(255,255,255,0.05) !important; }
+tbody tr:hover { background: rgba(0,255,204,0.05) !important; }
+.badge { font-size: 11px !important; padding: 5px 8px !important; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px; }
 """
 
 @app.route('/')
@@ -1283,7 +1321,7 @@ def home():
                     <h5 class="text-white fw-bold">{pkg["name"]}</h5>
                     {desc_html}
                     <div style="font-size:22px;font-weight:900;color:{border_c};margin:10px 0;">{pkg["price"]:,}đ</div>
-                    <a href="/login" class="btn btn-outline-info w-100 mt-auto fw-bold">MUA NGAY</a>
+                    <a href="/login" class="btn btn-outline-info w-100 mt-auto fw-bold" style="border-radius:8px;">MUA NGAY</a>
                 </div>
             </div>'''
 
@@ -1292,8 +1330,8 @@ def home():
             session['welcomed'] = True
             welcome_script = "Swal.fire({ title: 'CHÀO MỪNG ĐẾN VỚI LVT TOOL!', html: '<b style=\"color:#00ffcc\">Hệ thống tự động hóa và bảo mật đỉnh cao.</b><br><br>👉 Vui lòng Đăng nhập hoặc Đăng ký để trải nghiệm!', icon: 'success', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', confirmButtonText: 'ĐÃ HIỂU' });"
 
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT TOOL - Trang Chủ</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS} .hero{{background:linear-gradient(135deg,#000,#0a192f);padding:80px 20px;text-align:center;border-bottom:1px solid #00ffcc;}}</style></head><body>
-        <div class="hero"><h1 class="text-neon fw-bold mb-3">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1><p class="text-secondary fs-5 mb-4">Tự động hóa thông minh - Bảo mật đa tầng - Kích hoạt trên thiết bị cực dễ</p><a href="#shop" class="btn btn-lg fw-bold mb-2" style="background:#00ffcc;color:#000;">XEM BẢNG GIÁ</a> <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-md-2 mb-2">ĐĂNG NHẬP LẤY KEY</a> <a href="/register" class="btn btn-outline-light btn-lg fw-bold ms-md-2 mb-2">ĐĂNG KÝ</a></div>
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT TOOL - Trang Chủ</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS} .hero{{background:linear-gradient(135deg,#000,#0a192f);padding:80px 20px;text-align:center;border-bottom:1px solid rgba(0,255,204,0.3);}}</style></head><body>
+        <div class="hero"><h1 class="text-neon fw-bold mb-3">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1><p class="text-secondary fs-5 mb-4">Tự động hóa thông minh - Bảo mật đa tầng - Kích hoạt trên thiết bị cực dễ</p><a href="#shop" class="btn btn-lg fw-bold mb-2" style="background:#00ffcc;color:#000;border-radius:10px;">XEM BẢNG GIÁ</a> <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-md-2 mb-2" style="border-radius:10px;">ĐĂNG NHẬP LẤY KEY</a> <a href="/register" class="btn btn-outline-light btn-lg fw-bold ms-md-2 mb-2" style="border-radius:10px;">ĐĂNG KÝ</a></div>
         <div class="container py-5" id="shop"><h2 class="text-center text-neon fw-bold mb-5">BẢNG GIÁ DỊCH VỤ</h2><div class="row justify-content-center">{shop_html}</div></div><script>{welcome_script}</script></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
@@ -1320,7 +1358,7 @@ def login():
             else:
                 return swal_back("Thất bại!", f"Sai tài khoản hoặc mật khẩu.", "error")
 
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon">⚡ ĐĂNG NHẬP</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên đăng nhập" required><input type="password" name="password" class="form-control" placeholder="Mật khẩu" required><button type="submit" class="btn-neon">VÀO HỆ THỐNG</button></form><div class="mt-4"><p class="text-secondary">Chưa có tài khoản? <a href="/register" class="link-neon">Đăng ký ngay</a></p><a href="/" class="text-muted" style="text-decoration:none;font-size:12px;">🏠 Trở về Trang chủ</a></div></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">⚡ ĐĂNG NHẬP</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên đăng nhập" required><input type="password" name="password" class="form-control" placeholder="Mật khẩu" required><button type="submit" class="btn-neon mt-2">VÀO HỆ THỐNG</button></form><div class="mt-4"><p class="text-secondary">Chưa có tài khoản? <a href="/register" class="link-neon">Đăng ký ngay</a></p><a href="/" class="text-muted" style="text-decoration:none;font-size:13px;"><i class="fas fa-home"></i> Trở về Trang chủ</a></div></div></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -1340,13 +1378,95 @@ def register():
                 save_db(db)
             return swal_redirect("Tuyệt vời!", "Đăng ký thành công. Hãy đăng nhập!", "success", "/login")
 
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Ký</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon">⚡ TẠO TÀI KHOẢN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên đăng nhập (liền không dấu)" required><input type="password" name="password" class="form-control" placeholder="Mật khẩu (Tối thiểu 6 ký tự)" required><button type="submit" class="btn-neon">ĐĂNG KÝ NGAY</button></form><div class="mt-4"><p class="text-secondary">Đã có tài khoản? <a href="/login" class="link-neon">Đăng nhập</a></p><a href="/" class="text-muted" style="text-decoration:none;font-size:12px;">🏠 Trở về Trang chủ</a></div></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Ký</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">⚡ TẠO TÀI KHOẢN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên đăng nhập (liền không dấu)" required><input type="password" name="password" class="form-control" placeholder="Mật khẩu (Tối thiểu 6 ký tự)" required><button type="submit" class="btn-neon mt-2">ĐĂNG KÝ NGAY</button></form><div class="mt-4"><p class="text-secondary">Đã có tài khoản? <a href="/login" class="link-neon">Đăng nhập</a></p><a href="/" class="text-muted" style="text-decoration:none;font-size:13px;"><i class="fas fa-home"></i> Trở về Trang chủ</a></div></div></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect('/')
+
+# --- API CHUYỂN ĐỔI NICK OLM (DEEP RESET) ---
+@app.route('/user_transfer_key', methods=['POST'])
+def user_transfer_key():
+    try:
+        if 'username' not in session or session.get('role') != 'user': return redirect('/login')
+        username = session['username']
+        old_key = request.form.get('old_key', '').strip()
+        new_olm = request.form.get('new_olm', '').strip()
+
+        if not old_key or not new_olm:
+            return swal_back("Lỗi", "Vui lòng nhập đầy đủ thông tin!", "warning")
+
+        db = load_db()
+        with db_lock:
+            u = db["users"].get(username)
+            kd = db["keys"].get(old_key)
+            
+            if not kd or old_key not in [k["key"] for k in u.get("purchased_keys", [])]:
+                return swal_back("Lỗi", "Key không tồn tại hoặc không thuộc về bạn!", "error")
+            
+            is_vip = kd.get("vip", False)
+            if not is_vip:
+                return swal_back("Từ chối!", "Tính năng DEEP RESET chỉ dành riêng cho Key VIP PRO!", "error")
+
+            if new_olm.lower() == kd.get("bound_olm", "").lower():
+                return swal_back("Lỗi", "Nick OLM mới phải KHÁC nick OLM hiện tại!", "warning")
+
+            rc = kd.get("reset_count", 0)
+            if rc >= 2:
+                return swal_back("Giới hạn", "Key này đã hết lượt Reset (Tối đa 2 lần)!", "error")
+
+            fee = 0 if rc == 0 else 10000
+
+            if u["balance"] < fee:
+                return swal_back("Thất bại!", f"Bạn cần {fee:,}đ để Deep Reset từ lần thứ 2.", "error")
+
+            u["balance"] -= fee
+            
+            # Tạo mã key mới với mác VIP
+            new_key = generate_secure_key("TOOL", is_vip)
+            
+            # Khởi tạo dữ liệu key mới (chuyển hạn sử dụng sang)
+            db["keys"][new_key] = {
+                "exp": kd.get("exp"),
+                "durationMs": kd.get("durationMs", 0),
+                "maxDevices": kd.get("maxDevices", 1),
+                "devices": [],
+                "known_ips": {},
+                "status": kd.get("status", "active"),
+                "vip": is_vip,
+                "loader_enabled": kd.get("loader_enabled", True),
+                "violations": kd.get("violations", 0),
+                "temp_ban_until": kd.get("temp_ban_until", 0),
+                "owner": kd.get("owner"),
+                "os": kd.get("os", "android"),
+                "reset_count": rc + 1,
+                "bound_olm": new_olm
+            }
+            
+            for pk in u.get("purchased_keys", []):
+                if pk["key"] == old_key:
+                    pk["key"] = new_key
+                    break
+                    
+            del db["keys"][old_key]
+            save_db(db)
+
+        if session.get('active_key') == old_key:
+            session['active_key'] = new_key
+
+        html_msg = f"""<div style='text-align:left; font-size:14px;'>
+            <p>Phí chuyển đổi: <b>{fee:,}đ</b></p>
+            <p>Đã ghim OLM mới: <b style='color:#ff3366'>{escape(new_olm)}</b></p>
+            <p>Mã Key <strong class="text-success">MỚI TÍNH</strong> của bạn là:</p>
+            <div style='background:#000; padding:10px; border:1px dashed #00ffcc; border-radius:5px; text-align:center; font-family:monospace; font-size:18px; color:#00ffcc; margin-bottom:15px; cursor:pointer;' onclick='navigator.clipboard.writeText("{new_key}");Swal.showValidationMessage("Đã copy!");'>{new_key}</div>
+            <p class='text-warning mt-2' style='font-size:12px;'>*Key cũ đã bị vô hiệu hóa hoàn toàn khỏi hệ thống.</p>
+        </div>"""
+        
+        return swal_redirect("🎉 ĐỔI KEY VÀ NICK THÀNH CÔNG!", html_msg, "success", "/dashboard")
+
+    except Exception as e: return swal_back("Lỗi", str(e), "error")
 
 @app.route('/dashboard')
 def user_dashboard():
@@ -1378,10 +1498,10 @@ def user_dashboard():
             <div class="col-lg-3 col-6 mb-3">
                 <div class="card p-3 h-100 text-center" style="border-color:{border_c}; cursor:pointer;" onclick="confirmBuy('{pkg_id}', '{pkg['name']}', {pkg['price']})">
                     {vip_tag}
-                    <h6 class="text-white fw-bold">{pkg['name']}</h6>
+                    <h6 class="text-white fw-bold mt-1">{pkg['name']}</h6>
                     {desc_html}
-                    <h4 style="color:{border_c}; font-weight:900;">{pkg['price']:,}đ</h4>
-                    <button class="btn btn-sm w-100 fw-bold mt-auto" style="background:{border_c}; color:#fff;">MUA NGAY</button>
+                    <h4 style="color:{border_c}; font-weight:900; margin: 10px 0;">{pkg['price']:,}đ</h4>
+                    <button class="btn btn-sm w-100 fw-bold mt-auto" style="background:rgba(255,255,255,0.1); color:{border_c}; border: 1px solid {border_c}; border-radius:8px;">MUA NGAY</button>
                 </div>
             </div>'''
 
@@ -1392,7 +1512,6 @@ def user_dashboard():
             kd = db["keys"].get(k)
             if not kd: continue 
             
-            # Tính toán trạng thái
             st = kd.get('status', 'active')
             is_banned = (st == 'banned')
             temp_ban = kd.get('temp_ban_until', 0)
@@ -1402,32 +1521,36 @@ def user_dashboard():
             elif temp_ban > now: status_html = f'<span class="badge bg-warning text-dark">Phạt ({(temp_ban - now)//60000}p)</span>'
 
             exp = kd.get("exp")
-            if exp == "permanent": exp_str = '<span class="text-success">Vĩnh viễn</span>'
+            if exp == "permanent": exp_str = '<span class="text-success fw-bold">Vĩnh viễn</span>'
             elif exp == "pending": exp_str = '<span class="text-info">Chưa KH</span>'
             else:
                 if exp < now: 
                     exp_str = '<span class="text-danger">Hết hạn</span>'
                     if not is_banned: status_html = '<span class="badge bg-secondary">Hết hạn</span>'
                 else: 
-                    exp_str = f'<span class="text-warning">{time.strftime("%d/%m/%Y", time.localtime(exp/1000))}</span>'
+                    exp_str = f'<span class="text-warning">{time.strftime("%d/%m/%y", time.localtime(exp/1000))}</span>'
                 
             rc = kd.get("reset_count", 0)
-            vip_icon = "💎 " if kd.get("vip") else "🔑 "
+            is_vip = kd.get("vip", False)
+            vip_icon = "💎 " if is_vip else "🔑 "
             bound_olm = kd.get("bound_olm", "")
             bound_str = f'<span class="text-warning fw-bold">{escape(bound_olm)}</span>' if bound_olm else '<span class="text-muted">Chưa ghim</span>'
 
             my_keys_html += f'''
             <tr>
-                <td><strong class="text-info" style="cursor:pointer;" onclick="copyMyKey('{k}')" title="Bấm Copy">{vip_icon}{k} <i class="fas fa-copy text-secondary fs-6"></i></strong></td>
+                <td><strong class="text-info" style="cursor:pointer;" onclick="copyMyKey('{k}')" title="Bấm Copy">{vip_icon}{k[:8]}... <i class="fas fa-copy text-secondary fs-6"></i></strong></td>
                 <td>{status_html}</td>
                 <td>{exp_str}</td>
-                <td>{rc} lần</td>
+                <td>{rc}/2 lần</td>
                 <td>{bound_str}</td>
                 <td>
-                    <form action="/user_delete_key" method="POST" onsubmit="return confirm('Bạn có chắc chắn muốn xóa vĩnh viễn Key này khỏi tài khoản của bạn?');" class="m-0">
-                        <input type="hidden" name="key_to_delete" value="{k}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger fw-bold">XÓA</button>
-                    </form>
+                    <div class="d-flex justify-content-center gap-2">
+                        <button class="btn btn-sm btn-outline-warning fw-bold py-1 px-2" style="font-size:11px; border-radius:6px;" onclick="confirmTransfer('{k}', '{escape(bound_olm)}', {rc}, {'true' if is_vip else 'false'})" title="Đổi Mã Key & Đổi Nick">DEEP RESET</button>
+                        <form action="/user_delete_key" method="POST" onsubmit="return confirm('Bạn có chắc chắn muốn xóa vĩnh viễn Key này khỏi tài khoản?');" class="m-0">
+                            <input type="hidden" name="key_to_delete" value="{k}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger fw-bold py-1 px-2" style="font-size:11px; border-radius:6px;">XÓA</button>
+                        </form>
+                    </div>
                 </td>
             </tr>
             '''
@@ -1442,47 +1565,47 @@ def user_dashboard():
         <body class="p-2 p-md-4">
         <div class="container" style="max-width:1100px;">
             <div class="d-flex flex-column flex-md-row justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-                <h2 class="text-neon mb-3 mb-md-0 m-0">⚡ LVT SHOP CÁ NHÂN</h2>
-                <div><span class="me-3">Xin chào, <b class="text-info">{username.upper()}</b></span> <a href="/logout" class="btn btn-sm btn-outline-danger fw-bold">Thoát</a></div>
+                <h2 class="text-neon mb-3 mb-md-0 m-0"><i class="fas fa-bolt"></i> LVT SHOP CÁ NHÂN</h2>
+                <div><span class="me-3">Xin chào, <b class="text-info">{username.upper()}</b></span> <a href="/logout" class="btn btn-sm btn-outline-danger fw-bold rounded-pill px-3">Thoát</a></div>
             </div>
             
-            <div class="row g-4">
-                <div class="col-md-4">
-                    <div class="card p-4 text-center border-info h-100">
-                        <h5 class="text-secondary">SỐ DƯ CỦA BẠN</h5>
-                        <h2 class="text-neon" style="font-size:40px;">{balance:,}<small style="font-size:20px;">đ</small></h2>
-                        <hr class="border-secondary">
-                        <p class="text-warning mb-1" style="font-size:14px;"><i class="fas fa-university"></i> <b>CÁCH NẠP TIỀN AUTO</b></p>
-                        <p class="text-muted" style="font-size:12px;">Chuyển khoản với nội dung:<br><strong class="text-white fs-6">NAP {username.upper()}</strong></p>
-                        <a href="https://zalo.me/0343627516" target="_blank" class="btn btn-outline-info btn-sm fw-bold mt-auto">Liên hệ Admin (Zalo)</a>
+            <div class="row g-4 mb-4">
+                <div class="col-md-6">
+                    <div class="balance-card">
+                        <div>
+                            <div style="font-size: 12px; color: #9ca3af; letter-spacing: 1px;">SỐ DƯ TÀI KHOẢN</div>
+                            <div class="balance-amount">{balance:,}đ</div>
+                        </div>
+                        <div>
+                            <a href="https://zalo.me/0343627516" target="_blank" class="btn btn-sm btn-outline-info fw-bold rounded-pill px-3 py-2">NẠP TIỀN AUTO</a>
+                        </div>
                     </div>
                 </div>
-                <div class="col-md-8">
+                <div class="col-md-6">
+                    <div class="launch-card cursor-pointer" onclick="window.location.href='/key_login'">
+                        <h4 class="text-purple m-0 fw-bold"><i class="fas fa-rocket"></i> VÀO KHOANG LÁI HACK V13.0</h4>
+                        <div class="text-muted mt-2" style="font-size: 13px;">Đăng nhập Key để kích hoạt Hack OLM.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4">
+                <div class="col-12">
                     <div class="card p-4 border-secondary h-100">
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h4 class="text-purple m-0"><i class="fas fa-shopping-cart"></i> MUA MÃ KEY MỚI</h4>
+                            <h4 class="text-info m-0 fw-bold"><i class="fas fa-shopping-cart"></i> MUA MÃ KEY MỚI</h4>
                         </div>
                         <div class="row g-2">{shop_html}</div>
                     </div>
                 </div>
                 
                 <div class="col-12">
-                    <div class="card p-4 border-success text-center">
-                        <h4 class="text-neon mb-2"><i class="fas fa-rocket"></i> VÀO PHÒNG ĐIỀU KHIỂN HACK</h4>
-                        <p class="text-muted mb-3">Vào phòng điều khiển để liên kết Key và kích hoạt Hack V13.0.</p>
-                        <a href="/key_login" class="btn fw-bold w-100 mt-2" style="background:linear-gradient(45deg,#00ffcc,#0099ff);color:#000;padding:12px; font-size:18px;">
-                            ĐĂNG NHẬP VÀO KHOANG LÁI <i class="fas fa-arrow-right"></i>
-                        </a>
-                    </div>
-                </div>
-
-                <div class="col-12">
                     <div class="card p-3 border-secondary">
-                        <h5 class="text-info mb-3"><i class="fas fa-key"></i> QUẢN LÝ KEY CỦA BẠN</h5>
-                        <div class="table-responsive">
+                        <h5 class="text-purple mb-3 fw-bold"><i class="fas fa-key"></i> QUẢN LÝ KEY CỦA BẠN</h5>
+                        <div class="table-container">
                             <table class="table table-dark table-hover table-sm align-middle text-center mb-0">
                                 <thead class="table-active">
-                                    <tr><th>🔑 Mã Key (Bấm copy)</th><th>🟢 Trạng thái</th><th>⏳ Thời gian</th><th>🔄 Lượt Reset</th><th>👤 OLM Đã Ghim</th><th>⚙️ Thao tác</th></tr>
+                                    <tr><th>🔑 Mã Key (Copy)</th><th>🟢 Trạng thái</th><th>⏳ Hạn dùng</th><th>🔄 Lượt Reset</th><th>👤 OLM Đã Ghim</th><th>⚙️ Thao tác</th></tr>
                                 </thead>
                                 <tbody>
                                     {my_keys_html}
@@ -1493,19 +1616,23 @@ def user_dashboard():
                 </div>
             </div>
         </div>
+        
         <form id="buyForm" action="/buy" method="POST"><input type="hidden" name="pkg_id" id="pkgInput"><input type="hidden" name="os_type" id="osInput"><input type="hidden" name="olm_name" id="olmInput"></form>
+        <form id="transferForm" action="/user_transfer_key" method="POST"><input type="hidden" name="old_key" id="transOldKeyInput"><input type="hidden" name="new_olm" id="transNewOlmInput"></form>
+
         <script>
             {swal_scripts}
             function copyMyKey(k) {{ navigator.clipboard.writeText(k); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã copy Key!',showConfirmButton:false,timer:1500,background:'#111',color:'#fff'}}); }}
+            
             function confirmBuy(id, name, price) {{
                 Swal.fire({{
                     title: 'CHỈ ĐỊNH TÀI KHOẢN OLM',
                     html: `<p>Gói <b>${{name}}</b> (${{price.toLocaleString()}}đ)</p>
-                           <input type="text" id="swal-olm" class="swal2-input" placeholder="Nhập nick OLM (Ví dụ: hp_luongvantuyen)" style="width: 80%; background: #000; color: #00ffcc; border: 1px solid #00ffcc;">
+                           <input type="text" id="swal-olm" class="swal2-input" placeholder="Nhập nick OLM (Ví dụ: hp_luongvantuyen)" style="width: 80%; background: rgba(10,10,18,0.8); color: #00ffcc; border: 1px solid #00ffcc; border-radius:10px;">
                            <div style="margin-top: 15px; font-size: 14px;">
                                <b>CHỌN HỆ ĐIỀU HÀNH BẠN ĐANG XÀI:</b><br>
-                               <label class="me-3"><input type="radio" name="swal-os" value="android" checked> <i class="fab fa-android"></i> Android/PC</label>
-                               <label><input type="radio" name="swal-os" value="ios"> <i class="fab fa-apple"></i> iOS</label>
+                               <label class="me-3 mt-2"><input type="radio" name="swal-os" value="android" checked> <i class="fab fa-android"></i> Android/PC</label>
+                               <label class="mt-2"><input type="radio" name="swal-os" value="ios"> <i class="fab fa-apple"></i> iOS</label>
                            </div>`,
                     icon: 'info', showCancelButton: true, confirmButtonText: 'MUA NGAY', cancelButtonText: 'Hủy',
                     background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff',
@@ -1521,6 +1648,44 @@ def user_dashboard():
                         document.getElementById('osInput').value = res.value.os;
                         document.getElementById('olmInput').value = res.value.olm;
                         document.getElementById('buyForm').submit();
+                    }}
+                }});
+            }}
+
+            // HÀM DEEP RESET CHỈ ĐỊNH CỦA VIP
+            function confirmTransfer(oldKey, currentOlm, resetCount, isVip) {{
+                if (!isVip) {{
+                    Swal.fire({{ title: 'Từ chối', text: 'Chức năng Deep Reset chỉ dành cho Key VIP PRO!', icon: 'error', background: '#11111A', color: '#fff' }});
+                    return;
+                }}
+                if (resetCount >= 2) {{
+                    Swal.fire({{ title: 'Giới hạn', text: 'Key này đã hết lượt Reset (Tối đa 2 lần).', icon: 'error', background: '#11111A', color: '#fff' }});
+                    return;
+                }}
+                let fee = resetCount === 0 ? "Miễn phí (Lần 1)" : "10,000đ (Lần 2)";
+                Swal.fire({{
+                    title: 'DEEP RESET KEY & ĐỔI NICK OLM',
+                    html: `
+                        <div style="text-align:left; font-size:14px; margin-bottom: 15px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
+                            <p class="mb-1">Nick đang ghim: <b class="text-danger">${{currentOlm || 'Chưa có'}}</b></p>
+                            <p class="mb-0">Phí đổi: <b class="text-warning">${{fee}}</b></p>
+                        </div>
+                        <p class="text-info fw-bold mb-3" style="font-size:13px;">Hệ thống sẽ tạo 1 mã Key HOÀN TOÀN MỚI và chuyển toàn bộ ngày sử dụng sang nick OLM mới.</p>
+                        <input type="text" id="swal-new-olm" class="swal2-input" placeholder="Nhập nick OLM MỚI (Bắt buộc)" style="width: 85%; background: rgba(10,10,18,0.8); color: #00ffcc; border: 1px solid #00ffcc; border-radius:10px; margin:0 auto;">
+                    `,
+                    icon: 'warning', showCancelButton: true, confirmButtonText: 'ĐỔI NGAY', cancelButtonText: 'Hủy',
+                    background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff',
+                    preConfirm: () => {{
+                        const newOlm = document.getElementById('swal-new-olm').value.trim();
+                        if(!newOlm) {{ Swal.showValidationMessage('Vui lòng nhập nick OLM mới!'); return false; }}
+                        if(newOlm.toLowerCase() === currentOlm.toLowerCase()) {{ Swal.showValidationMessage('Nick mới phải KHÁC nick cũ!'); return false; }}
+                        return newOlm;
+                    }}
+                }}).then((res) => {{
+                    if(res.isConfirmed) {{
+                        document.getElementById('transOldKeyInput').value = oldKey;
+                        document.getElementById('transNewOlmInput').value = res.value;
+                        document.getElementById('transferForm').submit();
                     }}
                 }});
             }}
@@ -1598,7 +1763,7 @@ def key_login():
                 return swal_redirect("Chấp nhận mã Key!", "Đang đưa bạn vào Khoang Lái...", "success", "/key_dashboard")
             return swal_back("Thất bại", "Mã Key không tồn tại trong hệ thống!", "error")
 
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kích Hoạt Key</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon">🔑 KHỞI ĐỘNG KEY</h2><form method="POST"><input type="text" name="key_input" class="form-control text-center fs-5" placeholder="Dán mã Key của bạn vào đây..." required><button type="submit" class="btn-neon">ĐĂNG NHẬP KEY</button></form><div class="mt-4"><a href="/dashboard" class="link-neon">⬅ Trở về Quầy Shop</a></div></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kích Hoạt Key</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">🔑 KHỞI ĐỘNG KEY</h2><form method="POST"><input type="text" name="key_input" class="form-control text-center fs-5" placeholder="Dán mã Key của bạn vào đây..." required><button type="submit" class="btn-neon mt-2">ĐĂNG NHẬP KEY</button></form><div class="mt-4"><a href="/dashboard" class="link-neon"><i class="fas fa-arrow-left"></i> Trở về Quầy Shop</a></div></div></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
 @app.route('/logout_key')
@@ -1643,44 +1808,44 @@ def key_dashboard():
         <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Phòng Điều Khiển</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-        <style>{CSS_GLASS} .card-key{{background:#11111A !important;border-radius:15px !important;}}</style></head>
+        <style>{CSS_GLASS} .card-key{{background:rgba(17,17,26,0.9) !important;border-radius:16px !important; backdrop-filter: blur(10px);}}</style></head>
         <body class="p-3">
         <div class="container" style="max-width:800px;">
             <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-2">
                 <h3 style="color:#00ffcc;margin:0;font-weight:900;">⚡ KHOANG LÁI HACK</h3>
                 <div>
-                    <a href="/dashboard" class="btn btn-outline-light btn-sm fw-bold me-2">Shop/Quản Lý</a>
-                    <a href="/logout_key" class="btn btn-danger btn-sm fw-bold">Đăng Xuất Key</a>
+                    <a href="/dashboard" class="btn btn-outline-info btn-sm fw-bold me-2 rounded-pill">Shop/Quản Lý</a>
+                    <a href="/logout_key" class="btn btn-danger btn-sm fw-bold rounded-pill">Đăng Xuất Key</a>
                 </div>
             </div>
             
-            <div class="card-key {card_class} p-4 text-center mb-4">
-                <div class="badge mb-3" style="background:{'#bd00ff' if is_vip else '#0099ff'}; font-size:16px;">{vip_text}</div>
+            <div class="card-key {card_class} p-4 text-center mb-4 shadow">
+                <div class="badge mb-3" style="background:{'#bd00ff' if is_vip else '#0099ff'}; font-size:16px; padding: 6px 12px !important;">{vip_text}</div>
                 <h2 class="text-white mb-2" style="font-family:monospace;letter-spacing:2px;cursor:pointer;" onclick="copyT('{active_key}')">{active_key} <i class="fas fa-copy text-muted fs-5"></i></h2>
                 
-                <div class="my-3 py-2" style="background:#000; border-radius:8px; border:1px dashed #444;">
+                <div class="my-3 py-3" style="background:rgba(0,0,0,0.5); border-radius:10px; border:1px dashed rgba(255,255,255,0.2);">
                     <p class="text-secondary mb-1" style="font-size:12px;">KEY OLM MODE CỦA HỆ THỐNG</p>
-                    <b class="text-warning" style="font-family:monospace; font-size:18px;">OLM_VIP_786B-XQCH-BYEF-SYUS</b>
+                    <b class="text-warning" style="font-family:monospace; font-size:18px; letter-spacing:1px;">OLM_VIP_786B-XQCH-BYEF-SYUS</b>
                 </div>
 
                 <div id="countdown-box" class="mt-3">
                     <p class="text-muted mb-0">Thời gian còn lại:</p>
-                    <h3 id="timer" class="text-danger fw-bold" style="font-family:monospace;">ĐANG TÍNH...</h3>
+                    <h3 id="timer" class="text-danger fw-bold" style="font-family:monospace; text-shadow: 0 0 10px rgba(255,0,0,0.3);">ĐANG TÍNH...</h3>
                 </div>
                 
-                <div class="d-flex justify-content-center gap-5 mt-3 pt-3 border-top border-secondary">
+                <div class="d-flex justify-content-center gap-5 mt-4 pt-3 border-top border-secondary">
                     <div><small class="text-secondary">Thiết Bị Của Bạn</small><br><b class="fs-4 text-info">{len(kd.get('devices', []))}/{kd.get('maxDevices', 1)}</b></div>
                 </div>
             </div>
             
             <div class="row g-3">
-                <div class="col-12 mt-4 text-center">
-                    <p class="text-warning fw-bold mb-2">🚀 Ấn nút bên dưới hệ thống sẽ tự động đồng bộ Key và mở khóa OLM.VN</p>
-                    <a href="https://olm.vn/?lvt_key={active_key}" target="_blank" class="btn w-100 p-3 fw-bold fs-5 text-dark" style="background:linear-gradient(45deg,#00ffcc,#0099ff);box-shadow:0 0 20px rgba(0,255,204,0.4);border-radius:12px;" onclick="checkInstallFirst(event, this.href)">
+                <div class="col-12 mt-2 text-center">
+                    <p class="text-warning fw-bold mb-3">🚀 Ấn nút bên dưới hệ thống sẽ tự động đồng bộ Key và mở khóa OLM.VN</p>
+                    <a href="https://olm.vn/?lvt_key={active_key}" target="_blank" class="btn w-100 p-3 fw-bold fs-5 text-dark" style="background:linear-gradient(45deg,#00ffcc,#0099ff);box-shadow:0 10px 25px rgba(0,255,204,0.4);border-radius:12px;" onclick="checkInstallFirst(event, this.href)">
                         MỞ KHÓA VÀ SỬ DỤNG HACK NGAY
                     </a>
-                    <div class="mt-3">
-                        <small class="text-muted">Chưa cài đặt Userscript? <a href="/api/script/olm_vip.user.js" target="_blank" style="color:#00ffcc; text-decoration:none;">Bấm vào đây để cài đặt (Lần đầu)</a></small>
+                    <div class="mt-4">
+                        <small class="text-muted">Chưa cài đặt Userscript? <a href="/api/script/olm_vip.user.js" target="_blank" style="color:#00ffcc; text-decoration:none; border-bottom: 1px dashed #00ffcc;">Bấm vào đây để cài đặt (Lần đầu)</a></small>
                     </div>
                 </div>
             </div>
@@ -1718,32 +1883,6 @@ def key_dashboard():
         '''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
-@app.route('/user_reset_hwid', methods=['POST'])
-def user_reset_hwid():
-    try:
-        if 'username' not in session: return redirect('/login')
-        active_key = session.get('active_key')
-        if not active_key: return redirect('/key_login')
-        
-        db = load_db()
-        with db_lock:
-            u = db["users"].get(session['username'])
-            kd = db["keys"].get(active_key)
-            if not kd: return swal_back("Lỗi", "Key không tồn tại", "error")
-            
-            rc = kd.get("reset_count", 0)
-            if rc == 0:
-                kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
-                save_db(db)
-                return swal_redirect("Reset Thành Công!", "Đã gỡ thiết bị và xóa định danh OLM miễn phí (Lần 1).", "success", "/key_dashboard")
-            else:
-                if u["balance"] < 10000: return swal_back("Thất bại!", "Bạn cần 10,000đ để Reset từ lần thứ 2 trở đi.", "error")
-                u["balance"] -= 10000
-                kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
-                save_db(db)
-                return swal_redirect("Reset Thành Công!", "Đã trừ 10,000đ và gỡ thiết bị thành công.", "success", "/key_dashboard")
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
-
 # ========================================================
 # GIAO DIỆN WEB ADMIN QUẢN LÝ
 # ========================================================
@@ -1766,7 +1905,7 @@ def admin_login():
                 return redirect('/admin')
             return swal_back("Từ Chối Truy Cập", f"Thông tin sai!", "error")
         
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon">🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
 @app.route('/admin')
@@ -1787,7 +1926,7 @@ def admin_dashboard():
             if udata.get("role") == "admin": continue
             bal = udata.get("balance", 0)
             
-            u_keys = "<br>".join([f"🔑 {escape(pk.get('key'))}" for pk in udata.get("purchased_keys", [])]) or "<span class='text-muted'>Chưa có</span>"
+            u_keys = "<br>".join([f"🔑 {escape(pk.get('key')[:8])}..." for pk in udata.get("purchased_keys", [])]) or "<span class='text-muted'>Chưa có</span>"
             u_ips = "<br>".join([escape(ip) for ip in udata.get("ips", [])]) or "<span class='text-muted'>Trống</span>"
             created = time.strftime("%d/%m/%y", time.localtime(udata.get("created_at", 0)/1000))
             
@@ -1801,7 +1940,7 @@ def admin_dashboard():
                     <form action="/admin/add_balance" method="POST" class="d-flex gap-1 justify-content-center m-0">
                         <input type="hidden" name="username" value="{escape(uname)}">
                         <input type="number" name="amount" class="form-control form-control-sm bg-dark text-light border-secondary px-1 text-center m-0" style="width:70px;font-size:12px;height:28px;" placeholder="± Tiền" required>
-                        <button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;height:28px;">CỘNG</button>
+                        <button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;height:28px; border-radius:6px;">CỘNG</button>
                     </form>
                 </td>
             </tr>
@@ -1834,7 +1973,7 @@ def admin_dashboard():
             keys_html += f'''
             <tr class="key-row">
                 <td>
-                    <strong class="text-info" style="font-size:12px; cursor:pointer;" onclick="copyKey('{safe_k}')" title="Bấm để copy">{safe_k} <i class="fas fa-copy text-muted"></i></strong><br>
+                    <strong class="text-info" style="font-size:12px; cursor:pointer;" onclick="copyKey('{safe_k}')" title="Bấm để copy">{safe_k[:8]}... <i class="fas fa-copy text-muted"></i></strong><br>
                     {vip_badge} {status_badge}<br>
                     <small class="text-warning">Chủ: {escape(data.get('owner', 'Admin'))}</small>{bnd_html}
                 </td>
@@ -1842,17 +1981,17 @@ def admin_dashboard():
                 <td><span class="badge bg-info text-dark">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
                 <td>
                     <div class="d-flex flex-wrap gap-1 justify-content-center">
-                        <button class="btn btn-warning btn-sm" style="font-size:10px;" onclick="openBindModal('{safe_k}', '{bound_olm}')">Ghim</button>
-                        <a href="/admin/action/reset-dev/{safe_k}" class="btn btn-primary btn-sm" style="font-size:10px;">🔄 Máy</a>
-                        <a href="/admin/action/unban_temp/{safe_k}" class="btn btn-success btn-sm" style="font-size:10px;">Gỡ Phạt</a>
-                        <a href="/admin/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-{"light" if is_banned else "danger"} btn-sm" style="font-size:10px;">{"Cứu" if is_banned else "Trảm"}</a>
-                        <a href="/admin/action/delete/{safe_k}" class="btn btn-dark btn-sm" onclick="return confirm('Xóa vĩnh viễn Key này?')" style="font-size:10px;">🗑️</a>
+                        <button class="btn btn-warning btn-sm" style="font-size:10px; border-radius:6px;" onclick="openBindModal('{safe_k}', '{bound_olm}')">Ghim</button>
+                        <a href="/admin/action/reset-dev/{safe_k}" class="btn btn-primary btn-sm" style="font-size:10px; border-radius:6px;">🔄 Máy</a>
+                        <a href="/admin/action/unban_temp/{safe_k}" class="btn btn-success btn-sm" style="font-size:10px; border-radius:6px;">Gỡ Phạt</a>
+                        <a href="/admin/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-{"light" if is_banned else "danger"} btn-sm" style="font-size:10px; border-radius:6px;">{"Cứu" if is_banned else "Trảm"}</a>
+                        <a href="/admin/action/delete/{safe_k}" class="btn btn-dark btn-sm" onclick="return confirm('Xóa vĩnh viễn Key này?')" style="font-size:10px; border-radius:6px;">🗑️</a>
                     </div>
                 </td>
             </tr>'''
 
-        blacklist_rows = "".join([f'<li class="list-group-item bg-dark text-light d-flex justify-content-between align-items-center" style="font-size:12px;">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger p-0 px-2">Gỡ</a></li>' for ip in banned_ips])
-        if not blacklist_rows: blacklist_rows = '<li class="list-group-item bg-dark text-muted text-center" style="font-size:12px;">Sạch sẽ</li>'
+        blacklist_rows = "".join([f'<li class="list-group-item bg-transparent text-light d-flex justify-content-between align-items-center border-secondary border-bottom px-1" style="font-size:12px;">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger p-0 px-2 rounded-pill">Gỡ</a></li>' for ip in banned_ips])
+        if not blacklist_rows: blacklist_rows = '<li class="list-group-item bg-transparent text-muted text-center border-0" style="font-size:12px;">Sạch sẽ</li>'
         
         safe_admin_script = escape(db.get("users", {}).get("admin", {}).get("custom_script", ""))
         safe_vm_script = escape(db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT))
@@ -1861,18 +2000,18 @@ def admin_dashboard():
         <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ADMIN DASHBOARD</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-        <style>{CSS_GLASS} .card{{background:#11111A;border:1px solid #333;border-radius:12px;}} h5{{color:#00ffcc;font-weight:900;}} .table-container{{max-height:450px;overflow-y:auto;}} tbody tr:hover{{background:rgba(0,255,204,0.05)!important;}}</style>
+        <style>{CSS_GLASS} h5{{font-weight:900;}} .table-container{{max-height:450px;overflow-y:auto;}}</style>
         </head><body class="p-2 p-md-4">
         <div class="container-fluid">
-            <div class="d-flex justify-content-between align-items-center mb-3 border-bottom border-secondary pb-2">
-                <h3 class="m-0 text-neon">⚡ LVT SECURE ADMIN</h3>
-                <div><a href="/logout" class="btn btn-outline-danger btn-sm fw-bold">Thoát</a></div>
+            <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
+                <h3 class="m-0 text-neon fw-bold"><i class="fas fa-shield-alt"></i> LVT SECURE ADMIN</h3>
+                <div><a href="/logout" class="btn btn-outline-danger btn-sm fw-bold rounded-pill px-3">Thoát</a></div>
             </div>
             
-            <div class="row g-3">
+            <div class="row g-4">
                 <div class="col-lg-7">
-                    <div class="card p-3 h-100" style="border-color:#3366ff;">
-                        <h5 style="color:#3366ff;"><i class="fas fa-users"></i> DANH SÁCH USER</h5>
+                    <div class="card p-4 h-100" style="border-color:rgba(51,102,255,0.4);">
+                        <h5 style="color:#3366ff; margin-bottom:20px;"><i class="fas fa-users"></i> DANH SÁCH USER</h5>
                         <div class="table-container">
                             <table class="table table-dark table-hover table-sm align-middle mb-0 text-center">
                                 <thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Keys Sỡ Hữu</th><th>IP Đăng Nhập</th><th>Cộng/Trừ Tiền</th></tr></thead>
@@ -1883,54 +2022,54 @@ def admin_dashboard():
                 </div>
 
                 <div class="col-lg-5">
-                    <div class="row g-3 h-100">
+                    <div class="row g-4 h-100">
                         <div class="col-md-12">
-                            <div class="card p-3 h-100" style="border-color:#bd00ff;">
-                                <h5 style="color:#bd00ff;"><i class="fas fa-key"></i> TẠO KEY MỚI</h5>
-                                <form action="/admin/create" method="POST" class="row g-2 mt-1">
-                                    <div class="col-6"><input type="text" name="prefix" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Mã (T)"></div>
-                                    <div class="col-6"><input type="number" name="quantity" class="form-control form-control-sm bg-dark text-light border-secondary" value="1" placeholder="Số Lượng"></div>
-                                    <div class="col-6"><input type="number" name="duration" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Độ dài" required></div>
-                                    <div class="col-6"><select name="type" class="form-select form-select-sm bg-dark text-light border-secondary"><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">V.Viễn</option></select></div>
+                            <div class="card p-4 h-100" style="border-color:rgba(189,0,255,0.4);">
+                                <h5 style="color:#bd00ff; margin-bottom:15px;"><i class="fas fa-key"></i> TẠO KEY MỚI</h5>
+                                <form action="/admin/create" method="POST" class="row g-3">
+                                    <div class="col-6"><input type="text" name="prefix" class="form-control form-control-sm m-0" placeholder="Mã (VD: TEST)"></div>
+                                    <div class="col-6"><input type="number" name="quantity" class="form-control form-control-sm m-0" value="1" placeholder="Số Lượng"></div>
+                                    <div class="col-6"><input type="number" name="duration" class="form-control form-control-sm m-0" placeholder="Độ dài" required></div>
+                                    <div class="col-6"><select name="type" class="form-select form-select-sm m-0"><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">V.Viễn</option></select></div>
                                     
-                                    <div class="col-12 mt-2 d-flex justify-content-center align-items-center">
-                                        <div class="form-check form-switch fs-5">
+                                    <div class="col-12 d-flex justify-content-center align-items-center">
+                                        <div class="form-check form-switch fs-5 mt-1">
                                           <input class="form-check-input" type="checkbox" role="switch" name="is_vip" id="vipSwitch">
-                                          <label class="form-check-label text-warning fw-bold ms-2" for="vipSwitch">🔑 Gắn mác Key VIP PRO</label>
+                                          <label class="form-check-label text-warning fw-bold ms-2" for="vipSwitch" style="font-size:14px;">🔑 Gắn mác Key VIP PRO</label>
                                         </div>
                                     </div>
                                     
-                                    <div class="col-12 mt-2"><button type="submit" class="btn btn-sm w-100 fw-bold" style="background:#bd00ff;color:white;">🚀 TẠO NGAY</button></div>
+                                    <div class="col-12"><button type="submit" class="btn btn-sm w-100 fw-bold py-2" style="background:linear-gradient(45deg, #bd00ff, #3366ff);color:white; border-radius:10px;">🚀 TẠO NGAY</button></div>
                                 </form>
                             </div>
                         </div>
-                        <div class="col-md-12 mt-3">
-                            <div class="card p-3 h-100" style="border-color:#ff9900;">
-                                <h5 style="color:#ff9900;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH & CẬP NHẬT MỚI</h5>
-                                <button class="btn btn-sm btn-outline-warning w-100 fw-bold mb-2" data-bs-toggle="modal" data-bs-target="#adminScriptModal">Mở Bảng Mã Nguồn Lõi (Core)</button>
-                                <button class="btn btn-sm btn-outline-info w-100 fw-bold" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Cập Nhật Script Violentmonkey</button>
+                        <div class="col-md-12">
+                            <div class="card p-4 h-100" style="border-color:rgba(255,153,0,0.4);">
+                                <h5 style="color:#ff9900; margin-bottom:15px;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH</h5>
+                                <button class="btn btn-sm btn-outline-warning w-100 fw-bold mb-3 py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#adminScriptModal">Mở Bảng Mã Nguồn Lõi (Core)</button>
+                                <button class="btn btn-sm btn-outline-info w-100 fw-bold py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Cập Nhật Script Violentmonkey</button>
                             </div>
                         </div>
-                        <div class="col-md-12 mt-3">
-                            <div class="card p-3 h-100" style="border-color:#ff3366;">
-                                <h5 class="text-danger"><i class="fas fa-shield-virus"></i> FIREWALL BANS</h5>
-                                <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-2">
-                                    <input type="text" name="ip" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nhập IP..." required>
-                                    <button type="submit" class="btn btn-sm btn-danger fw-bold">Chặn</button>
+                        <div class="col-md-12">
+                            <div class="card p-4 h-100" style="border-color:rgba(255,51,102,0.4);">
+                                <h5 class="text-danger margin-bottom:15px;"><i class="fas fa-shield-virus"></i> FIREWALL BANS</h5>
+                                <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">
+                                    <input type="text" name="ip" class="form-control form-control-sm m-0" placeholder="Nhập IP..." required>
+                                    <button type="submit" class="btn btn-sm btn-danger fw-bold px-3 rounded-pill">Chặn</button>
                                 </form>
-                                <ul class="list-group list-group-flush" style="max-height:100px;overflow-y:auto;">{blacklist_rows}</ul>
+                                <ul class="list-group list-group-flush" style="max-height:120px;overflow-y:auto; border: 1px solid rgba(255,255,255,0.05); border-radius:8px; padding:5px;">{blacklist_rows}</ul>
                             </div>
                         </div>
                     </div>
                 </div>
                 
                 <div class="col-lg-12">
-                    <div class="card p-3 h-100" style="border-color:#00ffcc;">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="card p-4 h-100" style="border-color:rgba(0,255,204,0.4);">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
                             <h5 class="m-0 text-neon"><i class="fas fa-database"></i> TẤT CẢ MÃ KEY</h5>
-                            <input type="text" class="form-control form-control-sm bg-dark text-light border-info m-0" style="width:200px;" placeholder="🔍 Tìm Key..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
+                            <input type="text" class="form-control form-control-sm m-0" style="width:250px; background:rgba(0,0,0,0.3);" placeholder="🔍 Tìm Key..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
                         </div>
-                        <div class="table-container">
+                        <div class="table-container border border-secondary">
                             <table class="table table-dark table-sm align-middle table-hover text-center mb-0">
                                 <thead class="table-active"><tr><th>🔑 Key / Chủ</th><th>⏳ Hạn Dùng</th><th>💻 Thiết bị</th><th>⚙️ Thao tác</th></tr></thead>
                                 <tbody>{keys_html}</tbody>
@@ -1943,14 +2082,15 @@ def admin_dashboard():
 
         <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
             <div class="modal-dialog modal-sm modal-dialog-centered">
-                <div class="modal-content" style="background:#111;border:1px solid #ffcc00;">
+                <div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00; backdrop-filter: blur(15px);">
                     <form action="/admin/bind_olm" method="POST">
-                        <div class="modal-body">
+                        <div class="modal-body text-center p-4">
                             <input type="hidden" name="key" id="bindKeyInput">
-                            <p>Ghim Định Danh OLM cho Key:<br><strong id="bindKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p>
-                            <input type="text" name="olm_name" id="bindOlmInput" class="form-control bg-dark text-light" placeholder="Tên nick OLM khách (để trống: hủy)">
+                            <p class="text-white mb-2">Ghim Định Danh OLM cho Key:</p>
+                            <p><strong id="bindKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p>
+                            <input type="text" name="olm_name" id="bindOlmInput" class="form-control mt-3" placeholder="Tên nick OLM khách (để trống: hủy)">
                         </div>
-                        <div class="modal-footer border-secondary"><button type="submit" class="btn btn-warning w-100 fw-bold text-dark">Ghim Chặt Cứng</button></div>
+                        <div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-warning w-100 fw-bold text-dark rounded-pill">Ghim Chặt Cứng</button></div>
                     </form>
                 </div>
             </div>
@@ -1958,11 +2098,11 @@ def admin_dashboard():
         
         <div class="modal fade" id="adminScriptModal" tabindex="-1" data-bs-theme="dark">
           <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content" style="background:#11111A; border:1px solid #ff9900;">
+            <div class="modal-content" style="background:rgba(17,17,26,0.95); border:1px solid #ff9900; backdrop-filter: blur(15px);">
               <form action="/admin/update_script" method="POST">
                   <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ff9900;font-weight:bold;">TÙY CHỈNH MÃ NGUỒN HACK (LÕI)</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-                  <div class="modal-body"><textarea name="script_content" class="form-control bg-dark text-light border-warning" rows="15" style="font-family:monospace; font-size:12px;">{safe_admin_script}</textarea></div>
-                  <div class="modal-footer border-secondary"><button type="submit" class="btn btn-warning fw-bold w-100 text-dark">LƯU CÀI ĐẶT</button></div>
+                  <div class="modal-body p-4"><textarea name="script_content" class="form-control" rows="15" style="font-family:monospace; font-size:12px;">{safe_admin_script}</textarea></div>
+                  <div class="modal-footer border-secondary p-3"><button type="submit" class="btn btn-warning fw-bold w-100 text-dark rounded-pill">LƯU CÀI ĐẶT</button></div>
               </form>
             </div>
           </div>
@@ -1970,11 +2110,11 @@ def admin_dashboard():
 
         <div class="modal fade" id="vmScriptModal" tabindex="-1" data-bs-theme="dark">
           <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content" style="background:#11111A; border:1px solid #00ffcc;">
+            <div class="modal-content" style="background:rgba(17,17,26,0.95); border:1px solid #00ffcc; backdrop-filter: blur(15px);">
               <form action="/admin/update_vm_script" method="POST">
-                  <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#00ffcc;font-weight:bold;">CẬP NHẬT SCRIPT VIOLENTMONKEY DÀNH CHO KHÁCH CÀI ĐẶT</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-                  <div class="modal-body"><textarea name="vm_script_content" class="form-control bg-dark text-light border-info" rows="15" style="font-family:monospace; font-size:12px;">{safe_vm_script}</textarea></div>
-                  <div class="modal-footer border-secondary"><button type="submit" class="btn btn-info fw-bold w-100 text-dark">LƯU CÀI ĐẶT SCRIPT MỚI</button></div>
+                  <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#00ffcc;font-weight:bold;">CẬP NHẬT SCRIPT VIOLENTMONKEY</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                  <div class="modal-body p-4"><textarea name="vm_script_content" class="form-control" rows="15" style="font-family:monospace; font-size:12px;">{safe_vm_script}</textarea></div>
+                  <div class="modal-footer border-secondary p-3"><button type="submit" class="btn btn-info fw-bold w-100 text-dark rounded-pill">LƯU CÀI ĐẶT SCRIPT MỚI</button></div>
               </form>
             </div>
           </div>
