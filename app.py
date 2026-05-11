@@ -35,8 +35,7 @@ _last_mtime_check = 0
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
 # ========================================================
-# SCRIPT VIOLENTMONKEY MẶC ĐỊNH (FULL CODE GỐC)
-# VÁ LỖI IFRAME KICK NGƯỜI DÙNG Ở ĐÂY
+# SCRIPT VIOLENTMONKEY MẶC ĐỊNH (FULL CODE GỐC CỦA BẠN)
 # ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE: VIP & NORMAL)
@@ -56,7 +55,8 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
 (function() {
     'use strict';
-    // CHỐNG CHẠY TRONG IFRAME (FIX LỖI VÒNG LẶP KICK KEY)
+    
+    // [FIX LỖI KICK LOOP] Ngăn script chạy trong các khung iframe ngầm
     if (window.top !== window.self) return;
 
     const Config = {
@@ -1198,7 +1198,7 @@ def serve_core_engine():
     db = load_db()
     raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     
-    # Bóc tách phần Body
+    # Bóc tách phần Body cực kỳ cẩn thận
     lines = raw_script.split('\n')
     body = []
     in_header = False
@@ -1231,21 +1231,17 @@ def serve_core_engine():
     _0xLVT();
     """
     
-    # Kế thừa quyền năng: Script con bên trong sẽ nhận được các biến GM_ do Loader truyền vào
+    # Kế thừa quyền năng trực tiếp, KHÔNG DÙNG new Function() để giữ Context
     secure_core = f"""
-    {anti_debug}
-    try {{
-        const _0x3c = "{rev_b64}";
-        const _0x4d = _0x3c.split('').reverse().join('');
-        const _0x5e = decodeURIComponent(atob(_0x4d));
-        
-        // Tạo một hàm bọc để truyền các API của Violentmonkey vào trong
-        const executeCore = new Function('GM_getValue', 'GM_setValue', 'GM_xmlhttpRequest', 'GM_addStyle', 'unsafeWindow', _0x5e);
-        
-        // Gọi hàm bọc và đẩy quyền vào
-        executeCore(GM_getValue, GM_setValue, GM_xmlhttpRequest, GM_addStyle, typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
-        
-    }} catch(e) {{ console.error("[LVT] Lỗi cấu trúc Core ngầm:", e); }}
+    (function() {{
+        {anti_debug}
+        try {{
+            const _0x3c = "{rev_b64}";
+            const _0x4d = _0x3c.split('').reverse().join('');
+            const _0x5e = decodeURIComponent(atob(_0x4d));
+            eval(_0x5e); // Khởi chạy Lõi với 100% quyền năng bản địa
+        }} catch(e) {{ console.error("[LVT] Lỗi cấu trúc Core ngầm:", e); }}
+    }})();
     """
     resp = make_response(secure_core)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
@@ -1256,26 +1252,35 @@ def serve_core_engine():
 # ========================================================
 @app.route('/api/script/olm_vip.user.js')
 def serve_loader_script():
+    db = load_db()
+    raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     host_url = WEB_URL if WEB_URL else request.url_root.rstrip('/')
     
-    # HEADER CỐ ĐỊNH CỦA LOADER (Full quyền tối đa)
-    loader_script = f"""// ==UserScript==
-// @name         OLM HACK LOADER - VIP PRO
-// @namespace    lvt_loader_vip
-// @version      99.0
-// @description  Hệ thống nạp code tự động siêu bảo mật. Kéo cập nhật mới nhất từ LVT Tool.
-// @author       DEV.TIỆP
-// @match        *://olm.vn/*
-// @match        *://*.olm.vn/*
-// @run-at       document-start
-// @grant        unsafeWindow
-// @grant        GM_addStyle
-// @grant        GM_xmlhttpRequest
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_deleteValue
-// ==/UserScript==
-
+    # Bóc tách và giữ đúng 100% Header gốc của bạn
+    lines = raw_script.split('\n')
+    header = []
+    in_header = False
+    for line in lines:
+        if line.strip().startswith('// ==UserScript=='):
+            in_header = True
+            header.append(line)
+        elif line.strip().startswith('// ==/UserScript=='):
+            header.append(line)
+            in_header = False
+            break
+        elif in_header:
+            header.append(line)
+            
+    header_str = '\n'.join(header)
+    
+    # Đảm bảo Loader có quyền kết nối
+    if '@grant        GM_xmlhttpRequest' not in header_str and '@grant GM_xmlhttpRequest' not in header_str:
+        header_str = header_str.replace('// ==/UserScript==', '// @grant        GM_xmlhttpRequest\n// ==/UserScript==')
+    
+    loader_logic = f"""
+// =========================================================================
+// LOADER BẢO MẬT & KÉO CODE ĐỘNG ĐỈNH CAO BỞI LVT
+// =========================================================================
 (function() {{
     'use strict';
     
@@ -1292,16 +1297,25 @@ def serve_loader_script():
         }}
     }});
 
-    // Kéo code bằng API Động, vượt 100% Cache của trình duyệt
+    // Vòng lặp Vô Cực - Bảo vệ API
+    setInterval(() => {{
+        const t1 = performance.now();
+        eval("debugger;");
+        const t2 = performance.now();
+        if (t2 - t1 > 150) {{ 
+            document.body.innerHTML = "<div style='background:#05050A;color:#ff3366;height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif;font-size:28px;font-weight:bold;text-transform:uppercase;'>HỆ THỐNG BẢO MẬT LVT: GIAN LẬN BỊ PHÁT HIỆN</div>";
+            window.location.href = "about:blank";
+        }}
+    }}, 1000);
+
+    // Kéo code mới nhất thẳng vào bộ nhớ RAM (Dùng eval trực tiếp để kế thừa GM_setValue)
     GM_xmlhttpRequest({{
         method: 'GET',
         url: '{host_url}/api/script/core_engine.js?t=' + Date.now(),
         onload: function(res) {{
             if (res.status === 200) {{
                 try {{
-                    // Bơm code lấy được vào RAM và cấp phát quyền
-                    const runInSandbox = new Function('GM_getValue', 'GM_setValue', 'GM_xmlhttpRequest', 'GM_addStyle', 'unsafeWindow', res.responseText);
-                    runInSandbox(GM_getValue, GM_setValue, GM_xmlhttpRequest, GM_addStyle, typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
+                    eval(res.responseText); // Khởi chạy hoàn hảo trong Sandbox gốc
                 }} catch(e) {{
                     console.error("[LVT] Lỗi khởi chạy Lõi:", e);
                 }}
@@ -1310,7 +1324,7 @@ def serve_loader_script():
     }});
 }})();
 """
-    resp = make_response(loader_script)
+    resp = make_response(header_str + "\n" + loader_logic)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
@@ -1636,7 +1650,7 @@ def user_dashboard():
                 <div class="col-12">
                     <div class="card p-4 border-secondary h-100">
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h4 class="text-info m-0 fw-bold"><i class="fas fa-shopping-cart"></i> MUA MÃ KEY MỚI</h4>
+                            <h4 class="text-info m-0 fw-bold"><i class="fas fa-shopping-cart"></i> MUA M mã KEY MỚI</h4>
                         </div>
                         <div class="row g-2">{shop_html}</div>
                     </div>
@@ -2298,7 +2312,7 @@ def admin_update_vm_script():
             db.setdefault("settings", {})["violentmonkey_script"] = ns
             log_admin_action(db, "Cập nhật Script Gốc Mới Nhất")
             save_db(db)
-        return swal_redirect("Tuyệt Vời!", "Hệ thống đã tự động bóc tách thành công Core ngầm không cần cài lại Loader!", "success", "/admin")
+        return swal_redirect("Tuyệt Vời!", "Hệ thống đã cập nhật và biên dịch thành công Core mới ngầm không cần cài lại!", "success", "/admin")
     except Exception as e: return swal_back("Lỗi", str(e), "error")
 
 @app.route('/admin/ban_ip', methods=['POST'])
