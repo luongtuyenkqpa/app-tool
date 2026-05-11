@@ -35,37 +35,7 @@ _last_mtime_check = 0
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
 # ========================================================
-# CƠ CHẾ TÁCH SCRIPT & AUTO LOADER SIÊU VIP (UPDATE MỚI)
-# ========================================================
-def parse_and_inject_loader(script_content, host_url):
-    """
-    Hàm tự động bóc tách Header của Violentmonkey,
-    chèn thêm @require link RAW ĐỘNG và băm body thành Core Ẩn.
-    """
-    lines = script_content.split('\n')
-    header = []
-    body = []
-    in_header = False
-    for line in lines:
-        if line.strip().startswith('// ==UserScript=='):
-            in_header = True
-            header.append(line)
-        elif line.strip().startswith('// ==/UserScript=='):
-            # Băm nội dung code gốc để tạo version cache-buster (tự update khi Admin lưu code mới)
-            body_hash = hashlib.md5(script_content.encode('utf-8')).hexdigest()[:8]
-            if host_url:
-                header.append(f'// @require      {host_url}/api/script/core_engine.js?v={body_hash}')
-            in_header = False
-            header.append(line)
-        elif in_header:
-            header.append(line)
-        else:
-            body.append(line)
-    
-    return '\n'.join(header), '\n'.join(body)
-
-# ========================================================
-# SCRIPT VIOLENTMONKEY MẶC ĐỊNH (FULL CODE GỐC CỦA BẠN)
+# SCRIPT VIOLENTMONKEY MẶC ĐỊNH (FULL CODE GỐC)
 # ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE: VIP & NORMAL)
@@ -1225,20 +1195,31 @@ def serve_core_engine():
     db = load_db()
     raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     
-    # Chỉ lấy phần Body (Bỏ qua Header vì Header nằm ở Loader)
-    _, body_str = parse_and_inject_loader(raw_script, "")
+    # Chỉ lấy phần Body (Bỏ qua Header)
+    lines = raw_script.split('\n')
+    body = []
+    in_header = False
+    for line in lines:
+        if line.strip().startswith('// ==UserScript=='):
+            in_header = True
+        elif line.strip().startswith('// ==/UserScript=='):
+            in_header = False
+        elif not in_header:
+            body.append(line)
+            
+    body_str = '\n'.join(body)
     
     # MÃ HOÁ CỰC MẠNH (Base64 + Đảo ngược)
     quoted_body = urllib.parse.quote(body_str)
     b64 = base64.b64encode(quoted_body.encode('utf-8')).decode('utf-8')
     rev_b64 = b64[::-1]
     
-    # Bẫy Anti-Debug Siêu VIP (Làm sập trình duyệt nếu cố tình mở F12)
+    # Bẫy Anti-Debug Siêu VIP
     anti_debug = """
     const _0xLVT = function() {
         let _0x = new Date().getTime();
         setInterval(() => {
-            const _0y = new Date().getTime();
+            let _0y = new Date().getTime();
             if (_0y - _0x > 1000) { while(true) { eval("debugger"); } }
             _0x = new Date().getTime();
             try { Function("debugger")(); } catch(e) {}
@@ -1249,65 +1230,93 @@ def serve_core_engine():
     
     # Gói gọn thành một module tự kích hoạt
     secure_core = f"""
-    (function() {{
-        {anti_debug}
-        try {{
-            const _0x3c = "{rev_b64}";
-            const _0x4d = _0x3c.split('').reverse().join('');
-            const _0x5e = decodeURIComponent(atob(_0x4d));
-            eval(_0x5e);
-        }} catch(e) {{ console.error("LVT CORE LOAD ERROR"); }}
-    }})();
+    {anti_debug}
+    try {{
+        const _0x3c = "{rev_b64}";
+        const _0x4d = _0x3c.split('').reverse().join('');
+        const _0x5e = decodeURIComponent(atob(_0x4d));
+        eval(_0x5e);
+    }} catch(e) {{ console.error("LVT CORE LOAD ERROR"); }}
     """
     resp = make_response(secure_core)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
 # ========================================================
-# 2. API: CUNG CẤP LOADER CỐ ĐỊNH (CÀI VÀO MÁY KHÁCH)
+# 2. API: CUNG CẤP LOADER CỐ ĐỊNH DUY NHẤT (CÀI VÀO MÁY KHÁCH)
 # ========================================================
 @app.route('/api/script/olm_vip.user.js')
 def serve_loader_script():
     db = load_db()
     raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
-    
-    # Xác định Link của Server hiện tại để chèn vào @require
     host_url = WEB_URL if WEB_URL else request.url_root.rstrip('/')
     
-    # Lấy Header gốc từ Code Admin và tiêm thẻ @require
-    header, _ = parse_and_inject_loader(raw_script, host_url)
+    # Bóc tách và giữ đúng 100% Header gốc của bạn
+    lines = raw_script.split('\n')
+    header = []
+    in_header = False
+    for line in lines:
+        if line.strip().startswith('// ==UserScript=='):
+            in_header = True
+            header.append(line)
+        elif line.strip().startswith('// ==/UserScript=='):
+            header.append(line)
+            in_header = False
+            break
+        elif in_header:
+            header.append(line)
+            
+    header_str = '\n'.join(header)
     
-    # Tạo Loader Script: Cấu trúc nhẹ, tích hợp phòng thủ cực đoan
-    loader_script = header + """
-
+    # Đảm bảo Loader có quyền kết nối
+    if '@grant        GM_xmlhttpRequest' not in header_str and '@grant GM_xmlhttpRequest' not in header_str:
+        header_str = header_str.replace('// ==/UserScript==', '// @grant        GM_xmlhttpRequest\n// ==/UserScript==')
+    
+    loader_logic = f"""
 // =========================================================================
-// LOADER BẢO MẬT & ANTI-DEBUG ĐỈNH CAO BỞI LVT
+// LOADER BẢO MẬT & KÉO CODE ĐỘNG ĐỈNH CAO BỞI LVT
 // =========================================================================
-(function() {
+(function() {{
     'use strict';
-    console.log("%c[LVT SECURITY]%c Đã kết nối Loader và kéo Core ngầm thành công!", "color:#00ffcc; font-weight:bold; font-size:14px", "color:white");
+    console.log("%c[LVT SECURITY]%c Đang tải Lõi Hack bảo mật từ Server...", "color:#00ffcc; font-weight:bold; font-size:14px", "color:white");
     
     // Ngăn chặn 100% các phím tắt và thao tác Soi Code (F12, Inspect, Ctrl+U)
     document.addEventListener('contextmenu', e => e.preventDefault());
-    document.addEventListener('keydown', e => {
-        if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) || (e.ctrlKey && e.key === 'u') || (e.ctrlKey && e.key === 'U')) {
+    document.addEventListener('keydown', e => {{
+        if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) || (e.ctrlKey && e.key === 'u') || (e.ctrlKey && e.key === 'U')) {{
             e.preventDefault();
-        }
-    });
+        }}
+    }});
 
-    // Vòng lặp Vô Cực - Bảo vệ API và Môi trường thực thi
-    setInterval(() => {
+    // Vòng lặp Vô Cực - Bảo vệ API
+    setInterval(() => {{
         const t1 = performance.now();
         eval("debugger;");
         const t2 = performance.now();
-        if (t2 - t1 > 150) { // Nếu Script bị khựng lại (có người mở công cụ dev)
+        if (t2 - t1 > 150) {{ 
             document.body.innerHTML = "<div style='background:#05050A;color:#ff3366;height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif;font-size:28px;font-weight:bold;text-transform:uppercase;'>HỆ THỐNG BẢO MẬT LVT: GIAN LẬN BỊ PHÁT HIỆN</div>";
-            window.location.href = "about:blank"; // Xoá trang tức khắc
-        }
-    }, 1000);
-})();
+            window.location.href = "about:blank";
+        }}
+    }}, 1000);
+
+    // Kéo code mới nhất thẳng vào bộ nhớ RAM (Không dùng Require để tránh Cache)
+    GM_xmlhttpRequest({{
+        method: 'GET',
+        url: '{host_url}/api/script/core_engine.js?t=' + Date.now(),
+        onload: function(res) {{
+            if (res.status === 200) {{
+                try {{
+                    // Thực thi code lõi trong ngữ cảnh của Violentmonkey (Giữ nguyên quyền GM_)
+                    eval(res.responseText);
+                }} catch(e) {{
+                    console.error("[LVT] Lỗi khởi chạy Lõi:", e);
+                }}
+            }}
+        }}
+    }});
+}})();
 """
-    resp = make_response(loader_script)
+    resp = make_response(header_str + "\n" + loader_logic)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
@@ -1623,7 +1632,7 @@ def user_dashboard():
                 </div>
                 <div class="col-md-6">
                     <div class="launch-card cursor-pointer" onclick="window.location.href='/key_login'">
-                        <h4 class="text-purple m-0 fw-bold"><i class="fas fa-rocket"></i> VÀO KHOANG LÁI HACK V13.0</h4>
+                        <h4 class="text-purple m-0 fw-bold"><i class="fas fa-rocket"></i> VÀO KHOANG LÁI HACK</h4>
                         <div class="text-muted mt-2" style="font-size: 13px;">Đăng nhập Key để kích hoạt Hack OLM.</div>
                     </div>
                 </div>
@@ -2020,6 +2029,7 @@ def admin_dashboard():
                 <td><span class="badge bg-info text-dark">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
                 <td>
                     <div class="d-flex flex-wrap gap-1 justify-content-center">
+                        <button class="btn btn-info btn-sm fw-bold text-dark" style="font-size:10px; border-radius:6px;" onclick="openAddTimeModal('{safe_k}')">⏳ Giờ</button>
                         <button class="btn btn-warning btn-sm" style="font-size:10px; border-radius:6px;" onclick="openBindModal('{safe_k}', '{bound_olm}')">Ghim</button>
                         <a href="/admin/action/reset-dev/{safe_k}" class="btn btn-primary btn-sm" style="font-size:10px; border-radius:6px;">🔄 Máy</a>
                         <a href="/admin/action/unban_temp/{safe_k}" class="btn btn-success btn-sm" style="font-size:10px; border-radius:6px;">Gỡ Phạt</a>
@@ -2085,7 +2095,6 @@ def admin_dashboard():
                         <div class="col-md-12">
                             <div class="card p-4 h-100" style="border-color:rgba(255,153,0,0.4);">
                                 <h5 style="color:#ff9900; margin-bottom:15px;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH</h5>
-                                <button class="btn btn-sm btn-outline-warning w-100 fw-bold mb-3 py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#adminScriptModal">Mở Bảng Mã Nguồn Lõi (Core API)</button>
                                 <button class="btn btn-sm btn-outline-info w-100 fw-bold py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Cập Nhật Code Hack Mới Nhất</button>
                             </div>
                         </div>
@@ -2119,6 +2128,7 @@ def admin_dashboard():
             </div>
         </div>
 
+        <!-- MODAL GHIM OLM -->
         <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
             <div class="modal-dialog modal-sm modal-dialog-centered">
                 <div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00; backdrop-filter: blur(15px);">
@@ -2135,16 +2145,26 @@ def admin_dashboard():
             </div>
         </div>
         
-        <div class="modal fade" id="adminScriptModal" tabindex="-1" data-bs-theme="dark">
-          <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content" style="background:rgba(17,17,26,0.95); border:1px solid #ff9900; backdrop-filter: blur(15px);">
-              <form action="/admin/update_script" method="POST">
-                  <div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ff9900;font-weight:bold;">TÙY CHỈNH MÃ NGUỒN HACK (LÕI API ĐỘNG DÀNH CHO WEB)</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-                  <div class="modal-body p-4"><textarea name="script_content" class="form-control" rows="15" style="font-family:monospace; font-size:12px;">{safe_admin_script}</textarea></div>
-                  <div class="modal-footer border-secondary p-3"><button type="submit" class="btn btn-warning fw-bold w-100 text-dark rounded-pill">LƯU CÀI ĐẶT</button></div>
-              </form>
+        <!-- MODAL CỘNG THÊM THỜI GIAN -->
+        <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark">
+            <div class="modal-dialog modal-sm modal-dialog-centered">
+                <div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc; backdrop-filter: blur(15px);">
+                    <form action="/admin/add_time" method="POST">
+                        <div class="modal-body text-center p-4">
+                            <input type="hidden" name="key" id="addTimeKeyInput">
+                            <p class="text-white mb-2">Thêm thời gian cho Key:</p>
+                            <p><strong id="addTimeKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p>
+                            <input type="number" name="time_val" class="form-control mt-3" placeholder="Số lượng" required>
+                            <select name="time_unit" class="form-select mt-2" style="background-color:rgba(10,10,18,0.8); color:white;">
+                                <option value="hours">Giờ</option>
+                                <option value="days" selected>Ngày</option>
+                                <option value="months">Tháng</option>
+                            </select>
+                        </div>
+                        <div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-info w-100 fw-bold text-dark rounded-pill">XÁC NHẬN CỘNG</button></div>
+                    </form>
+                </div>
             </div>
-          </div>
         </div>
 
         <div class="modal fade" id="vmScriptModal" tabindex="-1" data-bs-theme="dark">
@@ -2174,6 +2194,12 @@ def admin_dashboard():
                 document.getElementById('bindKeyDisplay').innerText = key;
                 document.getElementById('bindOlmInput').value = current_olm;
                 new bootstrap.Modal(document.getElementById('bindModal')).show();
+            }}
+            
+            function openAddTimeModal(key) {{
+                document.getElementById('addTimeKeyInput').value = key;
+                document.getElementById('addTimeKeyDisplay').innerText = key;
+                new bootstrap.Modal(document.getElementById('addTimeModal')).show();
             }}
         </script>
         </body></html>
@@ -2221,6 +2247,41 @@ def create_key():
         return redirect('/admin')
     except Exception as e: return swal_back("Lỗi", str(e), "error")
 
+@app.route('/admin/add_time', methods=['POST'])
+def admin_add_time():
+    try:
+        if session.get('role') != 'admin': return redirect('/login')
+        key = request.form.get('key', '').strip()
+        t_val = safe_int(request.form.get('time_val', 0))
+        t_unit = request.form.get('time_unit', 'days')
+        
+        if t_val <= 0: return swal_back("Lỗi", "Số lượng phải lớn hơn 0", "error")
+        
+        ms_to_add = 0
+        if t_unit == 'hours': ms_to_add = t_val * 3600000
+        elif t_unit == 'days': ms_to_add = t_val * 86400000
+        elif t_unit == 'months': ms_to_add = t_val * 2592000000
+        
+        db = load_db()
+        with db_lock:
+            if key in db.get("keys", {}):
+                kd = db["keys"][key]
+                if kd.get("exp") == "permanent":
+                    return swal_back("Lỗi", "Key vĩnh viễn không cần cộng giờ!", "error")
+                
+                now = int(time.time() * 1000)
+                if kd.get("exp") == "pending":
+                    kd["durationMs"] = kd.get("durationMs", 0) + ms_to_add
+                else:
+                    current_exp = kd.get("exp", now)
+                    if current_exp < now: current_exp = now
+                    kd["exp"] = current_exp + ms_to_add
+                
+                log_admin_action(db, f"Cộng {t_val} {t_unit} cho Key {key}")
+                save_db(db)
+        return swal_redirect("Thành Công", f"Đã cộng thêm {t_val} {t_unit} cho Key {key}!", "success", "/admin")
+    except Exception as e: return swal_back("Lỗi", str(e), "error")
+
 @app.route('/admin/bind_olm', methods=['POST'])
 def admin_bind_olm():
     try:
@@ -2236,19 +2297,6 @@ def admin_bind_olm():
         return redirect('/admin')
     except Exception as e: return swal_back("Lỗi", str(e), "error")
 
-@app.route('/admin/update_script', methods=['POST'])
-def admin_update_script():
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        ns = request.form.get('script_content', '')
-        db = load_db()
-        with db_lock:
-            db["users"]["admin"]["custom_script"] = ns
-            log_admin_action(db, "Cập nhật mã nguồn Lõi Core")
-            save_db(db)
-        return redirect('/admin')
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
-
 @app.route('/admin/update_vm_script', methods=['POST'])
 def admin_update_vm_script():
     try:
@@ -2257,9 +2305,9 @@ def admin_update_vm_script():
         db = load_db()
         with db_lock:
             db.setdefault("settings", {})["violentmonkey_script"] = ns
-            log_admin_action(db, "Cập nhật Script Violentmonkey Mới")
+            log_admin_action(db, "Cập nhật Script Gốc Mới Nhất")
             save_db(db)
-        return swal_redirect("Tuyệt Vời!", "Hệ thống đã tự động bóc tách và mã hoá ra 2 bản (Loader và Core Ẩn) thành công!", "success", "/admin")
+        return swal_redirect("Tuyệt Vời!", "Hệ thống đã cập nhật và biên dịch thành công Core mới ngầm không cần cài lại!", "success", "/admin")
     except Exception as e: return swal_back("Lỗi", str(e), "error")
 
 @app.route('/admin/ban_ip', methods=['POST'])
