@@ -36,6 +36,7 @@ WEB_URL = "https://app-tool-trlp.onrender.com"
 
 # ========================================================
 # SCRIPT VIOLENTMONKEY MẶC ĐỊNH (FULL CODE GỐC)
+# VÁ LỖI IFRAME KICK NGƯỜI DÙNG Ở ĐÂY
 # ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE: VIP & NORMAL)
@@ -55,6 +56,8 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
 (function() {
     'use strict';
+    // CHỐNG CHẠY TRONG IFRAME (FIX LỖI VÒNG LẶP KICK KEY)
+    if (window.top !== window.self) return;
 
     const Config = {
         VERSION: '13.0',
@@ -1188,14 +1191,14 @@ def script_ping():
     except: return "error", 500
 
 # ========================================================
-# 1. API: CUNG CẤP LÕI (CORE) ẨN - ANTI DEBUG TẦNG SÂU
+# 1. API: CUNG CẤP LÕI (CORE) ẨN VÀ TRUYỀN QUYỀN
 # ========================================================
 @app.route('/api/script/core_engine.js')
 def serve_core_engine():
     db = load_db()
     raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     
-    # Chỉ lấy phần Body (Bỏ qua Header)
+    # Bóc tách phần Body
     lines = raw_script.split('\n')
     body = []
     in_header = False
@@ -1209,12 +1212,12 @@ def serve_core_engine():
             
     body_str = '\n'.join(body)
     
-    # MÃ HOÁ CỰC MẠNH (Base64 + Đảo ngược)
+    # Mã hoá 2 lớp
     quoted_body = urllib.parse.quote(body_str)
     b64 = base64.b64encode(quoted_body.encode('utf-8')).decode('utf-8')
     rev_b64 = b64[::-1]
     
-    # Bẫy Anti-Debug Siêu VIP
+    # Bẫy F12 Anti-Debug
     anti_debug = """
     const _0xLVT = function() {
         let _0x = new Date().getTime();
@@ -1228,59 +1231,60 @@ def serve_core_engine():
     _0xLVT();
     """
     
-    # Gói gọn thành một module tự kích hoạt
+    # Kế thừa quyền năng: Script con bên trong sẽ nhận được các biến GM_ do Loader truyền vào
     secure_core = f"""
     {anti_debug}
     try {{
         const _0x3c = "{rev_b64}";
         const _0x4d = _0x3c.split('').reverse().join('');
         const _0x5e = decodeURIComponent(atob(_0x4d));
-        eval(_0x5e);
-    }} catch(e) {{ console.error("LVT CORE LOAD ERROR"); }}
+        
+        // Tạo một hàm bọc để truyền các API của Violentmonkey vào trong
+        const executeCore = new Function('GM_getValue', 'GM_setValue', 'GM_xmlhttpRequest', 'GM_addStyle', 'unsafeWindow', _0x5e);
+        
+        // Gọi hàm bọc và đẩy quyền vào
+        executeCore(GM_getValue, GM_setValue, GM_xmlhttpRequest, GM_addStyle, typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
+        
+    }} catch(e) {{ console.error("[LVT] Lỗi cấu trúc Core ngầm:", e); }}
     """
     resp = make_response(secure_core)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
 # ========================================================
-# 2. API: CUNG CẤP LOADER CỐ ĐỊNH DUY NHẤT (CÀI VÀO MÁY KHÁCH)
+# 2. API: CUNG CẤP LOADER CỐ ĐỊNH (CÀI VÀO MÁY KHÁCH 1 LẦN)
 # ========================================================
 @app.route('/api/script/olm_vip.user.js')
 def serve_loader_script():
-    db = load_db()
-    raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     host_url = WEB_URL if WEB_URL else request.url_root.rstrip('/')
     
-    # Bóc tách và giữ đúng 100% Header gốc của bạn
-    lines = raw_script.split('\n')
-    header = []
-    in_header = False
-    for line in lines:
-        if line.strip().startswith('// ==UserScript=='):
-            in_header = True
-            header.append(line)
-        elif line.strip().startswith('// ==/UserScript=='):
-            header.append(line)
-            in_header = False
-            break
-        elif in_header:
-            header.append(line)
-            
-    header_str = '\n'.join(header)
-    
-    # Đảm bảo Loader có quyền kết nối
-    if '@grant        GM_xmlhttpRequest' not in header_str and '@grant GM_xmlhttpRequest' not in header_str:
-        header_str = header_str.replace('// ==/UserScript==', '// @grant        GM_xmlhttpRequest\n// ==/UserScript==')
-    
-    loader_logic = f"""
-// =========================================================================
-// LOADER BẢO MẬT & KÉO CODE ĐỘNG ĐỈNH CAO BỞI LVT
-// =========================================================================
+    # HEADER CỐ ĐỊNH CỦA LOADER (Full quyền tối đa)
+    loader_script = f"""// ==UserScript==
+// @name         OLM HACK LOADER - VIP PRO
+// @namespace    lvt_loader_vip
+// @version      99.0
+// @description  Hệ thống nạp code tự động siêu bảo mật. Kéo cập nhật mới nhất từ LVT Tool.
+// @author       DEV.TIỆP
+// @match        *://olm.vn/*
+// @match        *://*.olm.vn/*
+// @run-at       document-start
+// @grant        unsafeWindow
+// @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
+// ==/UserScript==
+
 (function() {{
     'use strict';
-    console.log("%c[LVT SECURITY]%c Đang tải Lõi Hack bảo mật từ Server...", "color:#00ffcc; font-weight:bold; font-size:14px", "color:white");
     
-    // Ngăn chặn 100% các phím tắt và thao tác Soi Code (F12, Inspect, Ctrl+U)
+    // CHỐNG CHẠY TRONG IFRAME (ĐÂY LÀ CHÌA KHOÁ FIX LỖI KICK VÒNG LẶP)
+    if (window.top !== window.self) return;
+
+    console.log("%c[LVT SECURITY]%c Đang khởi động Siêu Loader...", "color:#00ffcc; font-weight:bold; font-size:14px", "color:white");
+    
+    // Bẫy phím tắt Soi Code
     document.addEventListener('contextmenu', e => e.preventDefault());
     document.addEventListener('keydown', e => {{
         if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) || (e.ctrlKey && e.key === 'u') || (e.ctrlKey && e.key === 'U')) {{
@@ -1288,26 +1292,16 @@ def serve_loader_script():
         }}
     }});
 
-    // Vòng lặp Vô Cực - Bảo vệ API
-    setInterval(() => {{
-        const t1 = performance.now();
-        eval("debugger;");
-        const t2 = performance.now();
-        if (t2 - t1 > 150) {{ 
-            document.body.innerHTML = "<div style='background:#05050A;color:#ff3366;height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif;font-size:28px;font-weight:bold;text-transform:uppercase;'>HỆ THỐNG BẢO MẬT LVT: GIAN LẬN BỊ PHÁT HIỆN</div>";
-            window.location.href = "about:blank";
-        }}
-    }}, 1000);
-
-    // Kéo code mới nhất thẳng vào bộ nhớ RAM (Không dùng Require để tránh Cache)
+    // Kéo code bằng API Động, vượt 100% Cache của trình duyệt
     GM_xmlhttpRequest({{
         method: 'GET',
         url: '{host_url}/api/script/core_engine.js?t=' + Date.now(),
         onload: function(res) {{
             if (res.status === 200) {{
                 try {{
-                    // Thực thi code lõi trong ngữ cảnh của Violentmonkey (Giữ nguyên quyền GM_)
-                    eval(res.responseText);
+                    // Bơm code lấy được vào RAM và cấp phát quyền
+                    const runInSandbox = new Function('GM_getValue', 'GM_setValue', 'GM_xmlhttpRequest', 'GM_addStyle', 'unsafeWindow', res.responseText);
+                    runInSandbox(GM_getValue, GM_setValue, GM_xmlhttpRequest, GM_addStyle, typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
                 }} catch(e) {{
                     console.error("[LVT] Lỗi khởi chạy Lõi:", e);
                 }}
@@ -1316,7 +1310,7 @@ def serve_loader_script():
     }});
 }})();
 """
-    resp = make_response(header_str + "\n" + loader_logic)
+    resp = make_response(loader_script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
@@ -1893,7 +1887,7 @@ def key_dashboard():
                         MỞ KHÓA VÀ SỬ DỤNG HACK NGAY
                     </a>
                     <div class="mt-4">
-                        <small class="text-muted">Chưa cài đặt Userscript? <a href="/api/script/olm_vip.user.js" target="_blank" style="color:#00ffcc; text-decoration:none; border-bottom: 1px dashed #00ffcc;">Bấm vào đây để cài đặt (Lần đầu)</a></small>
+                        <small class="text-muted">Chưa cài đặt Userscript? <a href="/api/script/olm_vip.user.js" target="_blank" style="color:#00ffcc; text-decoration:none; border-bottom: 1px dashed #00ffcc;">Bấm vào đây để cài đặt Siêu Loader (Cài 1 lần)</a></small>
                     </div>
                 </div>
             </div>
@@ -2042,7 +2036,6 @@ def admin_dashboard():
         blacklist_rows = "".join([f'<li class="list-group-item bg-transparent text-light d-flex justify-content-between align-items-center border-secondary border-bottom px-1" style="font-size:12px;">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger p-0 px-2 rounded-pill">Gỡ</a></li>' for ip in banned_ips])
         if not blacklist_rows: blacklist_rows = '<li class="list-group-item bg-transparent text-muted text-center border-0" style="font-size:12px;">Sạch sẽ</li>'
         
-        safe_admin_script = escape(db.get("users", {}).get("admin", {}).get("custom_script", ""))
         safe_vm_script = escape(db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT))
 
         return f'''
@@ -2095,7 +2088,7 @@ def admin_dashboard():
                         <div class="col-md-12">
                             <div class="card p-4 h-100" style="border-color:rgba(255,153,0,0.4);">
                                 <h5 style="color:#ff9900; margin-bottom:15px;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH</h5>
-                                <button class="btn btn-sm btn-outline-info w-100 fw-bold py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Cập Nhật Code Hack Mới Nhất</button>
+                                <button class="btn btn-sm btn-outline-info w-100 fw-bold py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Dán Code HACK / Cập Nhật Core</button>
                             </div>
                         </div>
                         <div class="col-md-12">
@@ -2128,7 +2121,6 @@ def admin_dashboard():
             </div>
         </div>
 
-        <!-- MODAL GHIM OLM -->
         <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
             <div class="modal-dialog modal-sm modal-dialog-centered">
                 <div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00; backdrop-filter: blur(15px);">
@@ -2145,7 +2137,6 @@ def admin_dashboard():
             </div>
         </div>
         
-        <!-- MODAL CỘNG THÊM THỜI GIAN -->
         <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark">
             <div class="modal-dialog modal-sm modal-dialog-centered">
                 <div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc; backdrop-filter: blur(15px);">
@@ -2154,7 +2145,7 @@ def admin_dashboard():
                             <input type="hidden" name="key" id="addTimeKeyInput">
                             <p class="text-white mb-2">Thêm thời gian cho Key:</p>
                             <p><strong id="addTimeKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p>
-                            <input type="number" name="time_val" class="form-control mt-3" placeholder="Số lượng" required>
+                            <input type="number" name="time_val" class="form-control mt-3" placeholder="Số lượng (Ví dụ: 10)" required>
                             <select name="time_unit" class="form-select mt-2" style="background-color:rgba(10,10,18,0.8); color:white;">
                                 <option value="hours">Giờ</option>
                                 <option value="days" selected>Ngày</option>
@@ -2176,7 +2167,7 @@ def admin_dashboard():
                       <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                   </div>
                   <div class="modal-body p-4">
-                      <p class="text-warning mb-2" style="font-size:13px;">⚠️ Dán toàn bộ Code mới vào đây. Hệ thống sẽ TỰ ĐỘNG bóc tách Header, băm Body tạo Core ẩn và sinh ra Loader hoàn hảo.</p>
+                      <p class="text-warning mb-2" style="font-size:13px;">⚠️ Dán toàn bộ Code mới vào đây. Hệ thống sẽ TỰ ĐỘNG bóc tách Header, băm Body tạo Core ẩn và truyền quyền cho Loader.</p>
                       <textarea name="vm_script_content" class="form-control" rows="15" style="font-family:monospace; font-size:12px;">{safe_vm_script}</textarea>
                   </div>
                   <div class="modal-footer border-secondary p-3"><button type="submit" class="btn btn-info fw-bold w-100 text-dark rounded-pill">LƯU & XUẤT BẢN CODE MỚI</button></div>
@@ -2307,7 +2298,7 @@ def admin_update_vm_script():
             db.setdefault("settings", {})["violentmonkey_script"] = ns
             log_admin_action(db, "Cập nhật Script Gốc Mới Nhất")
             save_db(db)
-        return swal_redirect("Tuyệt Vời!", "Hệ thống đã cập nhật và biên dịch thành công Core mới ngầm không cần cài lại!", "success", "/admin")
+        return swal_redirect("Tuyệt Vời!", "Hệ thống đã tự động bóc tách thành công Core ngầm không cần cài lại Loader!", "success", "/admin")
     except Exception as e: return swal_back("Lỗi", str(e), "error")
 
 @app.route('/admin/ban_ip', methods=['POST'])
