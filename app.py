@@ -62,7 +62,7 @@ def obfuscate_js(js_code):
     b64 = base64.b64encode(quoted_body.encode('utf-8')).decode('utf-8')
     rev_b64 = b64[::-1] # Đảo ngược chuỗi để khó bị decode thông thường
     
-    # Bẫy chống F12 và Debugger
+    # Bẫy chống F12 và Debugger siêu cấp
     anti_debug = """
     const _0x1a2b = function() {
         let _0x = new Date().getTime();
@@ -94,7 +94,6 @@ def obfuscate_js(js_code):
 """
     return obf
 
-
 # ========================================================
 # SCRIPT VIOLENTMONKEY MẶC ĐỊNH V13.0
 # ========================================================
@@ -122,9 +121,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
         API_KEYWORDS: ['get-question-of-ids', 'get-question?belongs=1']
     };
 
-    // =========================================================================
-    // [PHẦN 0]: HÀM LẤY TÊN TÀI KHOẢN THẬT NHÌN XUYÊN MẶT NẠ (CON MẮT CHÂN LÝ)
-    // =========================================================================
     const originalCookieGetter = (() => {
         let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
         return desc ? desc.get : null;
@@ -165,9 +161,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
     let REAL_USERNAME = getRealUsername();
 
-    // =========================================================================
-    // [PHẦN 1]: CẤU HÌNH API ĐÁM MÂY (VÒNG NGOÀI)
-    // =========================================================================
     const SERVER_URL = "https://app-tool-trlp.onrender.com"; 
     let savedKey = GM_getValue('lvt_olm_vip_key', '');
 
@@ -218,9 +211,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
         });
     }
 
-    // =========================================================================
-    // [PHẦN 2]: MODULE STUDY ASSISTANT (DÀNH CHO KEY THƯỜNG)
-    // =========================================================================
     const Utils = {
         decodeBase64(base64) {
             if (!base64) return null;
@@ -1262,7 +1252,7 @@ def serve_olm_script():
     db = load_db()
     raw_script_content = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     
-    # BƯỚC MÃ HOÁ TỰ ĐỘNG CHỐNG BUG & CHỐNG SOI CODE SIÊU VIP
+    # BƯỚC MÃ HOÁ TỰ ĐỘNG CHỐNG BUG & CHỐNG SOI CODE SIÊU VIP (SẼ CHẠY NGẦM)
     secure_script = obfuscate_js(raw_script_content)
     
     resp = make_response(secure_script)
@@ -1270,7 +1260,7 @@ def serve_olm_script():
     return resp
 
 # ========================================================
-# GIAO DIỆN CSS & HTML TOÀN CỤC (CẢI TIẾN THẨM MỸ)
+# GIAO DIỆN CSS & HTML TOÀN CỤC (CẢI TIẾN THẨM MỸ + CHỐNG TRÀN BẢNG)
 # ========================================================
 CSS_GLASS = """
 body { background-color: #05050A !important; color: #fff !important; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0; }
@@ -1296,13 +1286,14 @@ h2, h3, h4, h5 { color: #00ffcc !important; font-weight: 900 !important; letter-
 a.link-neon { color: #bd00ff !important; text-decoration: none !important; font-weight: bold !important; transition: 0.3s !important; }
 a.link-neon:hover { color: #00ffcc !important; text-shadow: 0 0 10px #00ffcc !important; }
 
-/* TABLE CUSTOMIZATION ADMIN */
-.table-container { border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05); }
-.table { color: #fff !important; margin-bottom: 0; }
+/* TABLE CUSTOMIZATION (FIX TRÀN BẢNG MOBILE) */
+.table-container { border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table { color: #fff !important; margin-bottom: 0; white-space: nowrap; }
 .table-dark { --bs-table-bg: transparent !important; --bs-table-striped-bg: rgba(0, 255, 204, 0.05) !important; border-color: rgba(255,255,255,0.05) !important; }
 .table-active { background-color: rgba(255,255,255,0.05) !important; }
 tbody tr:hover { background: rgba(0,255,204,0.05) !important; }
 .badge { font-size: 11px !important; padding: 5px 8px !important; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px; }
+.text-nowrap { white-space: nowrap !important; }
 """
 
 @app.route('/')
@@ -1459,7 +1450,7 @@ def user_transfer_key():
         html_msg = f"""<div style='text-align:left; font-size:14px;'>
             <p>Phí chuyển đổi: <b>{fee:,}đ</b></p>
             <p>Đã ghim OLM mới: <b style='color:#ff3366'>{escape(new_olm)}</b></p>
-            <p>Mã Key <strong class="text-success">MỚI TÍNH</strong> của bạn là:</p>
+            <p>Mã Key <strong class="text-success">MỚI TINH</strong> của bạn là:</p>
             <div style='background:#000; padding:10px; border:1px dashed #00ffcc; border-radius:5px; text-align:center; font-family:monospace; font-size:18px; color:#00ffcc; margin-bottom:15px; cursor:pointer;' onclick='navigator.clipboard.writeText("{new_key}");Swal.showValidationMessage("Đã copy!");'>{new_key}</div>
             <p class='text-warning mt-2' style='font-size:12px;'>*Key cũ đã bị vô hiệu hóa hoàn toàn khỏi hệ thống.</p>
         </div>"""
@@ -1537,7 +1528,7 @@ def user_dashboard():
             bound_str = f'<span class="text-warning fw-bold">{escape(bound_olm)}</span>' if bound_olm else '<span class="text-muted">Chưa ghim</span>'
 
             my_keys_html += f'''
-            <tr>
+            <tr class="text-nowrap">
                 <td><strong class="text-info" style="cursor:pointer;" onclick="copyMyKey('{k}')" title="Bấm Copy">{vip_icon}{k[:8]}... <i class="fas fa-copy text-secondary fs-6"></i></strong></td>
                 <td>{status_html}</td>
                 <td>{exp_str}</td>
@@ -1577,7 +1568,7 @@ def user_dashboard():
                             <div class="balance-amount">{balance:,}đ</div>
                         </div>
                         <div>
-                            <a href="https://zalo.me/0343627516" target="_blank" class="btn btn-sm btn-outline-info fw-bold rounded-pill px-3 py-2">NẠP TIỀN AUTO</a>
+                            <a href="https://zalo.me/0343627516" target="_blank" class="btn btn-sm btn-outline-info fw-bold rounded-pill px-3 py-2 text-nowrap">NẠP TIỀN AUTO</a>
                         </div>
                     </div>
                 </div>
@@ -1602,8 +1593,8 @@ def user_dashboard():
                 <div class="col-12">
                     <div class="card p-3 border-secondary">
                         <h5 class="text-purple mb-3 fw-bold"><i class="fas fa-key"></i> QUẢN LÝ KEY CỦA BẠN</h5>
-                        <div class="table-container">
-                            <table class="table table-dark table-hover table-sm align-middle text-center mb-0">
+                        <div class="table-container table-responsive">
+                            <table class="table table-dark table-hover table-sm align-middle text-center mb-0 text-nowrap">
                                 <thead class="table-active">
                                     <tr><th>🔑 Mã Key (Copy)</th><th>🟢 Trạng thái</th><th>⏳ Hạn dùng</th><th>🔄 Lượt Reset</th><th>👤 OLM Đã Ghim</th><th>⚙️ Thao tác</th></tr>
                                 </thead>
@@ -1883,6 +1874,32 @@ def key_dashboard():
         '''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
+@app.route('/user_reset_hwid', methods=['POST'])
+def user_reset_hwid():
+    try:
+        if 'username' not in session: return redirect('/login')
+        active_key = session.get('active_key')
+        if not active_key: return redirect('/key_login')
+        
+        db = load_db()
+        with db_lock:
+            u = db["users"].get(session['username'])
+            kd = db["keys"].get(active_key)
+            if not kd: return swal_back("Lỗi", "Key không tồn tại", "error")
+            
+            rc = kd.get("reset_count", 0)
+            if rc == 0:
+                kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
+                save_db(db)
+                return swal_redirect("Reset Thành Công!", "Đã gỡ thiết bị và xóa định danh OLM miễn phí (Lần 1).", "success", "/key_dashboard")
+            else:
+                if u["balance"] < 10000: return swal_back("Thất bại!", "Bạn cần 10,000đ để Reset từ lần thứ 2 trở đi.", "error")
+                u["balance"] -= 10000
+                kd["devices"] = []; kd["known_ips"] = {}; kd["bound_olm"] = ""; kd["reset_count"] += 1
+                save_db(db)
+                return swal_redirect("Reset Thành Công!", "Đã trừ 10,000đ và gỡ thiết bị thành công.", "success", "/key_dashboard")
+    except Exception as e: return swal_back("Lỗi", str(e), "error")
+
 # ========================================================
 # GIAO DIỆN WEB ADMIN QUẢN LÝ
 # ========================================================
@@ -1931,7 +1948,7 @@ def admin_dashboard():
             created = time.strftime("%d/%m/%y", time.localtime(udata.get("created_at", 0)/1000))
             
             users_html += f'''
-            <tr>
+            <tr class="text-nowrap">
                 <td><strong class="text-warning">{escape(uname)}</strong><br><small class="text-muted">{created}</small></td>
                 <td><span class="badge bg-success">{bal:,}đ</span></td>
                 <td style="font-size:11px; text-align:left;">{u_keys}</td>
@@ -1971,7 +1988,7 @@ def admin_dashboard():
             bnd_html = f"<br><small class='text-danger'>Ghim: {bound_olm}</small>" if bound_olm else ""
 
             keys_html += f'''
-            <tr class="key-row">
+            <tr class="key-row text-nowrap">
                 <td>
                     <strong class="text-info" style="font-size:12px; cursor:pointer;" onclick="copyKey('{safe_k}')" title="Bấm để copy">{safe_k[:8]}... <i class="fas fa-copy text-muted"></i></strong><br>
                     {vip_badge} {status_badge}<br>
@@ -2012,8 +2029,8 @@ def admin_dashboard():
                 <div class="col-lg-7">
                     <div class="card p-4 h-100" style="border-color:rgba(51,102,255,0.4);">
                         <h5 style="color:#3366ff; margin-bottom:20px;"><i class="fas fa-users"></i> DANH SÁCH USER</h5>
-                        <div class="table-container">
-                            <table class="table table-dark table-hover table-sm align-middle mb-0 text-center">
+                        <div class="table-container table-responsive">
+                            <table class="table table-dark table-hover table-sm align-middle mb-0 text-center text-nowrap">
                                 <thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Keys Sỡ Hữu</th><th>IP Đăng Nhập</th><th>Cộng/Trừ Tiền</th></tr></thead>
                                 <tbody>{users_html}</tbody>
                             </table>
@@ -2069,8 +2086,8 @@ def admin_dashboard():
                             <h5 class="m-0 text-neon"><i class="fas fa-database"></i> TẤT CẢ MÃ KEY</h5>
                             <input type="text" class="form-control form-control-sm m-0" style="width:250px; background:rgba(0,0,0,0.3);" placeholder="🔍 Tìm Key..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
                         </div>
-                        <div class="table-container border border-secondary">
-                            <table class="table table-dark table-sm align-middle table-hover text-center mb-0">
+                        <div class="table-container border border-secondary table-responsive">
+                            <table class="table table-dark table-sm align-middle table-hover text-center mb-0 text-nowrap">
                                 <thead class="table-active"><tr><th>🔑 Key / Chủ</th><th>⏳ Hạn Dùng</th><th>💻 Thiết bị</th><th>⚙️ Thao tác</th></tr></thead>
                                 <tbody>{keys_html}</tbody>
                             </table>
