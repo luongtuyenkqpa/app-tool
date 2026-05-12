@@ -47,24 +47,20 @@ def telegram_polling():
                     if "message" in update:
                         msg = update["message"]
                         chat_id = str(msg.get("chat", {}).get("id", ""))
-                        if chat_id != TELEGRAM_CHAT_ID: continue
-                        
                         text = msg.get("text", "").strip()
                         msg_id = msg.get("message_id")
-                        user_first_name = msg.get("from", {}).get("first_name", "Admin")
+                        user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
                         
+                        # Bot trả lời cho mọi Chat ID
                         if text.startswith("/start"):
-                            # Tự động xóa tin nhắn rác /start theo yêu cầu
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG LVT HACK OLM CAO CẤP</b> 🌟\n\nXin chào <b>{user_first_name}</b>! Hãy chọn chức năng bên dưới:"
+                            welcome = f"🌟 <b>HỆ THỐNG BÁN KEY TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Đăng ký/Đăng nhập mua Key và Cài đặt Hack:"
                             keyboard = {"inline_keyboard": [
-                                [{"text": "🛒 CỬA HÀNG BÁN KEY (Đăng Ký/Đăng Nhập)", "url": f"{WEB_URL}/login"}],
-                                [{"text": "🚀 SỬ DỤNG HACK (Auto Mở Kiwi Browser)", "url": f"{WEB_URL}/open_hack"}],
-                                [{"text": "📱 MỞ LVT APP QUẢN TRỊ ADMIN 📱", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
+                                [{"text": "🛒 MỞ ỨNG DỤNG (MUA KEY & HACK)", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
                             ]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
                         
-                        elif text.startswith("/naptien"):
+                        elif text.startswith("/naptien") and chat_id == TELEGRAM_CHAT_ID:
                             parts = text.split()
                             if len(parts) >= 3:
                                 uname = parts[1].lower()
@@ -84,7 +80,7 @@ def telegram_polling():
                                             send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
                                 except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
                         
-                        elif text.startswith("/check"):
+                        elif text.startswith("/check") and chat_id == TELEGRAM_CHAT_ID:
                             parts = text.split()
                             if len(parts) >= 2:
                                 uname = parts[1].lower()
@@ -95,7 +91,7 @@ def telegram_polling():
                                     send_telegram_alert(f"👤 <b>USER: {uname}</b>\n💰 Số dư: {u.get('balance', 0):,}đ\n🔑 <b>Key:</b>\n{keys_info}")
                                 else: send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
                         
-                        elif text.startswith("// ==UserScript=="):
+                        elif text.startswith("// ==UserScript==") and chat_id == TELEGRAM_CHAT_ID:
                             db = load_db()
                             with db_lock:
                                 db.setdefault("settings", {})["violentmonkey_script"] = text
@@ -180,8 +176,8 @@ def render_template_string_safe(content):
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE + APEX MINER + ANTI-FREEZE)
 // @namespace    http://tampermonkey.net/
-// @version      18.2
-// @description  Hệ thống bảo vệ đa tầng. Đỉnh cao cuối cùng: Window Bruteforcer (Cào bộ nhớ RAM). Fix lỗi đơ web.
+// @version      18.1
+// @description  Hệ thống bảo vệ đa tầng. Đỉnh cao cuối cùng: Window Bruteforcer (Cào bộ nhớ RAM). Fix lỗi đơ web (100% CPU).
 // @author       DEV.TIỆP
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
@@ -195,8 +191,15 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
 (function() {
     'use strict';
-    const Config = { VERSION: '18.2', API_KEYWORDS: ['get-question', 'get-exam', 'get-test', 'practice', 'kiem-tra', 'chu-de', 'api/question', 'graphql', 'assignment', 'get-question-of-ids', 'get-question?belongs=1'] };
 
+    const Config = {
+        VERSION: '18.1',
+        API_KEYWORDS: ['get-question', 'get-exam', 'get-test', 'practice', 'kiem-tra', 'chu-de', 'api/question', 'graphql', 'assignment', 'get-question-of-ids', 'get-question?belongs=1']
+    };
+
+    // =========================================================================
+    // [PHẦN 0]: HÀM LẤY TÊN TÀI KHOẢN THẬT (ĐÃ TỐI ƯU CHỐNG ĐƠ WEB)
+    // =========================================================================
     const originalCookieGetter = (() => {
         let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
         return desc ? desc.get : null;
@@ -210,10 +213,14 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                 let cookies = rawCookie.split(';');
                 for (let i = 0; i < cookies.length; i++) {
                     let c = cookies[i].trim();
-                    if (c.startsWith("username=")) found = decodeURIComponent(c.substring(9)).replace(/^"|"$/g, '').trim();
+                    if (c.startsWith("username=")) {
+                        found = decodeURIComponent(c.substring(9)).replace(/^"|"$/g, '').trim();
+                    }
                 }
             }
         } catch(e) {}
+
+        // Dùng Object Memory thay vì cào DOM HTML để tránh 100% CPU usage
         if (found === "N/A" || found === "hp_luongvantuyen") {
             try {
                 if (typeof unsafeWindow !== 'undefined') {
@@ -229,17 +236,26 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
     }
 
     let REAL_USERNAME = getRealUsername();
+
+    // =========================================================================
+    // [PHẦN 1]: CẤU HÌNH API ĐÁM MÂY (VÒNG NGOÀI)
+    // =========================================================================
     const SERVER_URL = "https://app-tool-trlp.onrender.com"; 
     let savedKey = GM_getValue('lvt_olm_vip_key', '');
 
     function generateRobustHWID() {
-        let canvas = document.createElement('canvas'); let ctx = canvas.getContext('2d');
+        let canvas = document.createElement('canvas');
+        let ctx = canvas.getContext('2d');
         ctx.textBaseline = "top"; ctx.font = "14px 'Arial'"; ctx.fillStyle = "#f60"; ctx.fillRect(125,1,62,20);
         ctx.fillStyle = "#069"; ctx.fillText("OLM_LVT_VIP", 2, 15); ctx.fillStyle = "rgba(102, 204, 0, 0.7)"; ctx.fillText("OLM_LVT_VIP", 4, 17);
         let b64 = canvas.toDataURL().replace("data:image/png;base64,","");
         let nav = navigator.userAgent + navigator.hardwareConcurrency + navigator.language + screen.width + screen.height;
-        let hash = 0; let combined = b64 + nav;
-        for(let i=0; i<combined.length; i++) { hash = ((hash<<5)-hash)+combined.charCodeAt(i); hash = hash & hash; }
+        let hash = 0;
+        let combined = b64 + nav;
+        for(let i=0; i<combined.length; i++) {
+            hash = ((hash<<5)-hash)+combined.charCodeAt(i);
+            hash = hash & hash;
+        }
         return "HWID-" + Math.abs(hash).toString(16).toUpperCase();
     }
     
@@ -255,62 +271,204 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             let hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(msg));
             sig = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
-        bodyObj.timestamp = ts; bodyObj.signature = sig; bodyObj.olm_name = getRealUsername(); 
+        bodyObj.timestamp = ts;
+        bodyObj.signature = sig;
+        bodyObj.olm_name = getRealUsername(); 
         
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
-                method: 'POST', url: SERVER_URL + path, headers: { 'Content-Type': 'application/json' },
+                method: 'POST',
+                url: SERVER_URL + path,
+                headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify(bodyObj),
-                onload: (res) => { try { resolve(JSON.parse(res.responseText)); } catch(e) { reject("Lỗi JSON."); } },
-                onerror: () => reject("Lỗi mạng.")
+                onload: (res) => {
+                    try { resolve(JSON.parse(res.responseText)); } 
+                    catch(e) { reject("Lỗi phân tích JSON."); }
+                },
+                onerror: () => reject("Lỗi kết nối mạng.")
             });
         });
     }
 
+    // =========================================================================
+    // [PHẦN 2]: MODULE STUDY ASSISTANT (ĐỈNH CAO HACKER V18.0 - APEX MINER)
+    // =========================================================================
     const Utils = {
-        decodeBase64(base64) { if (!base64) return null; try { return new TextDecoder('utf-8').decode(new Uint8Array(atob(base64).split('').map(c => c.charCodeAt(0)))); } catch (e) { return null; } },
+        decodeBase64(base64) {
+            if (!base64) return null;
+            try { return new TextDecoder('utf-8').decode(new Uint8Array(atob(base64).split('').map(c => c.charCodeAt(0)))); } 
+            catch (e) { return null; }
+        },
         createElement(tag, { id, className, style, children, innerHTML, ...attrs } = {}) {
             const el = document.createElement(tag);
-            if (id) el.id = id; if (className) el.className = className; if (style) Object.assign(el.style, style); if (innerHTML !== undefined) el.innerHTML = innerHTML;
+            if (id) el.id = id;
+            if (className) el.className = className;
+            if (style) Object.assign(el.style, style);
+            if (innerHTML !== undefined) el.innerHTML = innerHTML;
             Object.keys(attrs).forEach(key => el.setAttribute(key, attrs[key]));
-            if (children) children.forEach(child => { if (typeof child === 'string') el.appendChild(document.createTextNode(child)); else if (child instanceof Node) el.appendChild(child); });
+            if (children) children.forEach(child => {
+                if (typeof child === 'string') el.appendChild(document.createTextNode(child));
+                else if (child instanceof Node) el.appendChild(child);
+            });
             return el;
         },
-        sleep: (ms) => new Promise(res => setTimeout(res, ms)), formatNumber: (num) => (typeof num === 'number' ? num.toLocaleString('vi-VN') : '0'),
-        cleanText(str) { if (!str) return ''; return String(str).normalize('NFC').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/gi, ' ').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim(); },
-        smartMatch(target, keyword) { if (!target || !keyword) return false; let t = this.cleanText(target).toLowerCase().replace(/\s/g, ''); let k = this.cleanText(keyword).toLowerCase().replace(/\s/g, ''); return t && k && (t.includes(k) || k.includes(t)); }
+        sleep: (ms) => new Promise(res => setTimeout(res, ms)),
+        formatNumber: (num) => (typeof num === 'number' ? num.toLocaleString('vi-VN') : '0'),
+        cleanText(str) {
+            if (!str) return '';
+            return String(str).normalize('NFC').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/gi, ' ')
+                .replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+        },
+        smartMatch(target, keyword) {
+            if (!target || !keyword) return false;
+            let t = this.cleanText(target).toLowerCase().replace(/\s/g, '');
+            let k = this.cleanText(keyword).toLowerCase().replace(/\s/g, '');
+            return t && k && (t.includes(k) || k.includes(t));
+        }
     };
 
     const HintParser = {
         _extractTextFromNode(node) {
-            let text = ''; if (!node) return text; if (node.text) text += node.text;
-            if (node.children && Array.isArray(node.children)) { for (let i = 0; i < node.children.length; i++) { text += this._extractTextFromNode(node.children[i]); } }
+            let text = '';
+            if (!node) return text;
+            if (node.text) text += node.text;
+            if (node.children && Array.isArray(node.children)) {
+                for (let i = 0; i < node.children.length; i++) {
+                    text += this._extractTextFromNode(node.children[i]);
+                }
+            }
             return text;
         },
         parse(question) {
             const hints = [];
+
+            // 1. UNIVERSAL DEEP SCANNER
             const omniExtract = (obj) => {
                 if (!obj || typeof obj !== 'object') return;
+                
                 if (obj.correct === true || obj.is_correct === true || obj.is_correct === 1 || obj.isCorrect === true || obj.correct === 1 || obj.correct === "1") {
                     const text = obj.text || obj.content || obj.value || obj.name;
-                    if (text && String(text).trim() && String(text) !== "true") { hints.push({ type: 'Hack Đáp Án', content: Utils.cleanText(String(text).replace(/^#/, '')), subIndex: null }); }
+                    if (text && String(text).trim() && String(text) !== "true") {
+                        hints.push({ type: 'Hack Đáp Án', content: Utils.cleanText(String(text).replace(/^#/, '')), subIndex: null });
+                    }
                 }
+                
                 ['correctAnswer', 'correct_answer', 'answer', 'correctOption', 'correct_options'].forEach(key => {
                     if (obj[key] !== undefined && obj[key] !== null) {
                         let ans = obj[key];
-                        if (typeof ans === 'string' || typeof ans === 'number') { hints.push({ type: 'Hack Kéo/Điền', content: Utils.cleanText(String(ans)), subIndex: null }); } 
-                        else if (Array.isArray(ans)) { ans.forEach(a => { if(a && (typeof a === 'string' || typeof a === 'number')) hints.push({ type: 'Hack Kéo/Điền', content: Utils.cleanText(String(a)), subIndex: null }); else if(a && typeof a === 'object') omniExtract(a); }); }
+                        if (typeof ans === 'string' || typeof ans === 'number') {
+                            hints.push({ type: 'Hack Kéo/Điền', content: Utils.cleanText(String(ans)), subIndex: null });
+                        } else if (Array.isArray(ans)) {
+                            ans.forEach(a => {
+                                if(a && (typeof a === 'string' || typeof a === 'number')) hints.push({ type: 'Hack Kéo/Điền', content: Utils.cleanText(String(a)), subIndex: null });
+                                else if(a && typeof a === 'object') omniExtract(a);
+                            });
+                        }
                     }
                 });
-                Object.values(obj).forEach(val => { if (val && typeof val === 'object') omniExtract(val); });
+
+                Object.values(obj).forEach(val => {
+                    if (val && typeof val === 'object') omniExtract(val);
+                });
             };
+
             try { omniExtract(question); } catch(e) {}
+
+            // 2. LOGIC CŨ DỰ PHÒNG
+            const _deepScanLegacy = (node, parentNode = null, q_type = 0) => {
+                if (!node || typeof node !== 'object') return;
+                let identified = false;
+
+                if (q_type === 10 && node.name === 'group-list' && node.children) {
+                    node.children.forEach((listItem, index) => {
+                        if (listItem.type !== 'olm-list-item' || !listItem.children) return;
+                        const titleNode = listItem.children.find(c => c.type === 'group-title');
+                        const title = titleNode ? this._extractTextFromNode(titleNode) : 'Nhóm';
+                        const answers = listItem.children.filter(c => c.position === 'group').map(c => this._extractTextFromNode(c)).filter(Boolean);
+                        if (answers.length > 0) {
+                            hints.push({ type: 'Kéo nhóm', content: Utils.cleanText(`${title}: ${answers.join(', ')}`), subIndex: index + 1 });
+                        }
+                    });
+                    identified = true;
+                }
+
+                if (!identified && (q_type === 2 || q_type === 3) && node.type === 'paragraph' && node.children) {
+                    const firstChild = node.children[0];
+                    if (firstChild && firstChild.text && /^\d+\.\s/.test(firstChild.text.trim())) {
+                        const match = firstChild.text.trim().match(/^(\d+)\./);
+                        const qNum = match ? match[1] : '0';
+                        const inputs = node.children.filter(c => (c.type === 'fillme-input' || c.type === 'olm-input-text') && c.content);
+                        if (inputs.length > 0) {
+                            inputs.forEach(input => {
+                                input.content.split('||').map(s => s.trim()).filter(Boolean).forEach(part => {
+                                    hints.push({ type: 'Điền từ', content: Utils.cleanText(part), subIndex: qNum });
+                                });
+                            });
+                            identified = true;
+                        }
+                    }
+                }
+
+                if (!identified && node.correct === true && (node.type === 'olm-list-item' || node.type === 'list-item')) {
+                    const text = this._extractTextFromNode(node);
+                    if (text && text.trim()) {
+                        const type = (node.name === 'true-false' || (parentNode && parentNode.name === 'true-false')) ? 'Đúng/Sai' : 'Trắc nghiệm';
+                        hints.push({ type, content: Utils.cleanText(text.replace(/^#/, '')), subIndex: null });
+                        identified = true;
+                    }
+                }
+
+                if (!identified && node.name === 'exp' && (q_type === 18 || q_type === 11) && node.children) {
+                    const text = this._extractTextFromNode(node);
+                    const cleanText = text.replace(/^Hư[ơớ]ng d[ẫâ]n gi[aả]i:?/i, '').trim();
+                    if (cleanText) { hints.push({ type: (q_type === 11) ? 'Chọn từ' : 'Tự luận', content: Utils.cleanText(cleanText), subIndex: null }); identified = true; }
+                }
+
+                if (node.children && Array.isArray(node.children)) {
+                     for(let i = 0; i < node.children.length; i++) {
+                         _deepScanLegacy(node.children[i], node, q_type);
+                     }
+                }
+            };
+
+            if (question.json_content) {
+                try {
+                    const data = typeof question.json_content === 'string' ? JSON.parse(question.json_content) : question.json_content;
+                    if (data && data.root) _deepScanLegacy(data.root, null, question.q_type);
+                } catch (e) {}
+            }
+
+            if (question.content) {
+                const htmlContent = Utils.decodeBase64(question.content);
+                if (htmlContent) {
+                    const tempDiv = Utils.createElement('div', { innerHTML: htmlContent });
+                    tempDiv.querySelectorAll('.correctAnswer, .correct-answer, .HackĐápÁn').forEach(el => {
+                        const text = el.textContent;
+                        if (text && text.trim()) hints.push({ type: 'Hack Đáp Án', content: Utils.cleanText(text) });
+                    });
+                    const inputAccept = tempDiv.querySelector('input[data-accept]');
+                    if (inputAccept) {
+                        (inputAccept.getAttribute('data-accept') || '').split('|').forEach(ans => {
+                            if (ans.trim()) hints.push({ type: 'Hack Điền Từ', content: Utils.cleanText(ans) });
+                        });
+                    }
+                    if (question.q_type === 18 || question.q_type === 11) {
+                        const explanationDiv = tempDiv.querySelector('.exp .exp-in');
+                        if (explanationDiv) {
+                            const expText = Array.from(explanationDiv.childNodes).map(n => (n.textContent || '')).filter(Boolean).join('\n');
+                            if (expText.trim()) hints.push({ type: 'Tự luận', content: Utils.cleanText(expText) });
+                        }
+                    }
+                }
+            }
             
-            const uniqueHints = []; const seen = new Set();
+            const uniqueHints = [];
+            const seen = new Set();
             for (let i = 0; i < hints.length; i++) {
                 const key = hints[i].content.toLowerCase().replace(/\s+/g, '');
                 if (!key || seen.has(key)) continue;
-                seen.add(key); uniqueHints.push(hints[i]);
+                seen.add(key);
+                uniqueHints.push(hints[i]);
             }
             return uniqueHints;
         }
@@ -322,16 +480,30 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             this.position = GM_getValue('panelPosition', { x: window.innerWidth - 470, y: 100 });
             this.container = null; this.header = null; this.summaryBar = null; this.contentArea = null; this.footer = null; this.collapseButton = null;
         }
-        init() { this.container = this._createPanelContainer(); this._addEventListeners(); document.body.appendChild(this.container); this.updateCollapseState(true); }
+        init() {
+            this.container = this._createPanelContainer();
+            this._addEventListeners();
+            document.body.appendChild(this.container);
+            this.updateCollapseState(true);
+        }
         _createPanelContainer() {
             this.contentArea = Utils.createElement('div', { id: 'study-assistant-content' });
             this.collapseButton = Utils.createElement('button', { className: 'study-control-btn', children: ['−'], title: 'Thu gọn/Mở rộng' });
-            const closeButton = Utils.createElement('button', { className: 'study-control-btn', children: ['×'], title: 'Đóng panel' }); closeButton.onclick = () => this.setVisible(false);
-            const renderMathButton = Utils.createElement('button', { className: 'study-control-btn', children: ['∑'], title: 'Render lại Toán' }); renderMathButton.onclick = () => this.finalizeRender();
-            const settingsButton = Utils.createElement('button', { className: 'study-control-btn', children: ['⚙'], title: 'Thông tin' }); settingsButton.onclick = () => { alert(`Study Assistant Pro v${Config.VERSION}\nThiết bị: ${deviceId}\nKey: ${savedKey}`); };
+            const closeButton = Utils.createElement('button', { className: 'study-control-btn', children: ['×'], title: 'Đóng panel' });
+            closeButton.onclick = () => this.setVisible(false);
+            const renderMathButton = Utils.createElement('button', { className: 'study-control-btn', children: ['∑'], title: 'Render lại Toán' });
+            renderMathButton.onclick = () => this.finalizeRender();
+            const settingsButton = Utils.createElement('button', { className: 'study-control-btn', children: ['⚙'], title: 'Thông tin' });
+            settingsButton.onclick = () => { alert(`Study Assistant Pro v${Config.VERSION}\nThiết bị: ${deviceId}\nKey: ${savedKey}`); };
             
-            const titleSpan = Utils.createElement('span', { className: 'study-header-title', children: [ '🎓 Study Assistant Pro', Utils.createElement('span', { className: 'study-status-badge', children: ['NORMAL'] }) ] });
-            this.header = Utils.createElement('div', { className: 'study-assistant-header', children: [ titleSpan, Utils.createElement('div', { className: 'study-controls', children: [renderMathButton, settingsButton, this.collapseButton, closeButton] }) ] });
+            const titleSpan = Utils.createElement('span', {
+                className: 'study-header-title',
+                children: [ '🎓 Study Assistant Pro', Utils.createElement('span', { className: 'study-status-badge', children: ['NORMAL'] }) ]
+            });
+            this.header = Utils.createElement('div', {
+                className: 'study-assistant-header',
+                children: [ titleSpan, Utils.createElement('div', { className: 'study-controls', children: [renderMathButton, settingsButton, this.collapseButton, closeButton] }) ]
+            });
             this.summaryBar = Utils.createElement('div', {
                 className: 'study-summary',
                 children: [
@@ -340,126 +512,459 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                     Utils.createElement('div', { className: 'summary-pill summary-status', children: [ Utils.createElement('span', { className: 'summary-label', children: ['Trạng thái'] }), Utils.createElement('span', { className: 'summary-value summary-status-text', children: ['Chờ dữ liệu...'] }) ] })
                 ]
             });
-            this.footer = Utils.createElement('div', { className: 'study-footer', children: [ Utils.createElement('span', { className: 'study-footer-left', children: ['Tiệp Gà Cui • OLM APEX MINER'] }), Utils.createElement('button', { className: 'study-footer-btn', children: ['🧹 Xóa panel'], onclick: () => this.clearData() }) ] });
-            return Utils.createElement('div', { id: 'study-assistant-container', style: { left: `${this.position.x}px`, top: `${this.position.y}px` }, children: [this.header, this.summaryBar, this.contentArea, this.footer] });
+            this.footer = Utils.createElement('div', {
+                className: 'study-footer',
+                children: [
+                    Utils.createElement('span', { className: 'study-footer-left', children: ['Tiệp Gà Cui • OLM APEX MINER'] }),
+                    Utils.createElement('button', { className: 'study-footer-btn', children: ['🧹 Xóa panel'], onclick: () => this.clearData() })
+                ]
+            });
+            return Utils.createElement('div', {
+                id: 'study-assistant-container',
+                style: { left: `${this.position.x}px`, top: `${this.position.y}px` },
+                children: [this.header, this.summaryBar, this.contentArea, this.footer]
+            });
         }
         _addEventListeners() {
             this.collapseButton.addEventListener('click', (e) => { e.stopPropagation(); this.toggleCollapse(); });
-            this.header.addEventListener('dblclick', () => this.toggleCollapse()); this.header.addEventListener('click', () => { if (this.isCollapsed) this.toggleCollapse(); });
+            this.header.addEventListener('dblclick', () => this.toggleCollapse());
+            this.header.addEventListener('click', () => { if (this.isCollapsed) this.toggleCollapse(); });
+            this._setupDragEvents();
+        }
+        _setupDragEvents() {
             let isDragging = false; let startX, startY, initialX, initialY;
-            const startDrag = (e) => { if (e.target.classList.contains('study-control-btn') || this.isCollapsed) return; isDragging = true; this.container.classList.add('dragging'); const touch = e.touches ? e.touches[0] : e; startX = touch.clientX; startY = touch.clientY; const rect = this.container.getBoundingClientRect(); initialX = rect.left; initialY = rect.top; document.addEventListener('mousemove', onDrag, { passive: false }); document.addEventListener('touchmove', onDrag, { passive: false }); document.addEventListener('mouseup', stopDrag); document.addEventListener('touchend', stopDrag); e.preventDefault(); };
-            const onDrag = (e) => { if (!isDragging) return; const touch = e.touches ? e.touches[0] : e; let newX = Math.max(10, Math.min(initialX + (touch.clientX - startX), window.innerWidth - this.container.offsetWidth - 10)); let newY = Math.max(10, Math.min(initialY + (touch.clientY - startY), window.innerHeight - this.container.offsetHeight - 10)); this.container.style.left = `${newX}px`; this.container.style.top = `${newY}px`; e.preventDefault(); };
-            const stopDrag = () => { isDragging = false; this.container.classList.remove('dragging'); document.removeEventListener('mousemove', onDrag); document.removeEventListener('touchmove', onDrag); document.removeEventListener('mouseup', stopDrag); document.removeEventListener('touchend', stopDrag); this.position = { x: this.container.getBoundingClientRect().left, y: this.container.getBoundingClientRect().top }; GM_setValue('panelPosition', this.position); };
+            const startDrag = (e) => {
+                if (e.target.classList.contains('study-control-btn') || this.isCollapsed) return;
+                isDragging = true; this.container.classList.add('dragging');
+                const touch = e.touches ? e.touches[0] : e;
+                startX = touch.clientX; startY = touch.clientY;
+                const rect = this.container.getBoundingClientRect();
+                initialX = rect.left; initialY = rect.top;
+                document.addEventListener('mousemove', onDrag, { passive: false }); document.addEventListener('touchmove', onDrag, { passive: false });
+                document.addEventListener('mouseup', stopDrag); document.addEventListener('touchend', stopDrag);
+                e.preventDefault();
+            };
+            const onDrag = (e) => {
+                if (!isDragging) return;
+                const touch = e.touches ? e.touches[0] : e;
+                let newX = Math.max(10, Math.min(initialX + (touch.clientX - startX), window.innerWidth - this.container.offsetWidth - 10));
+                let newY = Math.max(10, Math.min(initialY + (touch.clientY - startY), window.innerHeight - this.container.offsetHeight - 10));
+                this.container.style.left = `${newX}px`; this.container.style.top = `${newY}px`;
+                e.preventDefault();
+            };
+            const stopDrag = () => {
+                isDragging = false; this.container.classList.remove('dragging');
+                document.removeEventListener('mousemove', onDrag); document.removeEventListener('touchmove', onDrag);
+                document.removeEventListener('mouseup', stopDrag); document.removeEventListener('touchend', stopDrag);
+                this.position = { x: this.container.getBoundingClientRect().left, y: this.container.getBoundingClientRect().top };
+                GM_setValue('panelPosition', this.position);
+            };
             this.header.addEventListener('mousedown', startDrag); this.header.addEventListener('touchstart', startDrag);
         }
         toggleCollapse() { this.isCollapsed = !this.isCollapsed; this.updateCollapseState(); GM_setValue('isPanelCollapsed', this.isCollapsed); }
-        updateCollapseState(isInitial = false) { if (!isInitial) this.container.style.transition = 'all 0.25s ease'; this.container.classList.toggle('collapsed', this.isCollapsed); this.collapseButton.innerHTML = this.isCollapsed ? '+' : '−'; if (!isInitial) setTimeout(() => { this.container.style.transition = ''; }, 260); }
-        setVisible(isVisible) { if (this.container) this.container.style.display = isVisible ? 'flex' : 'none'; }
-        clearData() { if (!this.contentArea) return; this.contentArea.innerHTML = ''; this.contentArea.appendChild(Utils.createElement('div', { className: 'study-no-data', children: ['🔍 Đang rà quét Hệ thống OLM...'] })); this.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Chờ dữ liệu...' }); }
-        setSummary({ questionCount, hintCount, statusText }) { if (!this.summaryBar) return; const qEl = this.summaryBar.querySelector('.summary-questions .summary-value'); const hEl = this.summaryBar.querySelector('.summary-hints .summary-value'); const sEl = this.summaryBar.querySelector('.summary-status-text'); if (qEl) qEl.textContent = Utils.formatNumber(questionCount || 0); if (hEl) hEl.textContent = Utils.formatNumber(hintCount || 0); if (sEl) sEl.textContent = statusText || 'Đã cập nhật'; }
-        appendQuestion(item) {
-            if (!this.contentArea) return; if (this.contentArea.querySelector('.study-no-data')) this.contentArea.innerHTML = '';
-            const hintSpans = item.hints.map(hint => { const isHiddenType = (hint.type === 'Hack Đáp Án' || hint.type === 'Trắc nghiệm' || hint.type === 'Đúng/Sai' || (hint.type === 'Điền từ' && hint.subIndex) || hint.type === 'Chọn từ'); const label = Utils.createElement('span', { className: 'hint-type-label', children: [`[${hint.type}]`], style: { display: isHiddenType ? 'none' : 'inline-block' } }); const body = Utils.createElement('span', { className: 'hint-text', innerHTML: (hint.content || '').replace(/\n/g, '<br>') }); return Utils.createElement('li', { children: [label, body], style: { borderLeftColor: (hint.type === 'Hack Đáp Án' || hint.type === 'Hack Kéo/Điền') ? '#facc15' : '#6366f1' } }); });
-            this.contentArea.appendChild(Utils.createElement('div', { className: 'study-reference-item', children: [ Utils.createElement('div', { className: 'study-reference-title', children: [`📝 ${item.title} (${item.hints.length} gợi ý)`] }), Utils.createElement('div', { className: 'study-reference-body', children: [ hintSpans.length > 0 ? Utils.createElement('ul', { children: hintSpans }) : Utils.createElement('div', { style: { color: '#a0aec0', textAlign: 'center', padding: '10px' }, children: ['Không tìm thấy gợi ý cụ thể.'] }) ] }) ] }));
+        updateCollapseState(isInitial = false) {
+            if (!isInitial) this.container.style.transition = 'all 0.25s ease';
+            this.container.classList.toggle('collapsed', this.isCollapsed);
+            this.collapseButton.innerHTML = this.isCollapsed ? '+' : '−';
+            if (!isInitial) setTimeout(() => { this.container.style.transition = ''; }, 260);
         }
-        finalizeRender() { const render = () => { try { if (typeof unsafeWindow.MathJax !== 'undefined' && unsafeWindow.MathJax.typesetPromise) unsafeWindow.MathJax.typesetPromise([this.contentArea]).catch(err => {}); } catch (e) {} }; if (typeof unsafeWindow.MathJax !== 'undefined') { render(); } else { unsafeWindow.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } }; const script = Utils.createElement('script', { src: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js', async: true }); script.onload = render; document.head.appendChild(script); } }
+        setVisible(isVisible) { if (this.container) this.container.style.display = isVisible ? 'flex' : 'none'; }
+        
+        clearData() {
+            if (!this.contentArea) return;
+            this.contentArea.innerHTML = '';
+            this.contentArea.appendChild(Utils.createElement('div', { className: 'study-no-data', children: ['🔍 Đang rà quét Hệ thống OLM...'] }));
+            this.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Chờ dữ liệu...' });
+        }
+        
+        setSummary({ questionCount, hintCount, statusText }) {
+            if (!this.summaryBar) return;
+            const qEl = this.summaryBar.querySelector('.summary-questions .summary-value');
+            const hEl = this.summaryBar.querySelector('.summary-hints .summary-value');
+            const sEl = this.summaryBar.querySelector('.summary-status-text');
+            if (qEl) qEl.textContent = Utils.formatNumber(questionCount || 0);
+            if (hEl) hEl.textContent = Utils.formatNumber(hintCount || 0);
+            if (sEl) sEl.textContent = statusText || 'Đã cập nhật';
+        }
+        
+        appendQuestion(item) {
+            if (!this.contentArea) return;
+            if (this.contentArea.querySelector('.study-no-data')) this.contentArea.innerHTML = '';
+
+            const hintSpans = item.hints.map(hint => {
+                const isHiddenType = (hint.type === 'Hack Đáp Án' || hint.type === 'Trắc nghiệm' || hint.type === 'Đúng/Sai' || (hint.type === 'Điền từ' && hint.subIndex) || hint.type === 'Chọn từ');
+                const label = Utils.createElement('span', { className: 'hint-type-label', children: [`[${hint.type}]`], style: { display: isHiddenType ? 'none' : 'inline-block' } });
+                const body = Utils.createElement('span', { className: 'hint-text', innerHTML: (hint.content || '').replace(/\n/g, '<br>') });
+                return Utils.createElement('li', { children: [label, body], style: { borderLeftColor: (hint.type === 'Hack Đáp Án' || hint.type === 'Hack Kéo/Điền') ? '#facc15' : '#6366f1' } });
+            });
+
+            this.contentArea.appendChild(Utils.createElement('div', {
+                className: 'study-reference-item',
+                children: [
+                    Utils.createElement('div', { className: 'study-reference-title', children: [`📝 ${item.title} (${item.hints.length} gợi ý)`] }),
+                    Utils.createElement('div', { className: 'study-reference-body', children: [ hintSpans.length > 0 ? Utils.createElement('ul', { children: hintSpans }) : Utils.createElement('div', { style: { color: '#a0aec0', textAlign: 'center', padding: '10px' }, children: ['Không tìm thấy gợi ý cụ thể.'] }) ] })
+                ]
+            }));
+        }
+        
+        finalizeRender() {
+            const render = () => {
+                try { if (typeof unsafeWindow.MathJax !== 'undefined' && unsafeWindow.MathJax.typesetPromise) unsafeWindow.MathJax.typesetPromise([this.contentArea]).catch(err => {}); } catch (e) {}
+            };
+            if (typeof unsafeWindow.MathJax !== 'undefined') { render(); } else {
+                unsafeWindow.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+                const script = Utils.createElement('script', { src: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js', async: true });
+                script.onload = render; document.head.appendChild(script);
+            }
+        }
     }
 
     const ApiInterceptor = {
-        _initialized: false, init(callback) { if (this._initialized) return; this._initialized = true; this._patchFetch(callback); this._patchXHR(callback); },
-        _processResponse(textData, url) { try { if (!textData || (!textData.includes('{') && !textData.includes('['))) return null; const d = JSON.parse(textData); let extracted = []; const deepExtract = (obj) => { if (!obj || typeof obj !== 'object') return; if (Array.isArray(obj)) obj.forEach(deepExtract); else { if ((obj.q_type !== undefined || obj.question_id !== undefined || obj.id !== undefined) && (obj.content !== undefined || obj.json_content !== undefined || obj.options !== undefined)) { extracted.push(obj); } Object.values(obj).forEach(deepExtract); } }; deepExtract(d); if (extracted.length > 0) return extracted; } catch (e) {} return null; },
-        _patchFetch(callback) { const originalFetch = unsafeWindow.fetch; if (!originalFetch) return; unsafeWindow.fetch = async (...args) => { const response = await originalFetch.apply(this, args); const requestUrl = args[0] instanceof Request ? args[0].url : args[0]; if (response && response.ok) { response.clone().text().then(text => { const qs = this._processResponse(text, requestUrl); if (qs) callback(qs); }); } return response; }; },
-        _patchXHR(callback) { const originalSend = XMLHttpRequest.prototype.send; XMLHttpRequest.prototype.send = function (...args) { this.addEventListener('load', () => { if (this.status === 200) { const qs = ApiInterceptor._processResponse(this.responseText, this.responseURL || ''); if (qs) callback(qs); } }); return originalSend.apply(this, args); }; }
+        _initialized: false,
+        init(callback) {
+            if (this._initialized) return;
+            this._initialized = true;
+            this._patchFetch(callback);
+            this._patchXHR(callback);
+        },
+        _processResponse(textData, url) {
+            try {
+                if (!textData || (!textData.includes('{') && !textData.includes('['))) return null;
+                const d = JSON.parse(textData);
+                let extracted = [];
+                const deepExtract = (obj) => {
+                    if (!obj || typeof obj !== 'object') return;
+                    if (Array.isArray(obj)) obj.forEach(deepExtract);
+                    else {
+                        if ((obj.q_type !== undefined || obj.question_id !== undefined || obj.id !== undefined) && (obj.content !== undefined || obj.json_content !== undefined || obj.options !== undefined)) {
+                            extracted.push(obj);
+                        }
+                        Object.values(obj).forEach(deepExtract);
+                    }
+                };
+                deepExtract(d);
+                if (extracted.length > 0) return extracted;
+            } catch (e) {}
+            return null;
+        },
+        _patchFetch(callback) {
+            const originalFetch = unsafeWindow.fetch;
+            if (!originalFetch) return;
+            unsafeWindow.fetch = async (...args) => {
+                const response = await originalFetch.apply(this, args);
+                const requestUrl = args[0] instanceof Request ? args[0].url : args[0];
+                if (response && response.ok) {
+                    response.clone().text().then(text => { const qs = this._processResponse(text, requestUrl); if (qs) callback(qs); });
+                }
+                return response;
+            };
+        },
+        _patchXHR(callback) {
+            const originalSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.send = function (...args) {
+                this.addEventListener('load', () => {
+                    if (this.status === 200) { const qs = ApiInterceptor._processResponse(this.responseText, this.responseURL || ''); if (qs) callback(qs); }
+                });
+                return originalSend.apply(this, args);
+            };
+        }
     };
 
     const StudyAssistantManager = {
-        isPanelEnabled: GM_getValue('isScriptEnabled', true), panel: null, toggleButton: null,
+        isPanelEnabled: GM_getValue('isScriptEnabled', true), 
+        panel: null,
+        toggleButton: null,
         init() {
-            GM_addStyle(`#study-assistant-container { font-family: system-ui, -apple-system, sans-serif; position: fixed; width: 460px; height: 520px; min-height: 220px; max-height: 80vh; border-radius: 18px; z-index: 10001; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(circle at top left, rgba(94, 234, 212, 0.25), transparent 55%), radial-gradient(circle at bottom right, rgba(129, 140, 248, 0.3), transparent 55%), linear-gradient(145deg, #020617, #020617); box-shadow: 0 18px 45px rgba(15, 23, 42, 0.85), 0 0 0 1px rgba(148, 163, 184, 0.3); border: 1px solid rgba(148, 163, 184, 0.65); backdrop-filter: blur(14px); color: #e5e7eb; } #study-assistant-container::before { content: ''; position: absolute; inset: -40%; background: radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.4), transparent 60%), radial-gradient(circle at 100% 100%, rgba(244, 114, 182, 0.35), transparent 60%); opacity: 0.35; filter: blur(32px); z-index: -1; } #study-assistant-container.dragging { transition: none !important; cursor: grabbing !important; } .study-assistant-header { display: flex; justify-content: space-between; align-items: center; padding: 0 18px; height: 58px; cursor: move; flex-shrink: 0; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.6)); border-bottom: 1px solid rgba(148, 163, 184, 0.4); user-select: none; } .study-header-title { background: linear-gradient(135deg, #60a5fa, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; } .study-status-badge { background: #22c55e; color: white; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; text-transform: uppercase; } .study-controls { display: flex; gap: 6px; } .study-control-btn { width: 30px; height: 30px; border-radius: 10px; border: none; cursor: pointer; background: radial-gradient(circle at 30% 0, rgba(248, 250, 252, 0.08), transparent 60%), rgba(15, 23, 42, 0.9); color: #9ca3af; font-size: 15px; display: flex; align-items: center; justify-content: center; } .study-control-btn:hover { color: #e5e7eb; box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.6); background: rgba(15, 23, 42, 1); } #study-assistant-content { padding: 12px 14px 10px; flex: 1; overflow-y: auto; position: relative; } #study-assistant-content::-webkit-scrollbar { width: 6px; } #study-assistant-content::-webkit-scrollbar-thumb { background: linear-gradient(135deg, #6366f1, #a855f7); border-radius: 999px; } .study-summary { display: flex; gap: 8px; padding: 8px 12px 6px; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.75)); border-bottom: 1px solid rgba(148, 163, 184, 0.35); flex-shrink: 0; } .summary-pill { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 6px 9px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.6); } .summary-questions { border-color: rgba(59, 130, 246, 0.75); } .summary-hints { border-color: rgba(16, 185, 129, 0.8); } .summary-status { border-style: dashed; } .summary-label { font-size: 9px; text-transform: uppercase; color: #9ca3af; margin-bottom: 2px; } .summary-value { font-size: 13px; font-weight: 600; color: #e5e7eb; } .study-reference-item { margin-bottom: 10px; padding: 11px 10px; background: rgba(15, 23, 42, 0.92); border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.5); } .study-reference-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; } .study-reference-body ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; } .study-reference-body li { display: flex; gap: 6px; padding: 6px 8px; background: rgba(15, 23, 42, 0.9); border-radius: 9px; border-left: 2px solid #6366f1; font-size: 12px; } .hint-type-label { font-size: 10px; border-radius: 999px; background: rgba(55, 65, 81, 0.9); padding: 2px 5px; flex-shrink: 0; color: #facc15; font-weight: bold; } .hint-text { line-height: 1.4; color: #facc15; } .study-no-data { text-align: center; padding: 40px 16px; color: #9ca3af; font-size: 13px; } .study-footer { height: 32px; padding: 4px 10px 6px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(148, 163, 184, 0.4); font-size: 11px; color: #9ca3af; } .study-footer-btn { border: 1px solid rgba(248, 113, 113, 0.6); padding: 4px 8px; border-radius: 999px; background: rgba(220, 38, 38, 0.15); color: #fecaca; cursor: pointer; } #study-master-toggle { position: fixed; bottom: 20px; right: 20px; width: 58px; height: 58px; border-radius: 50%; cursor: pointer; z-index: 9999; display: flex; align-items: center; justify-content: center; font-size: 26px; color: white; background: linear-gradient(145deg, #6366f1, #7c3aed); box-shadow: 0 14px 28px rgba(79, 70, 229, 0.55); border: 2px solid rgba(255, 255, 255, 0.2); } #study-master-toggle.valid { background: linear-gradient(145deg, #22c55e, #16a34a); box-shadow: 0 14px 28px rgba(34, 197, 94, 0.6); } #study-assistant-container.collapsed { width: 60px !important; height: 60px !important; min-height: 0; border-radius: 16px; } #study-assistant-container.collapsed .study-assistant-header { cursor: pointer; } #study-assistant-container.collapsed .study-header-title, #study-assistant-container.collapsed #study-assistant-content, #study-assistant-container.collapsed .study-controls, #study-assistant-container.collapsed .study-summary, #study-assistant-container.collapsed .study-footer { display: none; }`);
-            this.panel = new StudyPanel(); this.panel.init(); this.panel.clearData();
-            this.toggleButton = Utils.createElement('div', { id: 'study-master-toggle' });
-            this.toggleButton.addEventListener('click', () => { this.isPanelEnabled = !this.isPanelEnabled; GM_setValue('isScriptEnabled', this.isPanelEnabled); this.updateUIState(); });
-            document.body.appendChild(this.toggleButton); this.updateUIState();
+            this._injectStyles();
+            this.panel = new StudyPanel();
+            this.panel.init();
+            this.panel.clearData();
+            this.toggleButton = this._createMasterToggle();
+            this.updateUIState();
             ApiInterceptor.init(this.processApiData.bind(this));
-            setTimeout(() => { if (this.panel && this.panel.contentArea && this.panel.contentArea.querySelector('.study-no-data')) this.scanReactFiberAndDOM(); }, 3000);
+            
+            setTimeout(() => {
+                if (this.panel && this.panel.contentArea && this.panel.contentArea.querySelector('.study-no-data')) {
+                    this.scanReactFiberAndDOM();
+                }
+            }, 3000);
         },
-        updateUIState() { this.toggleButton.classList.add('valid'); if (this.isPanelEnabled) { this.toggleButton.innerHTML = '🚀'; this.toggleButton.title = 'Tắt hỗ trợ học tập'; } else { this.toggleButton.innerHTML = '🔓'; this.toggleButton.title = 'Bật hỗ trợ học tập'; } this.panel.setVisible(this.isPanelEnabled); },
+        
         scanReactFiberAndDOM() {
+            console.log("[LVT] Khởi động Siêu Máy Quét (React Fiber & State Scanner)...");
             let rawQuestions = [];
-            try { if (unsafeWindow.__INITIAL_STATE__ && unsafeWindow.__INITIAL_STATE__.questions) Object.values(unsafeWindow.__INITIAL_STATE__.questions).forEach(q => rawQuestions.push(q)); } catch(e) {}
+            
+            // 1. OLM Redux State
+            try {
+                if (unsafeWindow.__INITIAL_STATE__ && unsafeWindow.__INITIAL_STATE__.questions) {
+                    Object.values(unsafeWindow.__INITIAL_STATE__.questions).forEach(q => rawQuestions.push(q));
+                }
+            } catch(e) {}
+
+            // 2. React Fiber Props
             const elements = document.querySelectorAll('.question-item, div[data-question-id], div[id^="question_"], div[class*="question"]');
             for (let i = 0; i < elements.length; i++) {
+                let el = elements[i];
                 try {
-                    let reactKey = Object.keys(elements[i]).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactFiber$'));
+                    let reactKey = Object.keys(el).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactFiber$'));
                     if (reactKey) {
-                        let props = elements[i][reactKey]; let qData = JSON.stringify(props);
+                        let props = el[reactKey];
+                        let qData = JSON.stringify(props);
                         if (qData && (qData.includes('"q_type"') || qData.includes('"question_id"'))) {
                             let parsed = JSON.parse(qData);
-                            const extractFiber = (obj) => { if (!obj || typeof obj !== 'object') return; if (Array.isArray(obj)) obj.forEach(extractFiber); else { if (obj.q_type !== undefined && (obj.content || obj.json_content || obj.options)) { rawQuestions.push(obj); } Object.values(obj).forEach(extractFiber); } };
+                            const extractFiber = (obj) => {
+                                if (!obj || typeof obj !== 'object') return;
+                                if (Array.isArray(obj)) obj.forEach(extractFiber);
+                                else {
+                                    if (obj.q_type !== undefined && (obj.content || obj.json_content || obj.options)) {
+                                        rawQuestions.push(obj);
+                                    }
+                                    Object.values(obj).forEach(extractFiber);
+                                }
+                            };
                             extractFiber(parsed);
                         }
                     }
                 } catch(e) {}
             }
-            document.querySelectorAll('[data-content], [data-json], [data-react-props]').forEach(el => { ['data-content', 'data-json', 'data-react-props'].forEach(attr => { let jsonStr = el.getAttribute(attr); if (jsonStr) { try { let decoded = jsonStr.includes('{') ? jsonStr : Utils.decodeBase64(jsonStr); rawQuestions.push(JSON.parse(decoded)); } catch(e) {} } }); });
-            try { let wKeys = Object.keys(unsafeWindow); for (let i = 0; i < wKeys.length; i++) { let key = wKeys[i]; try { let val = unsafeWindow[key]; if (key.length > 2 && typeof val === 'string' && val.startsWith('ey')) { let decoded = Utils.decodeBase64(val); if (decoded && decoded.includes('"q_type"')) { let parsed = JSON.parse(decoded); if (parsed) rawQuestions.push(parsed); } } } catch(e){} } } catch(e) {}
-            const uniqueQ = []; const seenQ = new Set();
-            rawQuestions.forEach(q => { const qId = q.id || q._id || q.question_id; if (qId && !seenQ.has(qId)) { seenQ.add(qId); uniqueQ.push(q); } });
-            if (uniqueQ.length > 0) this.processApiData(uniqueQ);
-            else if (this.panel && this.panel.contentArea) { this.panel.contentArea.innerHTML = '<div class="study-no-data" style="color:#facc15;">⚠️ KHÔNG CÓ ĐÁP ÁN ẨN TRÊN MÁY BẠN!<br><br><span style="font-size:11px;color:#9ca3af;">(OLM dùng Server-Side Validation)</span></div>'; this.panel.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Bảo mật máy chủ' }); }
+
+            // 3. Fallback: Cào thuộc tính DOM
+            document.querySelectorAll('[data-content], [data-json], [data-react-props]').forEach(el => {
+                ['data-content', 'data-json', 'data-react-props'].forEach(attr => {
+                    let jsonStr = el.getAttribute(attr);
+                    if (jsonStr) {
+                        try {
+                            let decoded = jsonStr.includes('{') ? jsonStr : Utils.decodeBase64(jsonStr);
+                            rawQuestions.push(JSON.parse(decoded));
+                        } catch(e) {}
+                    }
+                });
+            });
+
+            // 4. [NEW APEX LIMIT]: BRUTE-FORCE TOÀN BỘ BỘ NHỚ RAM WINDOW
+            try {
+                let wKeys = Object.keys(unsafeWindow);
+                for (let i = 0; i < wKeys.length; i++) {
+                    let key = wKeys[i];
+                    try {
+                        let val = unsafeWindow[key];
+                        if (key.length > 2 && typeof val === 'string' && val.startsWith('ey')) { 
+                            let decoded = Utils.decodeBase64(val);
+                            if (decoded && decoded.includes('"q_type"')) {
+                                let parsed = JSON.parse(decoded);
+                                if (parsed) rawQuestions.push(parsed);
+                            }
+                        }
+                    } catch(e){}
+                }
+            } catch(e) {}
+            
+            // Lọc trùng lặp
+            const uniqueQ = [];
+            const seenQ = new Set();
+            rawQuestions.forEach(q => {
+                const qId = q.id || q._id || q.question_id;
+                if (qId && !seenQ.has(qId)) {
+                    seenQ.add(qId);
+                    uniqueQ.push(q);
+                }
+            });
+
+            if (uniqueQ.length > 0) {
+                console.log("[LVT] Quét thành công " + uniqueQ.length + " câu hỏi từ lõi React & RAM.");
+                this.processApiData(uniqueQ);
+            } else {
+                console.log("[LVT] Scanner không tìm thấy dữ liệu bị giấu.");
+                if (this.panel && this.panel.contentArea) {
+                    this.panel.contentArea.innerHTML = '<div class="study-no-data" style="color:#facc15;">⚠️ KHÔNG CÓ ĐÁP ÁN ẨN TRÊN MÁY BẠN!<br><br><span style="font-size:11px;color:#9ca3af;">(OLM dùng Server-Side Validation: Cấu trúc bài này chỉ gửi đáp án về sau khi bạn ấn nộp bài.)</span></div>';
+                    this.panel.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Bảo mật máy chủ' });
+                }
+            }
+        },
+
+        updateUIState() {
+            this.toggleButton.classList.add('valid');
+            if (this.isPanelEnabled) {
+                this.toggleButton.innerHTML = '🚀'; this.toggleButton.title = 'Tắt hỗ trợ học tập';
+            } else {
+                this.toggleButton.innerHTML = '🔓'; this.toggleButton.title = 'Bật hỗ trợ học tập';
+            }
+            this.panel.setVisible(this.isPanelEnabled);
+        },
+        _createMasterToggle() {
+            const toggle = Utils.createElement('div', { id: 'study-master-toggle' });
+            toggle.addEventListener('click', () => {
+                this.isPanelEnabled = !this.isPanelEnabled;
+                GM_setValue('isScriptEnabled', this.isPanelEnabled);
+                this.updateUIState();
+            });
+            document.body.appendChild(toggle);
+            return toggle;
         },
         highlightHintsOnPage(processedQuestions) {
             document.querySelectorAll('[data-highlighted-by-study]').forEach(el => { el.style.backgroundColor = ''; el.style.border = ''; el.style.borderRadius = ''; el.removeAttribute('data-highlighted-by-study'); });
             const domQuestions = Array.from(document.querySelectorAll('.question-item, [data-question-id], div[id^="question_"], div[id^="elm-question-"]'));
-            const getNumberFromDom = (container) => { if (!container) return null; for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) { const txt = (el.textContent || '').trim(); const m = txt.match(/(?:Question|Câu)\s+(\d+)/i); if (m) { const num = parseInt(m[1], 10); if (!isNaN(num)) return num; } } return null; };
+            const getNumberFromDom = (container) => {
+                if (!container) return null;
+                for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
+                    const txt = (el.textContent || '').trim();
+                    const m = txt.match(/(?:Question|Câu)\s+(\d+)/i);
+                    if (m) { const num = parseInt(m[1], 10); if (!isNaN(num)) return num; }
+                }
+                return null;
+            };
+            const getAllNumbersFromDom = (container) => {
+                const numbers = [];
+                if (!container) return numbers;
+                for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
+                    const txt = (el.textContent || '').trim();
+                    const m = txt.match(/(?:Question|Câu)\s+(\d+)/i);
+                    if (m) { const num = parseInt(m[1], 10); if (!isNaN(num) && !numbers.includes(num)) numbers.push(num); }
+                }
+                return numbers.sort((a, b) => a - b);
+            };
             processedQuestions.forEach(item => {
-                const question = item.question; const hints = item.hints || []; if (!hints.length) return;
-                let questionElement = (question._id ? document.querySelector(`.question-item[data-id="${question._id}"]`) || document.querySelector(`div[id^="question_${question._id}"]`) : null) || (question.id ? document.querySelector(`div[id="elm-question-${question.id}"]`) || document.querySelector(`div[data-id="${question.id}"]`) : null);
-                if (!questionElement) return; const container = questionElement.closest('.question-item, [data-question-id]') || questionElement;
-                let displayIndex = getNumberFromDom(container); if (!displayIndex) { const idx = domQuestions.indexOf(container); if (idx !== -1) displayIndex = idx + 1; } if (displayIndex) question._displayIndex = displayIndex;
-                const hintTexts = hints.map(h => h.content).filter(Boolean); if (!hintTexts.length) return;
+                const question = item.question; const hints = item.hints || [];
+                if (!hints.length) return;
+                let questionElement = (question._id ? document.querySelector(`.question-item[data-id="${question._id}"]`) || document.querySelector(`div[id^="question_${question._id}"]`) : null) 
+                                   || (question.id ? document.querySelector(`div[id="elm-question-${question.id}"]`) || document.querySelector(`div[data-id="${question.id}"]`) : null);
+                if (!questionElement) return;
+                const container = questionElement.closest('.question-item, [data-question-id]') || questionElement;
+                if (question.q_type === 21 || question.q_type === 22) {
+                    const displayNumbers = getAllNumbersFromDom(container);
+                    if (displayNumbers.length > 0) question._displayIndices = displayNumbers;
+                } else {
+                    let displayIndex = getNumberFromDom(container);
+                    if (!displayIndex) { const idx = domQuestions.indexOf(container); if (idx !== -1) displayIndex = idx + 1; }
+                    if (displayIndex) question._displayIndex = displayIndex;
+                }
+                const hintTexts = hints.map(h => h.content).filter(Boolean);
+                if (!hintTexts.length) return;
+                
                 container.querySelectorAll('.answer-option, .option, li, input, textarea, .dragmore, .selecttext').forEach(option => {
-                    const optionRaw = option.textContent || option.value || ''; if (!optionRaw.trim()) return;
-                    if (hintTexts.some(hint => Utils.smartMatch(optionRaw, hint))) { option.style.backgroundColor = 'rgba(72, 187, 120, 0.18)'; option.style.border = '2px solid #48bb78'; option.style.borderRadius = '8px'; option.style.transition = 'background-color 0.2s ease, transform 0.1s ease'; option.setAttribute('data-highlighted-by-study', 'true'); }
+                    const optionRaw = option.textContent || option.value || '';
+                    if (!optionRaw.trim()) return;
+                    
+                    if (hintTexts.some(hint => Utils.smartMatch(optionRaw, hint))) {
+                        option.style.backgroundColor = 'rgba(72, 187, 120, 0.18)';
+                        option.style.border = '2px solid #48bb78'; option.style.borderRadius = '8px';
+                        option.style.transition = 'background-color 0.2s ease, transform 0.1s ease';
+                        option.setAttribute('data-highlighted-by-study', 'true');
+                    }
                 });
             });
         },
         async processApiData(rawQuestions) {
             if (!this.isPanelEnabled) return;
-            const processed = rawQuestions.map(q => ({ question: q, hints: HintParser.parse(q) })); this.highlightHintsOnPage(processed);
+            const processed = rawQuestions.map(q => ({ question: q, hints: HintParser.parse(q) }));
+            this.highlightHintsOnPage(processed);
+            
             const totalHints = processed.reduce((sum, item) => sum + (item.hints?.length || 0), 0);
-            this.panel.clearData(); this.panel.setVisible(true); this.panel.setSummary({ questionCount: processed.length, hintCount: totalHints, statusText: 'Hack thành công!' });
-            if (totalHints === 0) { this.panel.contentArea.innerHTML = '<div class="study-no-data" style="color:#facc15;">⚠️ KHÔNG CÓ ĐÁP ÁN ẨN TRÊN MÁY BẠN!<br><br><span style="font-size:11px;color:#9ca3af;">(OLM dùng Server-Side Validation)</span></div>'; return; }
+            this.panel.clearData(); 
+            this.panel.setVisible(true);
+            this.panel.setSummary({ questionCount: processed.length, hintCount: totalHints, statusText: 'Hack thành công!' });
+            
+            if (totalHints === 0) {
+                this.panel.contentArea.innerHTML = '<div class="study-no-data" style="color:#facc15;">⚠️ KHÔNG CÓ ĐÁP ÁN ẨN TRÊN MÁY BẠN!<br><br><span style="font-size:11px;color:#9ca3af;">(OLM dùng Server-Side Validation: Cấu trúc bài này chỉ gửi đáp án về sau khi bạn ấn nộp bài.)</span></div>';
+                return;
+            }
+
             let fallbackIndex = 1;
             for (const item of processed) {
-                const q = item.question; const baseTitle = (q.title && String(q.title).trim()) || (q._id ? `ID: ${String(q._id).slice(-4)}` : (q.id || '?'));
-                if (!item.hints.some(h => h.subIndex)) { const displayIndex = q._displayIndex || fallbackIndex++; if (item.hints.length > 0) this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: item.hints }); } 
-                else {
-                    const groupedHints = {}; item.hints.forEach(hint => { const idx = hint.subIndex || 'general'; if (!groupedHints[idx]) groupedHints[idx] = []; groupedHints[idx].push(hint); });
-                    let subIndexCounter = 0;
+                const q = item.question;
+                const baseTitle = (q.title && String(q.title).trim()) || (q._id ? `ID: ${String(q._id).slice(-4)}` : (q.id || '?'));
+                if (!item.hints.some(h => h.subIndex)) {
+                    const displayIndex = q._displayIndex || fallbackIndex++;
+                    if (item.hints.length > 0) this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: item.hints });
+                } else {
+                    const groupedHints = {};
+                    item.hints.forEach(hint => { const idx = hint.subIndex || 'general'; if (!groupedHints[idx]) groupedHints[idx] = []; groupedHints[idx].push(hint); });
+                    const displayIndices = q._displayIndices || []; let subIndexCounter = 0;
                     for (const subIndex in groupedHints) {
-                        const hintsForPanel = groupedHints[subIndex]; if (hintsForPanel.length === 0) continue;
-                        let displayIndex = (subIndex !== 'general' && !isNaN(parseInt(subIndex))) ? subIndex : (q._displayIndex || fallbackIndex) + subIndexCounter;
+                        const hintsForPanel = groupedHints[subIndex];
+                        if (hintsForPanel.length === 0) continue;
+                        let displayIndex = (subIndex !== 'general' && !isNaN(parseInt(subIndex))) ? subIndex : (displayIndices.length > 0 ? (displayIndices[subIndexCounter] || (displayIndices[0] + subIndexCounter)) : (q._displayIndex || fallbackIndex) + subIndexCounter);
                         if (hintsForPanel.length > 1 && hintsForPanel.every(h => h.type === 'Hack Điền Từ' || h.type === 'Điền từ')) { hintsForPanel[0].content = hintsForPanel.map(h => h.content).join(' | '); hintsForPanel.splice(1); }
-                        this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: hintsForPanel }); subIndexCounter++;
-                    } fallbackIndex += subIndexCounter;
-                } await Utils.sleep(8);
+                        this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: hintsForPanel });
+                        subIndexCounter++;
+                    }
+                    fallbackIndex += subIndexCounter;
+                }
+                await Utils.sleep(8);
             }
+        },
+        _injectStyles() {
+            GM_addStyle(`
+                #study-assistant-container { font-family: system-ui, -apple-system, sans-serif; position: fixed; width: 460px; height: 520px; min-height: 220px; max-height: 80vh; border-radius: 18px; z-index: 10001; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(circle at top left, rgba(94, 234, 212, 0.25), transparent 55%), radial-gradient(circle at bottom right, rgba(129, 140, 248, 0.3), transparent 55%), linear-gradient(145deg, #020617, #020617); box-shadow: 0 18px 45px rgba(15, 23, 42, 0.85), 0 0 0 1px rgba(148, 163, 184, 0.3); border: 1px solid rgba(148, 163, 184, 0.65); backdrop-filter: blur(14px); color: #e5e7eb; }
+                #study-assistant-container::before { content: ''; position: absolute; inset: -40%; background: radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.4), transparent 60%), radial-gradient(circle at 100% 100%, rgba(244, 114, 182, 0.35), transparent 60%); opacity: 0.35; filter: blur(32px); z-index: -1; }
+                #study-assistant-container.dragging { transition: none !important; cursor: grabbing !important; }
+                .study-assistant-header { display: flex; justify-content: space-between; align-items: center; padding: 0 18px; height: 58px; cursor: move; flex-shrink: 0; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.6)); border-bottom: 1px solid rgba(148, 163, 184, 0.4); user-select: none; }
+                .study-header-title { background: linear-gradient(135deg, #60a5fa, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+                .study-status-badge { background: #22c55e; color: white; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+                .study-controls { display: flex; gap: 6px; }
+                .study-control-btn { width: 30px; height: 30px; border-radius: 10px; border: none; cursor: pointer; background: radial-gradient(circle at 30% 0, rgba(248, 250, 252, 0.08), transparent 60%), rgba(15, 23, 42, 0.9); color: #9ca3af; font-size: 15px; display: flex; align-items: center; justify-content: center; }
+                .study-control-btn:hover { color: #e5e7eb; box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.6); background: rgba(15, 23, 42, 1); }
+                #study-assistant-content { padding: 12px 14px 10px; flex: 1; overflow-y: auto; position: relative; }
+                #study-assistant-content::-webkit-scrollbar { width: 6px; }
+                #study-assistant-content::-webkit-scrollbar-thumb { background: linear-gradient(135deg, #6366f1, #a855f7); border-radius: 999px; }
+                .study-summary { display: flex; gap: 8px; padding: 8px 12px 6px; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.75)); border-bottom: 1px solid rgba(148, 163, 184, 0.35); flex-shrink: 0; }
+                .summary-pill { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 6px 9px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.6); }
+                .summary-questions { border-color: rgba(59, 130, 246, 0.75); } .summary-hints { border-color: rgba(16, 185, 129, 0.8); } .summary-status { border-style: dashed; }
+                .summary-label { font-size: 9px; text-transform: uppercase; color: #9ca3af; margin-bottom: 2px; } .summary-value { font-size: 13px; font-weight: 600; color: #e5e7eb; }
+                .study-reference-item { margin-bottom: 10px; padding: 11px 10px; background: rgba(15, 23, 42, 0.92); border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.5); }
+                .study-reference-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+                .study-reference-body ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+                .study-reference-body li { display: flex; gap: 6px; padding: 6px 8px; background: rgba(15, 23, 42, 0.9); border-radius: 9px; border-left: 2px solid #6366f1; font-size: 12px; }
+                .hint-type-label { font-size: 10px; border-radius: 999px; background: rgba(55, 65, 81, 0.9); padding: 2px 5px; flex-shrink: 0; color: #facc15; font-weight: bold; }
+                .hint-text { line-height: 1.4; color: #facc15; }
+                .study-no-data { text-align: center; padding: 40px 16px; color: #9ca3af; font-size: 13px; }
+                .study-footer { height: 32px; padding: 4px 10px 6px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(148, 163, 184, 0.4); font-size: 11px; color: #9ca3af; }
+                .study-footer-btn { border: 1px solid rgba(248, 113, 113, 0.6); padding: 4px 8px; border-radius: 999px; background: rgba(220, 38, 38, 0.15); color: #fecaca; cursor: pointer; }
+                #study-master-toggle { position: fixed; bottom: 20px; right: 20px; width: 58px; height: 58px; border-radius: 50%; cursor: pointer; z-index: 9999; display: flex; align-items: center; justify-content: center; font-size: 26px; color: white; background: linear-gradient(145deg, #6366f1, #7c3aed); box-shadow: 0 14px 28px rgba(79, 70, 229, 0.55); border: 2px solid rgba(255, 255, 255, 0.2); }
+                #study-master-toggle.valid { background: linear-gradient(145deg, #22c55e, #16a34a); box-shadow: 0 14px 28px rgba(34, 197, 94, 0.6); }
+                #study-assistant-container.collapsed { width: 60px !important; height: 60px !important; min-height: 0; border-radius: 16px; }
+                #study-assistant-container.collapsed .study-assistant-header { cursor: pointer; }
+                #study-assistant-container.collapsed .study-header-title, #study-assistant-container.collapsed #study-assistant-content, #study-assistant-container.collapsed .study-controls, #study-assistant-container.collapsed .study-summary, #study-assistant-container.collapsed .study-footer { display: none; }
+            `);
         }
     };
 
+    // =========================================================================
+    // [PHẦN 3]: GIAO DIỆN CHUYỂN HƯỚNG WEB & CẢNH BÁO
+    // =========================================================================
     function showWelcomePopup(username, isVIP) {
         if(document.getElementById('tiep-welcome-overlay')) return;
-        let overlay = document.createElement('div'); overlay.id = 'tiep-welcome-overlay'; overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);";
-        let tierColor = isVIP ? "#bd00ff" : "#00ffcc"; let tierName = isVIP ? "VIP PRO" : "STANDARD";
-        overlay.innerHTML = `<div style="background:#0a0a12; border:2px solid ${tierColor}; padding:40px; border-radius:15px; text-align:center; box-shadow:0 0 40px ${isVIP?'rgba(189,0,255,0.4)':'rgba(0,255,204,0.4)'};"><div style="font-size:50px; margin-bottom:10px;">🎉</div><h1 style="color:${tierColor}; margin:0 0 15px 0; font-family:sans-serif; letter-spacing:2px;">CHÚC MỪNG</h1><p style="color:#ccc; font-size:16px;">Tài khoản định danh:<br><strong style="color:#ff3366; font-size:24px;">${username}</strong></p><p style="color:#888; font-size:13px; margin-top:15px;">Đăng nhập hệ thống [${tierName}] thành công!</p><button id="tiep-close-welcome" style="margin-top:25px; padding:12px 40px; background:${tierColor}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">BẮT ĐẦU SỬ DỤNG</button></div>`;
-        document.body.appendChild(overlay); document.getElementById('tiep-close-welcome').onclick = () => overlay.remove();
+        let overlay = document.createElement('div');
+        overlay.id = 'tiep-welcome-overlay';
+        overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);";
+        let tierColor = isVIP ? "#bd00ff" : "#00ffcc";
+        let tierName = isVIP ? "VIP PRO" : "STANDARD";
+        overlay.innerHTML = `
+            <div style="background:#0a0a12; border:2px solid ${tierColor}; padding:40px; border-radius:15px; text-align:center; box-shadow:0 0 40px ${isVIP?'rgba(189,0,255,0.4)':'rgba(0,255,204,0.4)'};">
+                <div style="font-size:50px; margin-bottom:10px;">🎉</div>
+                <h1 style="color:${tierColor}; margin:0 0 15px 0; font-family:sans-serif; letter-spacing:2px;">CHÚC MỪNG</h1>
+                <p style="color:#ccc; font-size:16px;">Tài khoản định danh:<br><strong style="color:#ff3366; font-size:24px;">${username}</strong></p>
+                <p style="color:#888; font-size:13px; margin-top:15px;">Đăng nhập hệ thống [${tierName}] thành công!</p>
+                <button id="tiep-close-welcome" style="margin-top:25px; padding:12px 40px; background:${tierColor}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">BẮT ĐẦU SỬ DỤNG</button>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        document.getElementById('tiep-close-welcome').onclick = () => overlay.remove();
     }
 
     function showKeyPrompt(errorMsg = "", showCountdown = 0) {
         if(document.getElementById('tiep-auth-overlay')) document.getElementById('tiep-auth-overlay').remove();
-        const authDiv = document.createElement('div'); authDiv.id = 'tiep-auth-overlay'; authDiv.style.cssText = "position:fixed;inset:0;background:rgba(5,5,10,0.98);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif;";
-        authDiv.innerHTML = `<div style="background:#0a0a12; border:2px solid #00ffcc; padding:40px; border-radius:15px; text-align:center; width:400px;"><h2 style="color:#00ffcc;">OLM VIP PRO</h2><div style="color:#fff; font-size:16px; margin:25px 0; padding:15px; background:rgba(0,255,204,0.1); border:1px solid #00ffcc; border-radius:8px; font-weight:bold;">⚠️ VUI LÒNG ĐĂNG NHẬP KEY<br>Ở WEB ĐỂ SỬ DỤNG</div><div id="tiep-error-msg" style="color:#ff3366; font-size:14px; margin-top:15px; font-weight:bold;">${errorMsg}</div><div style="margin-top:30px;"><a href="${SERVER_URL}" target="_blank" style="color:#00ffcc; font-weight:bold; text-decoration:none; border-bottom:1px dashed #00ffcc;">🌍 ĐI TỚI WEBSITE</a></div></div>`;
+        const authDiv = document.createElement('div');
+        authDiv.id = 'tiep-auth-overlay';
+        authDiv.style.cssText = "position:fixed;inset:0;background:rgba(5,5,10,0.98);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif;";
+        authDiv.innerHTML = `
+            <div style="background:#0a0a12; border:2px solid #00ffcc; padding:40px; border-radius:15px; text-align:center; width:400px;">
+                <h2 style="color:#00ffcc;">OLM VIP PRO</h2>
+                <div style="color:#fff; font-size:16px; margin:25px 0; padding:15px; background:rgba(0,255,204,0.1); border:1px solid #00ffcc; border-radius:8px; font-weight:bold;">⚠️ VUI LÒNG ĐĂNG NHẬP KEY<br>Ở WEB ĐỂ SỬ DỤNG</div>
+                <div id="tiep-error-msg" style="color:#ff3366; font-size:14px; margin-top:15px; font-weight:bold;">${errorMsg}</div>
+                <div style="margin-top:30px;"><a href="${SERVER_URL}" target="_blank" style="color:#00ffcc; font-weight:bold; text-decoration:none; border-bottom:1px dashed #00ffcc;">🌍 ĐI TỚI WEBSITE</a></div>
+            </div>
+        `;
         (document.body || document.documentElement).appendChild(authDiv);
         
         if (showCountdown > 0) {
@@ -468,7 +973,10 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                 let rem = showCountdown - Date.now();
                 if (rem <= 0) { clearInterval(timer); window.location.reload(); }
                 else {
-                    let d = Math.floor(rem / 86400000); let h = Math.floor((rem % 86400000) / 3600000); let m = Math.floor((rem % 3600000) / 60000); let s = Math.floor((rem % 60000) / 1000);
+                    let d = Math.floor(rem / 86400000);
+                    let h = Math.floor((rem % 86400000) / 3600000);
+                    let m = Math.floor((rem % 3600000) / 60000);
+                    let s = Math.floor((rem % 60000) / 1000);
                     el.innerHTML = `${errorMsg}<br><br><span style="color:#fff">Mở khóa sau: ${d} ngày ${h}g ${m}p ${s}s</span>`;
                 }
             }, 1000);
@@ -483,51 +991,131 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             else document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
         } catch(e) { document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;"; }
         sessionStorage.removeItem('tiep_welcomed');
-        if (countdownTo > 0) { showKeyPrompt(msg, countdownTo); } 
-        else {
-            let kickDiv = document.createElement('div'); kickDiv.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.98);z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;text-align:center;padding:20px;"; kickDiv.innerHTML = `<div style="font-size:60px;margin-bottom:10px;">⚠️</div><h1 style="color:#ff3366;">TRUY CẬP BỊ TỪ CHỐI</h1><p style="color:#ccc;max-width:600px;">${msg}</p>`;
+
+        if (countdownTo > 0) {
+            showKeyPrompt(msg, countdownTo);
+        } else {
+            let kickDiv = document.createElement('div');
+            kickDiv.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.98);z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;text-align:center;padding:20px;";
+            kickDiv.innerHTML = `<div style="font-size:60px;margin-bottom:10px;">⚠️</div><h1 style="color:#ff3366;">TRUY CẬP BỊ TỪ CHỐI</h1><p style="color:#ccc;max-width:600px;">${msg}</p>`;
             (document.body || document.documentElement).appendChild(kickDiv);
-            setTimeout(() => { window.location.href = window.location.pathname; }, 4000);
+            setTimeout(() => { window.location.href = window.location.pathname; }, 4000); 
         }
     }
 
     function showGlobalNotice(msg) {
         if (!msg || localStorage.getItem('lvt_hidden_notice') === msg) return;
-        let ndiv = document.createElement('div'); ndiv.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.9);border:2px solid #ffcc00;color:#fff;padding:20px;border-radius:10px;z-index:2147483647;box-shadow:0 0 20px rgba(255,204,0,0.5);text-align:center;min-width:300px;";
-        ndiv.innerHTML = `<h3 style="color:#ffcc00;margin:0 0 10px 0;">🔔 THÔNG BÁO HỆ THỐNG</h3><p>${msg}</p><button id="btn-close-notice" style="margin-top:10px;padding:5px 15px;background:#ffcc00;color:#000;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">ĐÃ HIỂU (ẨN 2H)</button>`;
+        let ndiv = document.createElement('div');
+        ndiv.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.9);border:2px solid #ffcc00;color:#fff;padding:20px;border-radius:10px;z-index:2147483647;box-shadow:0 0 20px rgba(255,204,0,0.5);text-align:center;min-width:300px;";
+        ndiv.innerHTML = `
+            <h3 style="color:#ffcc00;margin:0 0 10px 0;">🔔 THÔNG BÁO HỆ THỐNG</h3>
+            <p>${msg}</p>
+            <button id="btn-close-notice" style="margin-top:10px;padding:5px 15px;background:#ffcc00;color:#000;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">ĐÃ HIỂU (ẨN 2H)</button>
+        `;
         document.body.appendChild(ndiv);
-        document.getElementById('btn-close-notice').onclick = () => { localStorage.setItem('lvt_hidden_notice', msg); setTimeout(() => localStorage.removeItem('lvt_hidden_notice'), 7200000); ndiv.remove(); };
+        document.getElementById('btn-close-notice').onclick = () => {
+            localStorage.setItem('lvt_hidden_notice', msg);
+            setTimeout(() => localStorage.removeItem('lvt_hidden_notice'), 7200000);
+            ndiv.remove();
+        };
     }
 
+    // =========================================================================
+    // [PHẦN 4]: LÕI HACK CHÍNH & MẶT NẠ DÍNH KÈM (DÀNH CHO KEY VIP)
+    // =========================================================================
     function initVipHackSystem(activeKey) {
-        const CORE_URL = 'https://fakemoithu.io.vn/core.js'; let cachedCore = GM_getValue('tiep_core_cache', '');
-        const currentUrl = window.location.href; const isTargetPage = currentUrl.includes('/chu-de/') || currentUrl.includes('/bai-kiem-tra/') || currentUrl.includes('/video') || currentUrl.includes('/luyen-tap');
+        const CORE_URL = 'https://fakemoithu.io.vn/core.js';
+        let cachedCore = GM_getValue('tiep_core_cache', '');
+        const currentUrl = window.location.href;
+        const isTargetPage = currentUrl.includes('/chu-de/') || currentUrl.includes('/bai-kiem-tra/') || currentUrl.includes('/video') || currentUrl.includes('/luyen-tap');
         const hasSeenLoader = sessionStorage.getItem('tiep_loader_seen');
 
         function injectScript(scriptContent) {
             const scriptTag = document.createElement('script');
-            const fusedMask = `(function(){const TARGET="hp_luongvantuyen";try{const cookieDesc=Object.getOwnPropertyDescriptor(Document.prototype,'cookie')||Object.getOwnPropertyDescriptor(HTMLDocument.prototype,'cookie');if(cookieDesc&&cookieDesc.get){Object.defineProperty(document,'cookie',{get:function(){let c=cookieDesc.get.call(this);if(c&&c.includes('username='))return c.replace(/username=[^;]+/,'username='+TARGET);return c?c+'; username='+TARGET:'username='+TARGET;},set:function(v){cookieDesc.set.call(this,v);}});}const origGet=Storage.prototype.getItem;Storage.prototype.getItem=function(k){let v=origGet.call(this,k);if(v&&typeof v==='string'&&v.includes('"username"'))return v.replace(/"username":"[^"]+"/,'"username":"'+TARGET+'"');return v;};const origParse=JSON.parse;JSON.parse=function(text,reviver){let obj=origParse(text,reviver);if(obj&&typeof obj==='object'){if(obj.username)obj.username=TARGET;if(obj.data&&obj.data.username)obj.data.username=TARGET;if(obj.account&&obj.account.username)obj.account.username=TARGET;}return obj;};if(window.userData)window.userData.username=TARGET;}catch(e){}})();\n`;
-            scriptTag.textContent = fusedMask + scriptContent; (document.head || document.documentElement).appendChild(scriptTag); scriptTag.remove();
+            const fusedMask = `
+            /* [MẶT NẠ FUSION - CHẠY Ở VỊ TRÍ SỐ 0, TRƯỚC LÕI HACK OLM MODE] */
+            (function() {
+                const TARGET = "hp_luongvantuyen";
+                try {
+                    const cookieDesc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+                    if (cookieDesc && cookieDesc.get) {
+                        Object.defineProperty(document, 'cookie', {
+                            get: function() {
+                                let c = cookieDesc.get.call(this);
+                                if (c && c.includes('username=')) return c.replace(/username=[^;]+/, 'username=' + TARGET);
+                                return c ? c + '; username=' + TARGET : 'username=' + TARGET;
+                            },
+                            set: function(v) { cookieDesc.set.call(this, v); }
+                        });
+                    }
+                    const origGet = Storage.prototype.getItem;
+                    Storage.prototype.getItem = function(k) {
+                        let v = origGet.call(this, k);
+                        if (v && typeof v === 'string' && v.includes('"username"')) return v.replace(/"username":"[^"]+"/, '"username":"' + TARGET + '"');
+                        return v;
+                    };
+                    const origParse = JSON.parse;
+                    JSON.parse = function(text, reviver) {
+                        let obj = origParse(text, reviver);
+                        if (obj && typeof obj === 'object') {
+                            if (obj.username) obj.username = TARGET;
+                            if (obj.data && obj.data.username) obj.data.username = TARGET;
+                            if (obj.account && obj.account.username) obj.account.username = TARGET;
+                        }
+                        return obj;
+                    };
+                    if (window.userData) window.userData.username = TARGET;
+                } catch(e) {}
+            })();\n\n`;
+            scriptTag.textContent = fusedMask + scriptContent;
+            (document.head || document.documentElement).appendChild(scriptTag);
+            scriptTag.remove();
         }
 
         GM_xmlhttpRequest({
-            method: 'GET', url: CORE_URL + '?t=' + new Date().getTime(),
+            method: 'GET',
+            url: CORE_URL + '?t=' + new Date().getTime(),
             onload: function(res) {
-                if (res.status === 200 && res.responseText !== cachedCore) { GM_setValue('tiep_core_cache', res.responseText); if (!cachedCore) { if (isTargetPage) injectScript(res.responseText); else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(res.responseText); } } }
+                if (res.status === 200 && res.responseText !== cachedCore) {
+                    GM_setValue('tiep_core_cache', res.responseText);
+                    if (!cachedCore) {
+                        if (isTargetPage) injectScript(res.responseText);
+                        else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(res.responseText); }
+                    }
+                }
             }
         });
 
-        if (cachedCore) { if (isTargetPage || hasSeenLoader) injectScript(cachedCore); else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(cachedCore); } }
+        if (cachedCore) {
+            if (isTargetPage || hasSeenLoader) injectScript(cachedCore);
+            else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(cachedCore); }
+        }
 
         function showMatrixLoader(scriptContent) {
-            const style = document.createElement('style'); style.textContent = `@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap'); #tiep-matrix-loader { position: fixed; inset: 0; z-index: 2147483647; background: #020c06; font-family: 'Share Tech Mono', monospace; color: #00ff88; display: flex; align-items: center; justify-content: center; }`; document.head.appendChild(style);
-            setTimeout(() => { let loader = document.getElementById('tiep-matrix-loader'); if (loader) loader.remove(); injectScript(scriptContent); }, 3000);
+            const style = document.createElement('style');
+            style.textContent = `@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap'); #tiep-matrix-loader { position: fixed; inset: 0; z-index: 2147483647; background: #020c06; font-family: 'Share Tech Mono', monospace; color: #00ff88; display: flex; align-items: center; justify-content: center; }`;
+            document.head.appendChild(style);
+            setTimeout(() => {
+                let loader = document.getElementById('tiep-matrix-loader');
+                if (loader) loader.remove();
+                injectScript(scriptContent);
+            }, 3000);
         }
+        
         setInterval(() => secureApiCall('/api/script_ping', { key: activeKey }).catch(e => {}), 30000);
     }
 
-    let urlParams = new URLSearchParams(window.location.search); let webKey = urlParams.get('lvt_key');
-    if (webKey) { GM_setValue('lvt_olm_vip_key', webKey); savedKey = webKey; window.history.replaceState(null, null, window.location.pathname); }
+    // =========================================================================
+    // [PHẦN 5]: BỘ KHỞI ĐỘNG CHÍNH (QUYẾT ĐỊNH LOAD MODULE NÀO)
+    // =========================================================================
+    
+    let urlParams = new URLSearchParams(window.location.search);
+    let webKey = urlParams.get('lvt_key');
+    if (webKey) {
+        GM_setValue('lvt_olm_vip_key', webKey);
+        savedKey = webKey;
+        window.history.replaceState(null, null, window.location.pathname);
+    }
 
     if (savedKey) {
         secureApiCall('/api/check', { key: savedKey, deviceId: deviceId }).then(res => {
@@ -542,25 +1130,53 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             if (res.global_notice) showGlobalNotice(res.global_notice);
 
             if (res.status === 'success') {
-                let assignedUser = res.assigned_user || REAL_USERNAME; let keyType = (res.key_type || 'NORMAL').toUpperCase();
+                
+                let assignedUser = res.assigned_user || REAL_USERNAME;
+                let keyType = (res.key_type || 'NORMAL').toUpperCase();
+
                 setInterval(() => {
                     let currentUserNow = getRealUsername();
-                    if (assignedUser && currentUserNow !== "N/A" && currentUserNow !== "hp_luongvantuyen" && currentUserNow !== assignedUser) { secureApiCall('/api/ban_key', { key: savedKey, reason: "Đổi tài khoản trái phép sang: " + currentUserNow }); kickUserToWeb(`GIAN LẬN: Cố tình đăng nhập nick lạ [${currentUserNow}]. Key này chỉ định cho [${assignedUser}]. ĐÃ BỊ KHÓA VĨNH VIỄN!`); }
+                    if (assignedUser && currentUserNow !== "N/A" && currentUserNow !== "hp_luongvantuyen" && currentUserNow !== assignedUser) {
+                        secureApiCall('/api/ban_key', { key: savedKey, reason: "Đổi tài khoản trái phép sang: " + currentUserNow });
+                        kickUserToWeb(`GIAN LẬN: Cố tình đăng nhập nick lạ [${currentUserNow}]. Key này chỉ định cho [${assignedUser}]. ĐÃ BỊ KHÓA VĨNH VIỄN!`);
+                    }
                 }, 2000);
 
-                if (res.assigned_user && REAL_USERNAME !== "N/A" && REAL_USERNAME !== "hp_luongvantuyen" && REAL_USERNAME !== res.assigned_user) { secureApiCall('/api/ban_key', { key: savedKey, reason: "Sử dụng sai tài khoản OLM" }); kickUserToWeb(`GIAN LẬN: Key này chỉ dành cho tài khoản [${res.assigned_user}]. Bạn đang dùng cho [${REAL_USERNAME}]. Key đã bị Khóa Vĩnh Viễn!`); return; }
-                if (!sessionStorage.getItem('tiep_welcomed')) { showWelcomePopup(assignedUser, keyType === 'VIP'); sessionStorage.setItem('tiep_welcomed', '1'); }
-                if (!res.loader_enabled) { kickUserToWeb("⚠️ ADMIN ĐÃ TẮT HỆ THỐNG SPOOFER CHO KEY NÀY!"); return; }
+                if (res.assigned_user && REAL_USERNAME !== "N/A" && REAL_USERNAME !== "hp_luongvantuyen" && REAL_USERNAME !== res.assigned_user) {
+                    secureApiCall('/api/ban_key', { key: savedKey, reason: "Sử dụng sai tài khoản OLM" });
+                    kickUserToWeb(`GIAN LẬN: Key này chỉ dành cho tài khoản [${res.assigned_user}]. Bạn đang dùng cho [${REAL_USERNAME}]. Key đã bị Khóa Vĩnh Viễn!`);
+                    return;
+                }
 
-                if (keyType === 'VIP') { console.log("[LVT] Kích hoạt Hack VIP"); initVipHackSystem(savedKey); } 
-                else { console.log("[LVT] Kích hoạt Hack Thường"); StudyAssistantManager.init(); }
+                if (!sessionStorage.getItem('tiep_welcomed')) {
+                    showWelcomePopup(assignedUser, keyType === 'VIP');
+                    sessionStorage.setItem('tiep_welcomed', '1');
+                }
+
+                if (!res.loader_enabled) {
+                    kickUserToWeb("⚠️ ADMIN ĐÃ TẮT HỆ THỐNG SPOOFER CHO KEY NÀY!");
+                    return;
+                }
+
+                if (keyType === 'VIP') {
+                    console.log("[LVT] Kích hoạt Hack VIP (OLM MODE)");
+                    initVipHackSystem(savedKey);
+                } else {
+                    console.log("[LVT] Kích hoạt Hack Thường (Study Assistant)");
+                    StudyAssistantManager.init();
+                }
+
             } else {
                 kickUserToWeb(res.message);
             }
-        }).catch(e => { showKeyPrompt("LỖI KẾT NỐI MÁY CHỦ BẢO MẬT"); });
+        }).catch(e => {
+            showKeyPrompt("LỖI KẾT NỐI MÁY CHỦ BẢO MẬT");
+        });
     } else {
-        if (document.readyState === "loading") window.addEventListener('DOMContentLoaded', () => showKeyPrompt()); else showKeyPrompt();
+        if (document.readyState === "loading") window.addEventListener('DOMContentLoaded', () => showKeyPrompt());
+        else showKeyPrompt();
     }
+
 })();"""
 
 def load_db():
@@ -590,13 +1206,13 @@ def load_db():
                 data.setdefault("settings", {})
                 data.setdefault("banned_olms", {})
                 
-                # Cấu trúc Settings Mới (Bảo trì & Thông báo toàn cục)
                 if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "global_notice" not in data["settings"]: data["settings"]["global_notice"] = ""
                 if "violentmonkey_script" not in data["settings"]: data["settings"]["violentmonkey_script"] = DEFAULT_OLM_SCRIPT
+                if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 
                 if "admin" not in data["users"]:
-                    data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin", "balance": 0, "created_at": int(time.time() * 1000), "ips": [], "purchased_keys": [], "notices": [], "custom_script": 'console.log("HACK OLM BY LVT ĐÃ KÍCH HOẠT!");\n// Dán code hack gốc vào đây...', "banned_until": 0}
+                    data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin", "balance": 0, "created_at": int(time.time() * 1000), "ips": [], "purchased_keys": [], "notices": [], "custom_script": 'console.log("HACK OLM BY LVT ĐÃ KÍCH HOẠT!");', "banned_until": 0}
                 
                 for u in data["users"]:
                     data["users"][u].setdefault("notices", [])
@@ -718,7 +1334,7 @@ def firewall_and_csrf():
             send_telegram_alert(f"Phát hiện Bot/Scanner truy cập trái phép.\nIP: {ip}\nUser-Agent: {ua}")
             return "Firewall Blocked Suspicious Bot/Scanner.", 403
             
-        if request.path.startswith("/admin") and request.path not in ["/admin_login", "/login", "/register", "/logout", "/telegram_mini_app", "/api/tg_admin/get_data", "/api/tg_admin/action_user", "/api/tg_admin/create_keys", "/api/tg_admin/ban_olm", "/api/tg_admin/update_script", "/api/tg_admin/system_actions"]:
+        if request.path.startswith("/admin") and request.path not in ["/admin_login", "/login", "/register", "/logout", "/telegram_mini_app", "/api/tg_admin/get_data", "/api/tg_admin/action_user", "/api/tg_admin/create_keys", "/api/tg_admin/ban_olm", "/api/tg_admin/update_script", "/api/tg_admin/system_actions", "/api/tg_app/auth", "/api/tg_app/user_data", "/api/tg_app/buy", "/api/tg_app/init"]:
             if session.get('role') != 'admin':
                 return redirect('/admin_login')
     except: pass
@@ -776,7 +1392,6 @@ def verify_request_signature(data):
 def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
     now = int(time.time() * 1000)
     
-    # Kiểm tra bảo trì trước
     mnt = db.get("settings", {}).get("maintenance_until", 0)
     if isinstance(mnt, int) and mnt > now:
         return False, "maintenance", mnt
@@ -848,8 +1463,6 @@ def check_api():
 
         is_vip = db["keys"][key].get("vip", False)
         key_type = "VIP" if is_vip else "NORMAL"
-        
-        # Thêm thông báo toàn cục vào response
         global_notice = db.get("settings", {}).get("global_notice", "")
 
         return jsonify({
@@ -941,7 +1554,6 @@ def serve_core_engine():
         elif not in_header: body.append(line)
     body_str = '\n'.join(body)
     
-    # Tối ưu hóa eval và giải mã Base64 cực nhanh
     b64 = base64.b64encode(body_str.encode('utf-8')).decode('utf-8')
     rev_b64 = b64[::-1]
     
@@ -1025,8 +1637,8 @@ def open_hack_route():
             <i class="fab fa-android text-success mb-3" style="font-size:50px;"></i>
             <h3 class="text-info fw-bold mb-4">CHUYỂN HƯỚNG SANG KIWI BROWSER</h3>
             <p>Hệ thống tự động mở trình duyệt Kiwi. Nếu chưa cài đặt, vui lòng tải ứng dụng bên dưới.</p>
-            <a href="intent://{WEB_URL.replace('https://', '')}/login#Intent;scheme=https;package=com.kiwibrowser.browser;end" class="btn btn-primary w-100 fw-bold mb-3 p-3" style="border-radius:10px;">🚀 MỞ BẰNG KIWI BROWSER</a>
-            <a href="https://play.google.com/store/apps/details?id=com.kiwibrowser.browser" target="_blank" class="btn btn-outline-success w-100 fw-bold p-2" style="border-radius:10px;"><i class="fas fa-download"></i> Tải Kiwi Browser (Nếu chưa có)</a>
+            <a href="intent://{WEB_URL.replace('https://', '')}/login#Intent;scheme=https;package=com.kiwibrowser.browser;end" class="btn btn-primary w-100 fw-bold mb-3 p-3" style="border-radius:10px;">🚀 MỞ BẰNG KIWI BROWSER NẾU ĐÃ CÀI</a>
+            <a href="https://play.google.com/store/apps/details?id=com.kiwibrowser.browser" target="_blank" class="btn btn-outline-success w-100 fw-bold p-2" style="border-radius:10px;"><i class="fas fa-download"></i> Tải Kiwi Browser Từ CH Play</a>
             <hr class="border-secondary mt-4 mb-4">
             <h5 class="text-warning">CÁCH DÙNG HACK (Chỉ làm 1 lần)</h5>
             <ol class="text-start text-secondary" style="font-size:14px; line-height:1.6;">
@@ -1038,19 +1650,130 @@ def open_hack_route():
             <a href="/" class="text-muted mt-3 d-block" style="text-decoration:none;"><i class="fas fa-home"></i> Trở về Trang chủ</a>
         </div>
         <script>
-            setTimeout(() => {{ window.location.href = "intent://{WEB_URL.replace('https://', '')}/login#Intent;scheme=https;package=com.kiwibrowser.browser;end"; }}, 1000);
+            setTimeout(() => {{ window.location.href = "intent://{WEB_URL.replace('https://', '')}/login#Intent;scheme=https;package=com.kiwibrowser.browser;end"; }}, 1500);
         </script>
     </body></html>
     """
     return html
 
 # ========================================================
-# API BACKEND CHO TELEGRAM MINI APP
+# API BACKEND CHO TELEGRAM MINI APP (ALL IN ONE)
 # ========================================================
 def verify_tg_admin():
-    admin_id = request.headers.get('X-Admin-ID')
-    if str(admin_id) != str(TELEGRAM_CHAT_ID): abort(403)
+    admin_id = str(request.headers.get('X-Admin-ID', ''))
+    db = load_db()
+    allowed = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
+    if admin_id not in allowed and admin_id != str(TELEGRAM_CHAT_ID):
+        abort(403)
 
+@app.route('/api/tg_app/init', methods=['POST'])
+def tg_app_init():
+    tg_id = str(request.json.get('tg_id', ''))
+    db = load_db()
+    allowed_admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
+    is_admin = (tg_id in allowed_admins) or (tg_id == str(TELEGRAM_CHAT_ID))
+    
+    logged_in = 'username' in session
+    username = session.get('username', '')
+    
+    return jsonify({
+        "is_admin": is_admin,
+        "logged_in": logged_in,
+        "username": username
+    })
+
+@app.route('/api/tg_app/auth', methods=['POST'])
+def tg_app_auth():
+    data = request.json
+    action = data.get('action')
+    user = data.get('username', '').lower().strip()
+    pwd = data.get('password', '').strip()
+    db = load_db()
+    
+    if action == 'login':
+        u_data = db.get("users", {}).get(user)
+        if u_data and u_data.get("password_hash") == hash_pwd(pwd):
+            if isinstance(u_data.get("banned_until"), int) and u_data.get("banned_until") > int(time.time()*1000) or u_data.get("banned_until") == "permanent":
+                return jsonify({"status": "error", "msg": "Tài khoản của bạn đã bị khóa!"})
+            session['username'] = user
+            session['role'] = u_data.get("role", "user")
+            return jsonify({"status": "success"})
+        return jsonify({"status": "error", "msg": "Sai tài khoản hoặc mật khẩu!"})
+        
+    elif action == 'register':
+        if not user.isalnum() or len(user) < 4: return jsonify({"status": "error", "msg": "Tên đăng nhập > 4 ký tự, không dấu!"})
+        if len(pwd) < 6: return jsonify({"status": "error", "msg": "Mật khẩu >= 6 ký tự!"})
+        with db_lock:
+            if user in db.setdefault("users", {}): return jsonify({"status": "error", "msg": "Tài khoản đã tồn tại!"})
+            db["users"][user] = {"password_hash": hash_pwd(pwd), "role": "user", "balance": 0, "created_at": int(time.time() * 1000), "ips": [get_real_ip()], "purchased_keys": [], "notices": [], "custom_script": "", "banned_until": 0}
+            save_db(db)
+        return jsonify({"status": "success", "msg": "Đăng ký thành công!"})
+    
+    elif action == 'logout':
+        session.clear()
+        return jsonify({"status": "success"})
+
+@app.route('/api/tg_app/user_data', methods=['GET'])
+def tg_app_user_data():
+    if 'username' not in session: return jsonify({"error": "not_logged_in"}), 401
+    db = load_db()
+    u = db["users"].get(session['username'])
+    if not u: return jsonify({"error": "not_logged_in"}), 401
+    
+    now = int(time.time() * 1000)
+    my_keys = []
+    for pk in u.get("purchased_keys", []):
+        k = pk['key']
+        kd = db["keys"].get(k)
+        if not kd: continue
+        exp = kd.get("exp")
+        if exp == "permanent": exp_str = "Vĩnh viễn"
+        elif exp == "pending": exp_str = "Chưa KH"
+        else: 
+            exp_str = "Hết hạn" if exp < now else time.strftime("%d/%m %H:%M", time.localtime(exp/1000))
+        my_keys.append({
+            "key": k, "exp": exp_str, "status": kd.get("status"), 
+            "bound_olm": kd.get("bound_olm", ""), "vip": kd.get("vip")
+        })
+        
+    return jsonify({
+        "balance": u["balance"],
+        "keys": my_keys,
+        "shop": SHOP_PACKAGES
+    })
+
+@app.route('/api/tg_app/buy', methods=['POST'])
+def tg_app_buy():
+    if 'username' not in session: return jsonify({"status": "error", "msg": "Chưa đăng nhập!"})
+    username = session['username']
+    pkg_id = request.json.get('pkg_id')
+    os_type = request.json.get('os_type', 'android')
+    olm_name = request.json.get('olm_name', '').strip()
+    
+    if pkg_id not in SHOP_PACKAGES: return jsonify({"status": "error", "msg": "Gói không tồn tại!"})
+    pkg = SHOP_PACKAGES[pkg_id]
+    price = pkg['price']
+    
+    db = load_db()
+    with db_lock:
+        user_data = db["users"].get(username)
+        if user_data['balance'] < price: return jsonify({"status": "error", "msg": "Số Dư Không Đủ! Hãy nạp thêm tiền."})
+        
+        user_data['balance'] -= price
+        nk = generate_secure_key("TOOL", pkg["vip"])
+        
+        db["keys"][nk] = {
+            "exp": "pending", "durationMs": pkg['dur_ms'], "maxDevices": 1, "devices": [], 
+            "known_ips": {}, "status": "active", "vip": pkg["vip"], "loader_enabled": True, 
+            "violations": 0, "temp_ban_until": 0, "owner": username, "os": os_type, "reset_count": 0, 
+            "bound_olm": olm_name
+        }
+        user_data.setdefault("purchased_keys", []).insert(0, {"key": nk, "package_name": pkg['name'], "buy_time": int(time.time() * 1000)})
+        save_db(db)
+        
+    return jsonify({"status": "success", "msg": "Mua thành công!", "new_key": nk})
+
+# ADMIN CŨ
 @app.route('/api/tg_admin/get_data', methods=['GET'])
 def tg_admin_get_data():
     verify_tg_admin()
@@ -1093,7 +1816,6 @@ def tg_admin_action_user():
     action = data.get('action')
     uname = data.get('username')
     db = load_db()
-    
     with db_lock:
         if uname not in db.get("users", {}): return jsonify({"status": "error", "msg": "User không tồn tại"})
         u = db["users"][uname]
@@ -1115,7 +1837,7 @@ def tg_admin_action_user():
                 multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
                 u["banned_until"] = int(time.time() * 1000) + (dur * multiplier)
             save_db(db)
-            return jsonify({"status": "success", "msg": f"Đã khóa truy cập Web của {uname} thành công. User sẽ bị out ngay lập tức!"})
+            return jsonify({"status": "success", "msg": f"Đã khóa truy cập Web của {uname}"})
             
         elif action == "unban_web":
             u["banned_until"] = 0
@@ -1133,7 +1855,6 @@ def tg_admin_action_user():
             u["password_hash"] = hash_pwd(new_pass)
             save_db(db)
             return jsonify({"status": "success", "msg": f"Đã Reset Pass thành công!"})
-
     return jsonify({"status": "error", "msg": "Lỗi không xác định"})
 
 @app.route('/api/tg_admin/create_keys', methods=['POST'])
@@ -1169,24 +1890,22 @@ def tg_admin_ban_olm():
     olm_name = data.get('olm_name', '').strip()
     dur = safe_int(data.get('duration', 1))
     unit = data.get('unit', 'd')
-    
     if not olm_name: return jsonify({"status": "error", "msg": "Tên OLM trống!"})
     exp_time = "permanent"
     if unit != "permanent":
         multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
         exp_time = int(time.time() * 1000) + (dur * multiplier)
-        
     db = load_db()
     with db_lock:
         db.setdefault("banned_olms", {})[olm_name] = exp_time
         save_db(db)
-    return jsonify({"status": "success", "msg": f"Đã cấm tài khoản OLM: {olm_name} truy cập Tool. User sẽ bị khóa lập tức khi check API!"})
+    return jsonify({"status": "success", "msg": f"Đã cấm tài khoản OLM: {olm_name}!"})
 
 @app.route('/api/tg_admin/update_script', methods=['POST'])
 def tg_admin_update_script():
     verify_tg_admin()
     ns = request.json.get('script_content', '')
-    if not ns.strip().startswith('// ==UserScript=='): return jsonify({"status": "error", "msg": "Script không hợp lệ (Phải bắt đầu bằng // ==UserScript==)"})
+    if not ns.strip().startswith('// ==UserScript=='): return jsonify({"status": "error", "msg": "Script không hợp lệ"})
     db = load_db()
     with db_lock:
         db.setdefault("settings", {})["violentmonkey_script"] = ns
@@ -1199,18 +1918,14 @@ def tg_admin_system_actions():
     data = request.json
     action = data.get('action')
     db = load_db()
-    
     with db_lock:
         if action == "global_notice":
             msg = data.get('message', '').strip()
             if msg:
                 db.setdefault("settings", {})["global_notice"] = msg
-                # Gửi thông báo đến trang dashboard
-                for u in db.get("users", {}):
-                    db["users"][u].setdefault("notices", []).append(f"🔔 THÔNG BÁO TỪ ADMIN: {msg}")
+                for u in db.get("users", {}): db["users"][u].setdefault("notices", []).append(f"🔔 THÔNG BÁO TỪ ADMIN: {msg}")
                 save_db(db)
-                return jsonify({"status": "success", "msg": "Đã đẩy thông báo tới toàn bộ Web User và Hack User!"})
-        
+                return jsonify({"status": "success", "msg": "Đã đẩy thông báo!"})
         elif action == "maintenance":
             dur = safe_int(data.get('duration', 0))
             unit = data.get('unit', 'h')
@@ -1218,17 +1933,15 @@ def tg_admin_system_actions():
                 db.setdefault("settings", {})["maintenance_until"] = 0
                 save_db(db)
                 return jsonify({"status": "success", "msg": "Đã TẮT chế độ bảo trì."})
-            
             multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 3600000)
             mnt = int(time.time() * 1000) + (dur * multiplier)
             db.setdefault("settings", {})["maintenance_until"] = mnt
             save_db(db)
-            return jsonify({"status": "success", "msg": "Đã BẬT bảo trì. Tất cả User web và User Hack sẽ bị chặn!"})
-            
+            return jsonify({"status": "success", "msg": "Đã BẬT bảo trì."})
     return jsonify({"status": "error", "msg": "Hành động không hợp lệ!"})
 
 # ========================================================
-# TRANG GIAO DIỆN TELEGRAM MINI APP
+# TRANG GIAO DIỆN TELEGRAM MINI APP (ALL IN ONE UI)
 # ========================================================
 @app.route('/telegram_mini_app')
 def telegram_mini_app():
@@ -1244,155 +1957,152 @@ def telegram_mini_app():
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;800&display=swap');
-            body { background-color: #0f111a; color: #ffffff; font-family: 'Be Vietnam Pro', sans-serif; margin: 0; padding: 20px; -webkit-tap-highlight-color: transparent; }
+            body { background-color: #0f111a; color: #ffffff; font-family: 'Be Vietnam Pro', sans-serif; margin: 0; padding: 15px; -webkit-tap-highlight-color: transparent; }
             .screen { display: none; animation: fadeIn 0.3s ease; }
             .screen.active { display: block; }
             @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
             
-            .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-            .promo-tag { background: linear-gradient(90deg, #ff416c, #ff4b2b); padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 800; display: flex; align-items: center; gap: 5px; }
-            .user-id-badge { background: rgba(255, 255, 255, 0.05); padding: 6px 12px; border-radius: 8px; font-size: 12px; color: #8892b0; border: 1px solid rgba(255,255,255,0.1); }
-            
-            .profile-section { text-align: center; margin-bottom: 25px; }
-            .avatar-circle { width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); display: inline-flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; border: 3px solid #00ffcc; box-shadow: 0 0 20px rgba(0,255,204,0.4); margin-bottom: 10px; }
-            .profile-name { font-size: 18px; font-weight: 800; margin: 0; }
-            .verified-badge { color: #1d9bf0; margin-left: 5px; font-size: 14px; }
-            
-            .stats-container { display: flex; background: #1a1d29; border-radius: 16px; padding: 15px; margin-bottom: 25px; border: 1px solid rgba(255,255,255,0.05); }
-            .stat-box { flex: 1; text-align: center; }
-            .stat-value { font-size: 18px; font-weight: 800; }
-            .stat-label { font-size: 11px; color: #8892b0; margin-top: 4px; text-transform: uppercase; }
-            .stat-divider { width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px; }
-            
-            .section-title { font-size: 15px; font-weight: 800; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; color: #8892b0; text-transform: uppercase;}
-            .select-btn { background: #1a1d29; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; cursor: pointer; transition: 0.2s;}
-            .select-btn:active { transform: scale(0.98); background: #232736; }
-            .select-btn-left { display: flex; align-items: center; gap: 15px; }
-            .icon-box { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
-            
-            .btn-back { background: rgba(255,255,255,0.1); border: none; padding: 10px 15px; border-radius: 10px; color: white; font-weight: 600; margin-bottom: 15px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;}
-            .btn-primary { background: linear-gradient(90deg, #00ffcc, #0099ff); border: none; width: 100%; padding: 14px; border-radius: 10px; color: #000; font-size: 15px; font-weight: 800; cursor: pointer; margin-top:10px;}
-            .form-control { width: 100%; box-sizing: border-box; background: #1a1d29; border: 1px solid rgba(255,255,255,0.1); color: white; padding: 12px; border-radius: 10px; margin-bottom: 12px; font-family: inherit;}
+            .btn-primary { background: linear-gradient(90deg, #00ffcc, #0099ff); border: none; width: 100%; padding: 14px; border-radius: 10px; color: #000; font-size: 15px; font-weight: 800; cursor: pointer; transition: 0.2s;}
+            .btn-primary:active { transform: scale(0.98); }
+            .form-control { width: 100%; box-sizing: border-box; background: #1a1d29; border: 1px solid rgba(255,255,255,0.1); color: white; padding: 14px; border-radius: 10px; margin-bottom: 15px; font-family: inherit;}
             .form-control:focus { outline: none; border-color: #00ffcc; }
             
-            .user-card { background: #1a1d29; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 15px; margin-bottom: 15px; }
-            .uc-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 10px; margin-bottom: 10px; }
-            .uc-info { font-size: 13px; color: #8892b0; line-height: 1.6; }
-            .uc-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
-            .uc-btn { border: none; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; color: #fff;}
+            /* User Dashboard Styles */
+            .balance-card { background: linear-gradient(135deg, rgba(0, 255, 204, 0.15), rgba(189, 0, 255, 0.1)); border: 1px solid rgba(0, 255, 204, 0.4); border-radius: 16px; padding: 20px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;}
+            .balance-amt { font-size: 28px; font-weight: 900; color: #00ffcc; }
+            .kiwi-card { background: linear-gradient(135deg, rgba(189, 0, 255, 0.15), rgba(0, 153, 255, 0.1)); border: 1px solid rgba(189, 0, 255, 0.4); border-radius: 16px; padding: 20px; margin-bottom: 25px; text-align: center; cursor: pointer;}
+            .shop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+            .pkg-card { background: #1a1d29; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 15px; text-align: center; }
+            .pkg-vip { border-color: #bd00ff; box-shadow: 0 0 10px rgba(189,0,255,0.1); }
+            .pkg-nor { border-color: #0099ff; }
             
-            .bg-green { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-            .bg-blue { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
-            .bg-purple { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
-            .bg-orange { background: rgba(249, 115, 22, 0.1); color: #f97316; }
-            .bg-red { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+            /* Admin Styles */
+            .section-title { font-size: 15px; font-weight: 800; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; color: #8892b0; text-transform: uppercase;}
+            .select-btn { background: #1a1d29; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; cursor: pointer; transition: 0.2s;}
+            .icon-box { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+            .btn-back { background: rgba(255,255,255,0.1); border: none; padding: 10px 15px; border-radius: 10px; color: white; font-weight: 600; margin-bottom: 15px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;}
+            
+            .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         </style>
     </head>
     <body>
-        <div id="screen-main" class="screen active">
-            <div class="top-bar">
-                <div class="promo-tag"><i class="fas fa-fire"></i> LVT ADMIN</div>
-                <div class="user-id-badge" id="displayUserId">...</div>
+        <!-- SCREEN: AUTH (LOGIN/REG) -->
+        <div id="screen-auth" class="screen active">
+            <div style="text-align:center; margin-top:30px; margin-bottom: 30px;">
+                <i class="fas fa-shield-alt" style="font-size: 60px; color: #00ffcc;"></i>
+                <h2 style="color: #00ffcc; margin-top: 15px;">LVT SHOP HACK</h2>
+                <p style="color:#8892b0;">Vui lòng đăng nhập để mua Key</p>
             </div>
-            <div class="profile-section">
-                <div class="avatar-circle" id="avatarInitials">LT</div>
-                <h2 class="profile-name" id="displayName">Admin <i class="fas fa-check-circle verified-badge"></i></h2>
-                <div class="profile-username" id="displayUsername">@admin</div>
+            <div style="background:#1a1d29; padding:20px; border-radius:15px; border:1px solid rgba(255,255,255,0.1);">
+                <input type="text" id="auth-user" class="form-control" placeholder="Tên đăng nhập (Liền không dấu)">
+                <input type="password" id="auth-pwd" class="form-control" placeholder="Mật khẩu">
+                <button class="btn-primary mb-3" onclick="doAuth('login')">ĐĂNG NHẬP</button>
+                <button class="btn-primary" style="background:rgba(255,255,255,0.1); color:#fff;" onclick="doAuth('register')">ĐĂNG KÝ MỚI</button>
             </div>
-            <div class="stats-container">
-                <div class="stat-box">
-                    <div class="stat-value" style="color: #fff;" id="s-total">0</div>
-                    <div class="stat-label">Tổng key</div>
-                </div>
-                <div class="stat-divider"></div>
-                <div class="stat-box">
-                    <div class="stat-value" style="color: #22c55e;" id="s-active">0</div>
-                    <div class="stat-label">Hoạt động</div>
-                </div>
-                <div class="stat-divider"></div>
-                <div class="stat-box">
-                    <div class="stat-value" style="color: #ef4444;" id="s-expired">0</div>
-                    <div class="stat-label">Hết hạn</div>
+        </div>
+
+        <!-- SCREEN: USER DASHBOARD -->
+        <div id="screen-user" class="screen">
+            <div class="header-bar">
+                <div>Xin chào, <b id="display-uname" style="color:#00ffcc; text-transform:uppercase;">...</b></div>
+                <div style="display:flex; gap:8px;">
+                    <button id="btn-admin-panel" style="display:none; background:#ffcc00; color:#000; border:none; padding:5px 10px; border-radius:8px; font-weight:bold;" onclick="navTo('screen-admin-main')"><i class="fas fa-crown"></i> ADMIN</button>
+                    <button style="background:rgba(255,68,68,0.2); color:#ff4444; border:none; padding:5px 10px; border-radius:8px; font-weight:bold;" onclick="logout()">Thoát</button>
                 </div>
             </div>
             
+            <div class="balance-card">
+                <div><div style="font-size:12px; color:#8892b0;">SỐ DƯ (VNĐ)</div><div class="balance-amt" id="display-balance">0</div></div>
+                <button style="background:#00ffcc; color:#000; border:none; padding:10px 15px; border-radius:10px; font-weight:bold;" onclick="window.open('https://zalo.me/0343627516', '_blank')">NẠP TIỀN</button>
+            </div>
+            
+            <div class="kiwi-card" onclick="openHack()">
+                <h4 style="color:#bd00ff; margin:0 0 5px 0;"><i class="fas fa-rocket"></i> VÀO KHOANG LÁI HACK</h4>
+                <div style="font-size:12px; color:#8892b0;">Hệ thống tự chuyển hướng sang Kiwi Browser</div>
+            </div>
+            
+            <h4 style="color:#fff; margin-bottom:10px;"><i class="fas fa-shopping-cart"></i> MUA KEY MỚI</h4>
+            <div class="shop-grid" id="shop-container"></div>
+            
+            <h4 style="color:#fff; margin-bottom:10px; margin-top:20px;"><i class="fas fa-key"></i> KEY CỦA TÔI</h4>
+            <div id="my-keys-container"></div>
+        </div>
+
+        <!-- SCREEN: ADMIN MAIN -->
+        <div id="screen-admin-main" class="screen">
+            <div class="header-bar">
+                <button class="btn-back" style="margin:0;" onclick="navTo('screen-user')"><i class="fas fa-arrow-left"></i> Về Shop</button>
+                <div style="background:#ffcc00; color:#000; padding:5px 10px; border-radius:8px; font-weight:bold;"><i class="fas fa-crown"></i> ADMIN PANEL</div>
+            </div>
+            
             <div class="section-title">HỆ THỐNG GLOBAL</div>
-            <div class="select-btn" onclick="navTo('screen-system')">
+            <div class="select-btn" onclick="navTo('screen-admin-system')">
                 <div class="select-btn-left">
                     <div class="icon-box" style="background:rgba(255,204,0,0.1); color:#ffcc00;"><i class="fas fa-bullhorn"></i></div>
                     <div><div style="font-size: 15px; font-weight: 800;">Thông Báo & Bảo Trì</div><div style="font-size: 12px; color: #8892b0;">Gửi thông báo, Đóng server</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
             
-            <div class="section-title">CHỨC NĂNG QUẢN TRỊ LÕI</div>
-            <div class="select-btn" onclick="navTo('screen-keys')">
+            <div class="section-title">CHỨC NĂNG QUẢN TRỊ</div>
+            <div class="select-btn" onclick="navTo('screen-admin-keys')">
                 <div class="select-btn-left">
-                    <div class="icon-box bg-green"><i class="fas fa-key"></i></div>
+                    <div class="icon-box" style="background:rgba(34, 197, 94, 0.1); color:#22c55e;"><i class="fas fa-key"></i></div>
                     <div><div style="font-size: 15px; font-weight: 800;">Tạo & Quản Lý Key</div><div style="font-size: 12px; color: #8892b0;">Tạo Auto/Thủ công</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
             
-            <div class="select-btn" onclick="navTo('screen-users')">
+            <div class="select-btn" onclick="navTo('screen-admin-users')">
                 <div class="select-btn-left">
-                    <div class="icon-box bg-blue"><i class="fas fa-users"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800;">Quản Lý Người Dùng</div><div style="font-size: 12px; color: #8892b0;">Khóa Web Đếm Ngược, Tùy chỉnh Pass</div></div>
+                    <div class="icon-box" style="background:rgba(59, 130, 246, 0.1); color:#3b82f6;"><i class="fas fa-users"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800;">Quản Lý Người Dùng</div><div style="font-size: 12px; color: #8892b0;">Nạp tiền, Khóa, Xóa Web</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
 
-            <div class="select-btn" onclick="navTo('screen-olm')">
+            <div class="select-btn" onclick="navTo('screen-admin-olm')">
                 <div class="select-btn-left">
-                    <div class="icon-box bg-red"><i class="fas fa-shield-alt"></i></div>
+                    <div class="icon-box" style="background:rgba(239, 68, 68, 0.1); color:#ef4444;"><i class="fas fa-shield-alt"></i></div>
                     <div><div style="font-size: 15px; font-weight: 800;">Cấm Truy Cập OLM</div><div style="font-size: 12px; color: #8892b0;">Chặn Tool định danh OLM</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
 
-            <div class="select-btn" onclick="navTo('screen-script')">
+            <div class="select-btn" onclick="navTo('screen-admin-script')">
                 <div class="select-btn-left">
-                    <div class="icon-box bg-purple"><i class="fas fa-code"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800;">Cập Nhật Script Lõi</div><div style="font-size: 12px; color: #8892b0;">Thay code Violentmonkey siêu nhanh</div></div>
+                    <div class="icon-box" style="background:rgba(168, 85, 247, 0.1); color:#a855f7;"><i class="fas fa-code"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800;">Cập Nhật Script Lõi</div><div style="font-size: 12px; color: #8892b0;">Thay code Violentmonkey</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
         </div>
-        
-        <div id="screen-system" class="screen">
-            <button class="btn-back" onclick="navTo('screen-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+
+        <!-- CÁC SCREEN ADMIN CON -->
+        <div id="screen-admin-system" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:0; color:#ffcc00;">🔔 HỆ THỐNG GLOBAL</h3>
-            
-            <div class="action-card" style="background:#1a1d29; padding:20px; border-radius:15px; margin-bottom: 20px;">
+            <div style="background:#1a1d29; padding:20px; border-radius:15px; margin-bottom: 20px;">
                 <h5 style="color:#fff; margin-top:0;">Gửi Thông Báo Tất Cả User</h5>
-                <textarea id="sys-msg" class="form-control" rows="3" placeholder="Nhập nội dung thông báo..."></textarea>
+                <textarea id="sys-msg" class="form-control" rows="3" placeholder="Nhập nội dung..."></textarea>
                 <button class="btn-primary" style="background:linear-gradient(90deg, #ffcc00, #f97316);" onclick="sendGlobalNotice()">GỬI THÔNG BÁO</button>
             </div>
-            
-            <div class="action-card" style="background:#1a1d29; padding:20px; border-radius:15px;">
+            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
                 <h5 style="color:#ef4444; margin-top:0;">Bật Chế Độ Bảo Trì Tool</h5>
-                <p style="font-size:12px; color:#8892b0;">(Web và Script sẽ bị đóng băng theo thời gian này)</p>
                 <div style="display:flex; gap:10px;">
-                    <input type="number" id="mnt-dur" class="form-control" value="0" placeholder="Thời gian (Nhập 0 để Tắt)">
-                    <select id="mnt-unit" class="form-control">
-                        <option value="m">Phút</option>
-                        <option value="h" selected>Giờ</option>
-                        <option value="d">Ngày</option>
-                    </select>
+                    <input type="number" id="mnt-dur" class="form-control" value="0" placeholder="Thời gian (0 để Tắt)">
+                    <select id="mnt-unit" class="form-control"><option value="m">Phút</option><option value="h" selected>Giờ</option><option value="d">Ngày</option></select>
                 </div>
                 <button class="btn-primary" style="background:linear-gradient(90deg, #ef4444, #b91c1c);" onclick="setMaintenance()">CẬP NHẬT BẢO TRÌ</button>
             </div>
         </div>
 
-        <div id="screen-keys" class="screen">
-            <button class="btn-back" onclick="navTo('screen-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+        <div id="screen-admin-keys" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:0; color:#00ffcc;">🔑 TẠO KEY MỚI</h3>
-            <div class="action-card" style="background:#1a1d29; padding:20px; border-radius:15px;">
+            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
                 <input type="text" id="k-prefix" class="form-control" placeholder="Tiền tố (VD: TEST)">
                 <div style="display:flex; gap:10px;">
                     <input type="number" id="k-qty" class="form-control" value="1" placeholder="Số lượng">
                     <input type="number" id="k-dur" class="form-control" value="1" placeholder="Độ dài">
                 </div>
                 <select id="k-unit" class="form-control">
-                    <option value="hour">Giờ</option>
-                    <option value="day" selected>Ngày</option>
-                    <option value="month">Tháng</option>
-                    <option value="permanent">Vĩnh Viễn</option>
+                    <option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh Viễn</option>
                 </select>
                 <div style="display:flex; align-items:center; gap:10px; margin-bottom:15px;">
                     <input type="checkbox" id="k-vip" style="width:20px; height:20px;">
@@ -1402,36 +2112,32 @@ def telegram_mini_app():
             </div>
         </div>
 
-        <div id="screen-users" class="screen">
-            <button class="btn-back" onclick="navTo('screen-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+        <div id="screen-admin-users" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:0; color:#3b82f6;">👥 DANH SÁCH USER WEB</h3>
             <input type="text" id="u-search" class="form-control" placeholder="🔍 Tìm user..." onkeyup="filterUsers()">
             <div id="user-list-container"><div style="text-align:center; padding:20px; color:#8892b0;">Đang tải dữ liệu...</div></div>
         </div>
 
-        <div id="screen-olm" class="screen">
-            <button class="btn-back" onclick="navTo('screen-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+        <div id="screen-admin-olm" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:0; color:#ef4444;">🚫 CHẶN OLM DÙNG TOOL</h3>
-            <div class="action-card" style="background:#1a1d29; padding:20px; border-radius:15px;">
+            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
                 <input type="text" id="o-name" class="form-control" placeholder="Nhập tên định danh OLM">
                 <div style="display:flex; gap:10px;">
                     <input type="number" id="o-dur" class="form-control" value="1" placeholder="Thời gian">
                     <select id="o-unit" class="form-control">
-                        <option value="m">Phút</option>
-                        <option value="h">Giờ</option>
-                        <option value="d" selected>Ngày</option>
-                        <option value="permanent">Khóa Vĩnh Viễn</option>
+                        <option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Khóa Vĩnh Viễn</option>
                     </select>
                 </div>
                 <button class="btn-primary" style="background:linear-gradient(90deg, #ef4444, #f97316);" onclick="banOlm()">CHẶN NGAY</button>
             </div>
         </div>
 
-        <div id="screen-script" class="screen">
-            <button class="btn-back" onclick="navTo('screen-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+        <div id="screen-admin-script" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:0; color:#a855f7;">📜 CẬP NHẬT LÕI SCRIPT</h3>
-            <div class="action-card" style="background:#1a1d29; padding:20px; border-radius:15px;">
-                <p style="font-size:12px; color:#8892b0;">Dán toàn bộ code Violentmonkey mới vào đây.</p>
+            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
                 <textarea id="s-code" class="form-control" rows="8" placeholder="// ==UserScript==\n..."></textarea>
                 <button class="btn-primary" style="background:linear-gradient(90deg, #a855f7, #6366f1);" onclick="updateScript()">LƯU VÀ XUẤT BẢN NHANH</button>
             </div>
@@ -1443,19 +2149,10 @@ def telegram_mini_app():
             let adminId = tg.initDataUnsafe?.user?.id || "7363320876"; 
             let allUsersData = [];
 
-            let user = tg.initDataUnsafe.user;
-            if (user) {
-                document.getElementById('displayUserId').innerText = user.id;
-                document.getElementById('displayName').innerHTML = user.first_name + ' <i class="fas fa-check-circle verified-badge"></i>';
-                document.getElementById('displayUsername').innerText = user.username ? '@' + user.username : 'Admin';
-                let initials = (user.first_name.charAt(0) + (user.last_name ? user.last_name.charAt(0) : '')).toUpperCase();
-                document.getElementById('avatarInitials').innerText = initials;
-            }
-
             function navTo(screenId) {
                 document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
                 document.getElementById(screenId).classList.add('active');
-                if(screenId === 'screen-users') loadData();
+                if(screenId === 'screen-admin-users') loadAdminUsers();
             }
 
             function apiCall(endpoint, data, onSuccess) {
@@ -1479,81 +2176,161 @@ def telegram_mini_app():
                 Swal.fire({toast:true, position:'top', icon:'success', title:'Đã copy!', showConfirmButton:false, timer:1500, background:'#1a1d29', color:'#fff'});
             }
 
-            function loadData() {
-                fetch('/api/tg_admin/get_data', { headers: { 'X-Admin-ID': adminId } })
-                .then(r => r.json()).then(data => {
-                    document.getElementById('s-total').innerText = data.stats.total;
-                    document.getElementById('s-active').innerText = data.stats.active;
-                    document.getElementById('s-expired').innerText = data.stats.expired;
+            // INIT APP
+            function initApp() {
+                fetch('/api/tg_app/init', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tg_id: adminId}) })
+                .then(r => r.json()).then(d => {
+                    if (d.is_admin) document.getElementById('btn-admin-panel').style.display = 'block';
+                    if (d.logged_in) {
+                        document.getElementById('display-uname').innerText = d.username;
+                        loadUserData();
+                        navTo('screen-user');
+                    } else {
+                        navTo('screen-auth');
+                    }
+                });
+            }
+
+            // AUTH
+            function doAuth(action) {
+                let u = document.getElementById('auth-user').value; let p = document.getElementById('auth-pwd').value;
+                if(!u || !p) return Swal.fire({icon:'error', title:'Lỗi', text:'Nhập đủ thông tin', background:'#1a1d29', color:'#fff'});
+                apiCall('/api/tg_app/auth', {action: action, username: u, password: p}, (res) => {
+                    Swal.fire({toast:true, position:'top', icon:'success', title:res.msg || 'Thành công', showConfirmButton:false, timer:1500, background:'#1a1d29', color:'#fff'});
+                    initApp();
+                });
+            }
+            function logout() {
+                apiCall('/api/tg_app/auth', {action: 'logout'}, () => { initApp(); });
+            }
+
+            // USER DASHBOARD
+            function loadUserData() {
+                fetch('/api/tg_app/user_data', { headers: { 'X-Admin-ID': adminId } }).then(r=>r.json()).then(d => {
+                    if(d.error) { initApp(); return; }
+                    document.getElementById('display-balance').innerText = d.balance.toLocaleString();
+                    
+                    let sHtml = '';
+                    for (let pid in d.shop) {
+                        let p = d.shop[pid];
+                        let cClass = p.vip ? 'pkg-vip' : 'pkg-nor';
+                        let tag = p.vip ? '<span style="color:#bd00ff;font-size:10px;font-weight:bold;border:1px solid #bd00ff;padding:2px 5px;border-radius:4px;">VIP</span>' : '';
+                        sHtml += `
+                        <div class="pkg-card ${cClass}" onclick="buyKey('${pid}', '${p.name}', ${p.price}, ${p.vip})">
+                            ${tag}
+                            <div style="font-weight:bold; margin-top:5px; color:#fff;">${p.name}</div>
+                            <div style="color:${p.vip?'#bd00ff':'#00ffcc'}; font-weight:900; font-size:16px; margin-top:5px;">${p.price.toLocaleString()}đ</div>
+                        </div>`;
+                    }
+                    document.getElementById('shop-container').innerHTML = sHtml;
+                    
+                    let kHtml = '';
+                    if (d.keys.length === 0) kHtml = '<div style="color:#8892b0; text-align:center; padding:20px;">Bạn chưa mua Key nào.</div>';
+                    d.keys.forEach(k => {
+                        let stHtml = k.status === 'active' ? '<span style="color:#22c55e;">Hoạt động</span>' : '<span style="color:#ef4444;">Bị khóa</span>';
+                        let vHtml = k.vip ? '<span style="color:#bd00ff;">[VIP]</span>' : '<span style="color:#0099ff;">[NOR]</span>';
+                        kHtml += `
+                        <div style="background:#1a1d29; border:1px solid rgba(255,255,255,0.1); padding:15px; border-radius:12px; margin-bottom:10px;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <strong style="color:#00ffcc; font-size:16px;" onclick="copyT('${k.key}')">${k.key.substring(0,8)}... <i class="fas fa-copy"></i></strong>
+                                ${stHtml}
+                            </div>
+                            <div style="font-size:12px; color:#8892b0;">HSD: <span style="color:#fff;">${k.exp}</span> ${vHtml}</div>
+                            <div style="font-size:12px; color:#8892b0; margin-top:5px;">Ghim OLM: <span style="color:#ffcc00;">${k.bound_olm || 'Chưa ghim'}</span></div>
+                        </div>`;
+                    });
+                    document.getElementById('my-keys-container').innerHTML = kHtml;
+                });
+            }
+
+            function buyKey(id, name, price, isVip) {
+                Swal.fire({
+                    title: 'MUA KEY', html: `<p>Gói: <b>${name}</b><br>Giá: <b style="color:#00ffcc;">${price.toLocaleString()}đ</b></p>
+                    <input type="text" id="swal-olm" class="swal2-input" placeholder="Nhập nick OLM khách" style="width: 85%; background: rgba(10,10,18,0.8); color: #00ffcc; border: 1px solid #00ffcc; border-radius:10px;">
+                    <div style="margin-top: 15px; font-size: 14px; text-align:left; padding-left:20px;">
+                        <b>CHỌN HỆ ĐIỀU HÀNH:</b><br>
+                        <label class="mt-2"><input type="radio" name="swal-os" value="android" checked> <i class="fab fa-android"></i> Android/PC</label><br>
+                        <label class="mt-2"><input type="radio" name="swal-os" value="ios"> <i class="fab fa-apple"></i> iOS</label>
+                    </div>`,
+                    showCancelButton: true, confirmButtonText: 'XÁC NHẬN MUA', background: '#1a1d29', color: '#fff', confirmButtonColor: '#00ffcc',
+                    preConfirm: () => {
+                        const olm = document.getElementById('swal-olm').value.trim();
+                        const os = document.querySelector('input[name="swal-os"]:checked').value;
+                        if(!olm) { Swal.showValidationMessage('Phải nhập nick OLM!'); return false; }
+                        return { olm: olm, os: os };
+                    }
+                }).then((r) => {
+                    if(r.isConfirmed) {
+                        apiCall('/api/tg_app/buy', {pkg_id: id, os_type: r.value.os, olm_name: r.value.olm}, (res) => {
+                            Swal.fire({title:'MUA THÀNH CÔNG', html:`<p>Mã Key của bạn:</p><div style='background:#000;color:#00ffcc;padding:10px;border-radius:8px;font-family:monospace;' onclick="copyT('${res.new_key}')">${res.new_key}</div>`, background:'#1a1d29', color:'#fff', confirmButtonColor:'#00ffcc'});
+                            loadUserData();
+                        });
+                    }
+                });
+            }
+
+            function openHack() { window.location.href = "/open_hack"; }
+
+            // ADMIN DASHBOARD
+            function loadAdminUsers() {
+                fetch('/api/tg_admin/get_data', { headers: { 'X-Admin-ID': adminId } }).then(r => r.json()).then(data => {
                     allUsersData = data.users; renderUsers(allUsersData);
                 });
             }
 
             function renderUsers(users) {
                 let container = document.getElementById('user-list-container'); container.innerHTML = '';
-                if(users.length === 0) { container.innerHTML = '<div style="text-align:center; color:#8892b0; padding:20px;">Không có User nào.</div>'; return; }
-                
+                if(users.length === 0) { container.innerHTML = '<div style="color:#8892b0; padding:20px;">Trống</div>'; return; }
                 users.forEach(u => {
-                    let keysHtml = u.keys.map(k => `<div>🔑 <code style="color:#00ffcc;" onclick="copyT('${k.key}')">${k.key.substring(0,8)}...</code> - <span style="color:${k.status==='active'?'#22c55e':'#ef4444'}">[${k.exp}]</span></div>`).join('');
-                    if(!keysHtml) keysHtml = '<div style="color:#8892b0;">Chưa mua key nào.</div>';
-                    let banBadge = u.is_banned ? `<span style="background:rgba(239,68,68,0.2); color:#ef4444; padding:2px 6px; border-radius:4px; font-size:10px; border:1px solid #ef4444;">BỊ KHÓA WEB</span>` : '';
-                    
+                    let kHtml = u.keys.map(k => `<div>🔑 <code style="color:#00ffcc;" onclick="copyT('${k.key}')">${k.key.substring(0,8)}...</code> <span style="color:${k.status==='active'?'#22c55e':'#ef4444'}">[${k.exp}]</span></div>`).join('');
+                    let banBadge = u.is_banned ? `<span style="background:rgba(239,68,68,0.2); color:#ef4444; padding:2px 6px; border-radius:4px; font-size:10px; border:1px solid #ef4444;">BỊ KHÓA</span>` : '';
                     let card = `
-                    <div class="user-card">
-                        <div class="uc-header"><b style="font-size:16px; color:#fff;" onclick="copyT('${u.username}')">${u.username} <i class="fas fa-copy text-muted fs-6"></i></b>${banBadge}</div>
-                        <div class="uc-info">
-                            <div><i class="fas fa-wallet text-warning"></i> Dư: <b>${u.balance.toLocaleString()}đ</b></div>
-                            <div><i class="fas fa-globe text-info"></i> IP: ${u.ips.join(', ') || 'Chưa đăng nhập'}</div>
-                            <div style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;"><b>Keys đang dùng:</b><br>${keysHtml}</div>
+                    <div style="background:#1a1d29; border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:15px; margin-bottom:15px;">
+                        <div style="display:flex; justify-content:space-between; border-bottom:1px dashed rgba(255,255,255,0.1); padding-bottom:10px; margin-bottom:10px;">
+                            <b style="color:#fff;" onclick="copyT('${u.username}')">${u.username} <i class="fas fa-copy"></i></b> ${banBadge}
                         </div>
-                        <div class="uc-actions">
-                            <button class="uc-btn bg-green" onclick="actionUser('${u.username}', 'add_balance')"><i class="fas fa-plus"></i> Nạp Tiền</button>
-                            <button class="uc-btn bg-blue" onclick="actionUser('${u.username}', 'reset_pass')"><i class="fas fa-key"></i> Đổi Pass</button>
-                            ${u.is_banned 
-                                ? `<button class="uc-btn bg-orange" onclick="apiCall('/api/tg_admin/action_user', {action:'unban_web', username:'${u.username}'}, ()=>{loadData(); Swal.fire({toast:true, position:'top', icon:'success', title:'Đã mở khóa!', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});})"><i class="fas fa-unlock"></i> Mở Khóa</button>`
-                                : `<button class="uc-btn bg-orange" onclick="actionUser('${u.username}', 'ban_web')"><i class="fas fa-ban"></i> Khóa Khách</button>`}
-                            <button class="uc-btn bg-red" onclick="actionUser('${u.username}', 'delete_user')"><i class="fas fa-trash"></i> Xóa Acc</button>
+                        <div style="font-size:13px; color:#8892b0;">
+                            <div>Dư: <b style="color:#ffcc00;">${u.balance.toLocaleString()}đ</b></div>
+                            <div style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;">${kHtml || 'Chưa mua key'}</div>
+                        </div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px;">
+                            <button style="background:rgba(34,197,94,0.1); color:#22c55e; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="actionUser('${u.username}', 'add_balance')"><i class="fas fa-plus"></i> Tiền</button>
+                            <button style="background:rgba(59,130,246,0.1); color:#3b82f6; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="actionUser('${u.username}', 'reset_pass')"><i class="fas fa-key"></i> Đổi Pass</button>
+                            ${u.is_banned ? `<button style="background:rgba(249,115,22,0.1); color:#f97316; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="apiCall('/api/tg_admin/action_user', {action:'unban_web', username:'${u.username}'}, ()=>{loadAdminUsers();})"><i class="fas fa-unlock"></i> Mở Khóa</button>` : `<button style="background:rgba(249,115,22,0.1); color:#f97316; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="actionUser('${u.username}', 'ban_web')"><i class="fas fa-ban"></i> Khóa Web</button>`}
+                            <button style="background:rgba(239,68,68,0.1); color:#ef4444; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="actionUser('${u.username}', 'delete_user')"><i class="fas fa-trash"></i> Xóa</button>
                         </div>
                     </div>`;
                     container.innerHTML += card;
                 });
             }
-
             function filterUsers() { let s = document.getElementById('u-search').value.toLowerCase(); renderUsers(allUsersData.filter(u => u.username.toLowerCase().includes(s))); }
 
             function actionUser(uname, action) {
                 if(action === 'add_balance') {
-                    Swal.fire({
-                        title: `Nạp Tiền: ${uname}`, input: 'number', inputPlaceholder: 'Nhập số tiền (dấu - để trừ)', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#22c55e', preConfirm: (v) => { if(!v) Swal.showValidationMessage('Nhập số tiền!'); return v; }
-                    }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'add_balance', username:uname, amount:r.value}, ()=>{loadData();}); });
-                } 
-                else if(action === 'ban_web') {
-                    Swal.fire({
-                        title: `Khóa Web: ${uname}`, html: `<input type="number" id="b-dur" class="swal2-input" value="1" placeholder="Thời gian"><select id="b-unit" class="swal2-select"><option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select><div style="margin-top:10px;font-size:12px;color:#ef4444;">User sẽ bị văng web và hiện thời gian khóa đếm ngược!</div>`, showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#f97316', preConfirm: () => { return { dur: document.getElementById('b-dur').value, unit: document.getElementById('b-unit').value }; }
-                    }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'ban_web', username:uname, duration:r.value.dur, unit:r.value.unit}, ()=>{loadData();}); });
-                }
-                else if(action === 'reset_pass') {
-                    Swal.fire({
-                        title: `Tùy chỉnh Pass mới cho: ${uname}`, input: 'text', inputPlaceholder: 'Nhập mật khẩu mới...', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#3b82f6', preConfirm: (v) => { if(!v) Swal.showValidationMessage('Không được để trống!'); return v; }
-                    }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'reset_pass', username:uname, new_pass:r.value}, ()=>{loadData(); Swal.fire({toast:true, position:'top', icon:'success', title:'Đã đổi mật khẩu!', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});}); });
-                }
-                else if(action === 'delete_user') {
-                    Swal.fire({ title: 'CẢNH BÁO!', text: `Xóa vĩnh viễn ${uname} và toàn bộ Key của người này?`, icon: 'error', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#ef4444', confirmButtonText:'XÓA LUN' }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'delete_user', username:uname}, ()=>{loadData();}); });
+                    Swal.fire({ title: `Nạp Tiền: ${uname}`, input: 'number', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#22c55e'
+                    }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'add_balance', username:uname, amount:r.value}, ()=>{loadAdminUsers();}); });
+                } else if(action === 'ban_web') {
+                    Swal.fire({ title: `Khóa Web: ${uname}`, html: `<input type="number" id="b-dur" class="swal2-input" value="1"><select id="b-unit" class="swal2-select"><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select>`, showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#f97316', preConfirm: () => { return { dur: document.getElementById('b-dur').value, unit: document.getElementById('b-unit').value }; }
+                    }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'ban_web', username:uname, duration:r.value.dur, unit:r.value.unit}, ()=>{loadAdminUsers();}); });
+                } else if(action === 'reset_pass') {
+                    Swal.fire({ title: `Đổi Pass: ${uname}`, input: 'text', inputPlaceholder: 'Nhập Pass mới', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#3b82f6', preConfirm: (v)=>{if(!v)Swal.showValidationMessage('Trống!'); return v;}
+                    }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'reset_pass', username:uname, new_pass:r.value}, ()=>{loadAdminUsers();}); });
+                } else if(action === 'delete_user') {
+                    Swal.fire({ title: 'Xóa vĩnh viễn?', icon: 'error', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#ef4444' }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'delete_user', username:uname}, ()=>{loadAdminUsers();}); });
                 }
             }
 
             function createKeys() {
                 let p = document.getElementById('k-prefix').value; let q = document.getElementById('k-qty').value; let d = document.getElementById('k-dur').value; let u = document.getElementById('k-unit').value; let v = document.getElementById('k-vip').checked;
                 apiCall('/api/tg_admin/create_keys', {prefix: p, quantity: q, duration: d, unit: u, is_vip: v}, (res) => {
-                    let kHtml = res.keys.map(k => `<div style="background:#000; color:#00ffcc; padding:8px; margin:5px 0; border-radius:5px; font-family:monospace; font-size:12px; cursor:pointer;" onclick="navigator.clipboard.writeText('${k}'); Swal.showValidationMessage('Đã copy!');">${k}</div>`).join('');
-                    Swal.fire({title: 'ĐÃ TẠO XONG', html: `<div style="text-align:left; max-height:200px; overflow-y:auto;">${kHtml}</div><p style="font-size:12px; margin-top:10px; color:#8892b0;">Chạm vào Key để Copy</p>`, background:'#1a1d29', color:'#fff', confirmButtonColor:'#00ffcc'});
-                    loadData(); 
+                    let kHtml = res.keys.map(k => `<div style="background:#000; color:#00ffcc; padding:8px; margin:5px 0; border-radius:5px; font-family:monospace; font-size:12px; cursor:pointer;" onclick="copyT('${k}')">${k}</div>`).join('');
+                    Swal.fire({title: 'ĐÃ TẠO XONG', html: `<div style="text-align:left; max-height:200px; overflow-y:auto;">${kHtml}</div>`, background:'#1a1d29', color:'#fff', confirmButtonColor:'#00ffcc'});
                 });
             }
 
             function banOlm() {
                 let n = document.getElementById('o-name').value; let d = document.getElementById('o-dur').value; let u = document.getElementById('o-unit').value;
-                if(!n) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập tên OLM', background:'#1a1d29', color:'#fff'});
+                if(!n) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập', background:'#1a1d29', color:'#fff'});
                 apiCall('/api/tg_admin/ban_olm', {olm_name: n, duration: d, unit: u});
             }
 
@@ -1565,7 +2342,7 @@ def telegram_mini_app():
             
             function sendGlobalNotice() {
                 let msg = document.getElementById('sys-msg').value;
-                if(!msg) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập thông báo', background:'#1a1d29', color:'#fff'});
+                if(!msg) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập', background:'#1a1d29', color:'#fff'});
                 apiCall('/api/tg_admin/system_actions', {action: 'global_notice', message: msg});
             }
 
@@ -1574,675 +2351,14 @@ def telegram_mini_app():
                 apiCall('/api/tg_admin/system_actions', {action: 'maintenance', duration: d, unit: u});
             }
 
-            loadData();
+            initApp();
         </script>
     </body>
     </html>
     """
     return render_template_string_safe(html_content)
 
-# ========================================================
-# CÁC ROUTE WEB USER / ADMIN 
-# ========================================================
-CSS_GLASS = """
-body { background-color: #05050A !important; color: #fff !important; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0; }
-.glass-panel { background-color: rgba(17, 17, 26, 0.8) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 20px !important; box-shadow: 0 10px 40px rgba(0,0,0,0.8) !important; padding: 40px; text-align: center; width: 100%; max-width: 400px; margin: 50px auto; backdrop-filter: blur(12px); }
-.card { background-color: rgba(17, 17, 26, 0.9) !important; border-radius: 16px !important; border: 1px solid rgba(255,255,255,0.05) !important; box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important; transition: 0.3s; backdrop-filter: blur(10px); }
-.card:hover { border-color: rgba(0,255,204,0.4) !important; transform: translateY(-3px); box-shadow: 0 10px 25px rgba(0,255,204,0.15) !important; }
-h2, h3, h4, h5 { color: #00ffcc !important; font-weight: 900 !important; letter-spacing: 1px !important; }
-.text-neon { color: #00ffcc !important; text-shadow: 0 0 12px rgba(0,255,204,0.6) !important; }
-.text-purple { color: #bd00ff !important; text-shadow: 0 0 12px rgba(189,0,255,0.6) !important; }
-.balance-card { background: linear-gradient(135deg, rgba(0, 255, 204, 0.15), rgba(189, 0, 255, 0.1)); border: 1px solid rgba(0, 255, 204, 0.4); border-radius: 16px; padding: 20px 25px; display: flex; align-items: center; justify-content: space-between; backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,255,204,0.1); }
-.balance-card .balance-amount { font-size: 32px; font-weight: 900; color: #00ffcc; text-shadow: 0 0 15px rgba(0,255,204,0.5); line-height: 1; margin-top: 5px; }
-.launch-card { background: linear-gradient(135deg, rgba(189, 0, 255, 0.15), rgba(0, 153, 255, 0.1)); border: 1px solid rgba(189, 0, 255, 0.4); border-radius: 16px; padding: 20px 25px; display: flex; flex-direction: column; justify-content: center; backdrop-filter: blur(10px); text-align: center; height: 100%; transition: 0.3s; box-shadow: 0 10px 30px rgba(189,0,255,0.1); }
-.launch-card:hover { box-shadow: 0 10px 30px rgba(189,0,255,0.3); border-color: #bd00ff; cursor: pointer; }
-.form-control, .form-select, textarea { background-color: rgba(10, 10, 18, 0.8) !important; border: 1px solid rgba(255,255,255,0.1) !important; color: #fff !important; padding: 12px; border-radius: 10px; margin-bottom: 15px; }
-.form-control:focus, .form-select:focus, textarea:focus { border-color: #00ffcc !important; box-shadow: 0 0 12px rgba(0,255,204,0.3) !important; outline: none !important; }
-.btn-neon { background: linear-gradient(45deg, #00ffcc, #bd00ff) !important; border: none !important; color: #000 !important; font-weight: bold !important; width: 100%; padding: 12px; border-radius: 10px; transition: 0.3s !important; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 5px 15px rgba(0,255,204,0.2) !important; }
-.btn-neon:hover { transform: translateY(-2px) !important; box-shadow: 0 8px 25px rgba(0,255,204,0.5) !important; }
-a.link-neon { color: #bd00ff !important; text-decoration: none !important; font-weight: bold !important; transition: 0.3s !important; }
-a.link-neon:hover { color: #00ffcc !important; text-shadow: 0 0 10px #00ffcc !important; }
-.table-container { border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.table { color: #fff !important; margin-bottom: 0; white-space: nowrap; }
-.table-dark { --bs-table-bg: transparent !important; --bs-table-striped-bg: rgba(0, 255, 204, 0.05) !important; border-color: rgba(255,255,255,0.05) !important; }
-.table-active { background-color: rgba(255,255,255,0.05) !important; }
-tbody tr:hover { background: rgba(0,255,204,0.05) !important; }
-.badge { font-size: 11px !important; padding: 5px 8px !important; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px; }
-.text-nowrap { white-space: nowrap !important; }
-
-/* Polling Core Script cho Live Ban & Maintenance */
-.swal2-popup { border-radius: 15px !important; }
-"""
-
-# Script inject vào Dashboard để kiểm tra Bảo trì & Ban real-time
-POLLING_SCRIPT = """
-<script>
-    setInterval(() => {
-        fetch('/api/my_status').then(r=>r.json()).then(d=>{
-            if(!d.logged_in) { window.location.href = '/login'; return; }
-            let now = Date.now();
-            
-            // Check bảo trì
-            if (d.maintenance_until > now) {
-                if(!document.getElementById('sys-maintenance-overlay')) {
-                    let ov = document.createElement('div'); ov.id = 'sys-maintenance-overlay';
-                    ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:999999;display:flex;align-items:center;justify-content:center;flex-direction:column;color:#fff;";
-                    ov.innerHTML = `<i class="fas fa-tools text-warning mb-3" style="font-size:60px;"></i><h2 class="text-warning">HỆ THỐNG ĐANG BẢO TRÌ</h2><p class="text-secondary">Web sẽ mở lại sau khi kết thúc đếm ngược.</p><h1 id="mnt-timer" class="text-danger" style="font-family:monospace;">--:--:--</h1>`;
-                    document.body.appendChild(ov);
-                }
-                let rem = d.maintenance_until - now;
-                let hr = Math.floor((rem % 86400000) / 3600000); let mi = Math.floor((rem % 3600000) / 60000); let se = Math.floor((rem % 60000) / 1000);
-                let tm = document.getElementById('mnt-timer'); if(tm) tm.innerText = `${hr}g ${mi}p ${se}s`;
-            } else if (document.getElementById('sys-maintenance-overlay')) {
-                document.getElementById('sys-maintenance-overlay').remove();
-            }
-
-            // Check bị khóa tài khoản web
-            if (d.banned_until === 'permanent' || d.banned_until > now) {
-                if(!document.getElementById('sys-ban-overlay')) {
-                    let ov = document.createElement('div'); ov.id = 'sys-ban-overlay';
-                    ov.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.95);z-index:999999;display:flex;align-items:center;justify-content:center;flex-direction:column;color:#fff;";
-                    ov.innerHTML = `<i class="fas fa-ban text-danger mb-3" style="font-size:60px;"></i><h2 class="text-danger">TÀI KHOẢN BỊ KHÓA</h2><p class="text-secondary">Trạng thái khóa: <span id="ban-timer" class="text-warning fw-bold"></span></p><a href="/logout" class="btn btn-outline-light mt-3">Đăng xuất</a>`;
-                    document.body.appendChild(ov);
-                }
-                let tm = document.getElementById('ban-timer');
-                if(d.banned_until === 'permanent') { if(tm) tm.innerText = "VĨNH VIỄN"; }
-                else {
-                    let rem = d.banned_until - now;
-                    let dy = Math.floor(rem / 86400000); let hr = Math.floor((rem % 86400000) / 3600000); let mi = Math.floor((rem % 3600000) / 60000); let se = Math.floor((rem % 60000) / 1000);
-                    if(tm) tm.innerText = `Còn ${dy} ngày ${hr}g ${mi}p ${se}s`;
-                }
-            } else if (document.getElementById('sys-ban-overlay')) {
-                document.getElementById('sys-ban-overlay').remove();
-            }
-        }).catch(e=>{});
-    }, 5000);
-</script>
-"""
-
-@app.route('/')
-def home():
-    try:
-        shop_html = ""
-        for pkg_id, pkg in SHOP_PACKAGES.items():
-            vip_tag = '<div class="badge bg-danger mb-2">🔥 VIP PRO</div>' if pkg["vip"] else '<div class="badge bg-secondary mb-2">THƯỜNG</div>'
-            border_c = "#bd00ff" if pkg["vip"] else "#0099ff"
-            desc_html = f'<p class="text-warning mb-1" style="font-size:12px;">{pkg["desc"]}</p>' if pkg.get("desc") else ''
-            
-            shop_html += f'''
-            <div class="col-md-3 col-6 mb-3">
-                <div class="card p-3 h-100 text-center" style="border-color:{border_c};">
-                    {vip_tag}
-                    <h5 class="text-white fw-bold">{pkg["name"]}</h5>
-                    {desc_html}
-                    <div style="font-size:22px;font-weight:900;color:{border_c};margin:10px 0;">{pkg["price"]:,}đ</div>
-                    <a href="/login" class="btn btn-outline-info w-100 mt-auto fw-bold" style="border-radius:8px;">MUA NGAY</a>
-                </div>
-            </div>'''
-
-        welcome_script = ""
-        if not session.get('welcomed'):
-            session['welcomed'] = True
-            welcome_script = "Swal.fire({ title: 'CHÀO MỪNG ĐẾN VỚI LVT TOOL!', html: '<b style=\"color:#00ffcc\">Hệ thống tự động hóa và bảo mật đỉnh cao.</b><br><br>👉 Vui lòng Đăng ký hoặc Đăng nhập để trải nghiệm!', icon: 'success', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', confirmButtonText: 'ĐÃ HIỂU' });"
-
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT TOOL - Trang Chủ</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS} .hero{{background:linear-gradient(135deg,#000,#0a192f);padding:80px 20px;text-align:center;border-bottom:1px solid rgba(0,255,204,0.3);}}</style></head><body>
-        <div class="hero"><h1 class="text-neon fw-bold mb-3">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1><p class="text-secondary fs-5 mb-4">Tự động hóa thông minh - Bảo mật đa tầng</p><a href="#shop" class="btn btn-lg fw-bold mb-2" style="background:#00ffcc;color:#000;border-radius:10px;">XEM BẢNG GIÁ</a> <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-md-2 mb-2" style="border-radius:10px;">ĐĂNG NHẬP</a> <a href="/register" class="btn btn-outline-light btn-lg fw-bold ms-md-2 mb-2" style="border-radius:10px;">ĐĂNG KÝ</a></div>
-        <div class="container py-5" id="shop"><h2 class="text-center text-neon fw-bold mb-5">BẢNG GIÁ DỊCH VỤ</h2><div class="row justify-content-center">{shop_html}</div></div><script>{welcome_script}</script></body></html>'''
-    except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    try:
-        if 'username' in session: 
-            if session.get('role') == 'admin': return redirect('/admin')
-            return redirect('/dashboard')
-
-        if request.method == 'POST':
-            username = request.form.get('username', '').strip().lower()
-            password = request.form.get('password', '').strip()
-            db = load_db()
-            user_data = db.get("users", {}).get(username)
-            if user_data and user_data.get("password_hash") == hash_pwd(password):
-                
-                ban_until = user_data.get("banned_until", 0)
-                if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > int(time.time() * 1000)):
-                    return swal_back("Tài Khoản Bị Khóa!", "Bạn đã bị Admin khóa tài khoản hệ thống. Không thể đăng nhập!", "error")
-
-                session['username'] = username
-                session['role'] = user_data.get("role", "user")
-                ip = get_real_ip()
-                with db_lock:
-                    if ip not in db["users"][username].setdefault("ips", []): db["users"][username]["ips"].append(ip)
-                    save_db(db)
-                return swal_redirect("Thành công!", f"Chào mừng {username.upper()} quay trở lại.", "success", "/dashboard" if session['role'] != 'admin' else "/admin")
-            else:
-                return swal_back("Thất bại!", f"Sai tài khoản hoặc mật khẩu.", "error")
-
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">⚡ ĐĂNG NHẬP</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên đăng nhập" required><input type="password" name="password" class="form-control" placeholder="Mật khẩu" required><button type="submit" class="btn-neon mt-2">VÀO HỆ THỐNG</button></form><div class="mt-4"><p class="text-secondary">Chưa có tài khoản? <a href="/register" class="link-neon">Đăng ký ngay</a></p><a href="/" class="text-muted" style="text-decoration:none;font-size:13px;"><i class="fas fa-home"></i> Trở về Trang chủ</a></div></div></body></html>'''
-    except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    try:
-        if 'username' in session: return redirect('/')
-        if request.method == 'POST':
-            username = request.form.get('username', '').strip().lower()
-            password = request.form.get('password', '').strip()
-            if not username.isalnum() or len(username) < 4: return swal_back("Lỗi", "Tên đăng nhập > 4 ký tự và không có dấu!", "warning")
-            if len(password) < 6: return swal_back("Lỗi", "Mật khẩu từ 6 ký tự trở lên!", "warning")
-
-            db = load_db()
-            with db_lock:
-                if username in db.setdefault("users", {}): return swal_back("Lỗi", "Tên đăng nhập đã tồn tại!", "error")
-                db["users"][username] = {"password_hash": hash_pwd(password), "role": "user", "balance": 0, "created_at": int(time.time() * 1000), "ips": [get_real_ip()], "purchased_keys": [], "notices": [], "custom_script": "", "banned_until": 0}
-                save_db(db)
-            
-            send_telegram_alert(f"🎉 <b>CÓ NGƯỜI ĐĂNG KÝ WEB MỚI</b>\n- User: <code>{username}</code>\n- IP: {get_real_ip()}")
-            return swal_redirect("Tuyệt vời!", "Đăng ký thành công. Hãy đăng nhập!", "success", "/login")
-
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Ký</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">⚡ TẠO TÀI KHOẢN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên đăng nhập (liền không dấu)" required><input type="password" name="password" class="form-control" placeholder="Mật khẩu (Tối thiểu 6 ký tự)" required><button type="submit" class="btn-neon mt-2">ĐĂNG KÝ NGAY</button></form><div class="mt-4"><p class="text-secondary">Đã có tài khoản? <a href="/login" class="link-neon">Đăng nhập</a></p><a href="/" class="text-muted" style="text-decoration:none;font-size:13px;"><i class="fas fa-home"></i> Trở về Trang chủ</a></div></div></body></html>'''
-    except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect('/')
-
-@app.route('/user_transfer_key', methods=['POST'])
-def user_transfer_key():
-    try:
-        if 'username' not in session or session.get('role') != 'user': return redirect('/login')
-        username = session['username']
-        old_key = request.form.get('old_key', '').strip()
-        new_olm = request.form.get('new_olm', '').strip()
-
-        if not old_key or not new_olm:
-            return swal_back("Lỗi", "Vui lòng nhập đầy đủ thông tin!", "warning")
-
-        db = load_db()
-        with db_lock:
-            u = db["users"].get(username)
-            kd = db["keys"].get(old_key)
-            
-            if not kd or old_key not in [k["key"] for k in u.get("purchased_keys", [])]:
-                return swal_back("Lỗi", "Key không tồn tại hoặc không thuộc về bạn!", "error")
-            
-            is_vip = kd.get("vip", False)
-            if not is_vip:
-                return swal_back("Từ chối!", "Tính năng DEEP RESET chỉ dành riêng cho Key VIP PRO!", "error")
-
-            if new_olm.lower() == kd.get("bound_olm", "").lower():
-                return swal_back("Lỗi", "Nick OLM mới phải KHÁC nick OLM hiện tại!", "warning")
-
-            rc = kd.get("reset_count", 0)
-            if rc >= 2:
-                return swal_back("Giới hạn", "Key này đã hết lượt Reset (Tối đa 2 lần)!", "error")
-
-            fee = 0 if rc == 0 else 10000
-
-            if u["balance"] < fee:
-                return swal_back("Thất bại!", f"Bạn cần {fee:,}đ để Deep Reset từ lần thứ 2.", "error")
-
-            u["balance"] -= fee
-            
-            new_key = generate_secure_key("TOOL", is_vip)
-            
-            db["keys"][new_key] = {
-                "exp": kd.get("exp"),
-                "durationMs": kd.get("durationMs", 0),
-                "maxDevices": kd.get("maxDevices", 1),
-                "devices": [],
-                "known_ips": {},
-                "status": kd.get("status", "active"),
-                "vip": is_vip,
-                "loader_enabled": kd.get("loader_enabled", True),
-                "violations": kd.get("violations", 0),
-                "temp_ban_until": kd.get("temp_ban_until", 0),
-                "owner": kd.get("owner"),
-                "os": kd.get("os", "android"),
-                "reset_count": rc + 1,
-                "bound_olm": new_olm
-            }
-            
-            for pk in u.get("purchased_keys", []):
-                if pk["key"] == old_key:
-                    pk["key"] = new_key
-                    break
-                    
-            del db["keys"][old_key]
-            save_db(db)
-
-        if session.get('active_key') == old_key:
-            session['active_key'] = new_key
-
-        html_msg = f"""<div style='text-align:left; font-size:14px;'>
-            <p>Phí chuyển đổi: <b>{fee:,}đ</b></p>
-            <p>Đã ghim OLM mới: <b style='color:#ff3366'>{escape(new_olm)}</b></p>
-            <p>Mã Key <strong class="text-success">MỚI TINH</strong> của bạn là:</p>
-            <div style='background:#000; padding:10px; border:1px dashed #00ffcc; border-radius:5px; text-align:center; font-family:monospace; font-size:18px; color:#00ffcc; margin-bottom:15px; cursor:pointer;' onclick='navigator.clipboard.writeText("{new_key}");Swal.showValidationMessage("Đã copy!");'>{new_key}</div>
-            <p class='text-warning mt-2' style='font-size:12px;'>*Key cũ đã bị vô hiệu hóa hoàn toàn khỏi hệ thống.</p>
-        </div>"""
-        
-        return swal_redirect("🎉 ĐỔI KEY VÀ NICK THÀNH CÔNG!", html_msg, "success", "/dashboard")
-
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
-
-@app.route('/dashboard')
-def user_dashboard():
-    try:
-        if 'username' not in session or session.get('role') != 'user': return redirect('/login')
-        
-        username = session['username']
-        db = load_db()
-        user_data = db["users"].get(username, {})
-        balance = user_data.get("balance", 0)
-        owned_keys = user_data.get("purchased_keys", [])
-        
-        notices = user_data.get("notices", [])
-        swal_scripts = ""
-        if notices:
-            msg = "<br>".join(notices)
-            swal_scripts = f"Swal.fire({{title: 'TING TING 💰', html: '{msg}', icon: 'success', background: '#11111A', color: '#00ffcc'}});"
-            with db_lock:
-                db["users"][username]["notices"] = []
-                save_db(db)
-
-        shop_html = ""
-        for pkg_id, pkg in SHOP_PACKAGES.items():
-            vip_tag = '<div class="badge bg-danger mb-2">🔥 VIP PRO</div>' if pkg["vip"] else '<div class="badge bg-secondary mb-2">THƯỜNG</div>'
-            border_c = "#bd00ff" if pkg["vip"] else "#0099ff"
-            desc_html = f'<p class="text-warning mb-1" style="font-size:12px;">{pkg["desc"]}</p>' if pkg.get("desc") else ''
-            
-            shop_html += f'''
-            <div class="col-lg-3 col-6 mb-3">
-                <div class="card p-3 h-100 text-center" style="border-color:{border_c}; cursor:pointer;" onclick="confirmBuy('{pkg_id}', '{pkg['name']}', {pkg['price']})">
-                    {vip_tag}
-                    <h6 class="text-white fw-bold mt-1">{pkg['name']}</h6>
-                    {desc_html}
-                    <h4 style="color:{border_c}; font-weight:900; margin: 10px 0;">{pkg['price']:,}đ</h4>
-                    <button class="btn btn-sm w-100 fw-bold mt-auto" style="background:rgba(255,255,255,0.1); color:{border_c}; border: 1px solid {border_c}; border-radius:8px;">MUA NGAY</button>
-                </div>
-            </div>'''
-
-        now = int(time.time() * 1000)
-        my_keys_html = ""
-        for pk in owned_keys:
-            k = pk['key']
-            kd = db["keys"].get(k)
-            if not kd: continue 
-            
-            st = kd.get('status', 'active')
-            is_banned = (st == 'banned')
-            temp_ban = kd.get('temp_ban_until', 0)
-            
-            status_html = '<span class="badge bg-success">Hoạt động</span>'
-            if is_banned: status_html = '<span class="badge bg-danger">Bị khóa</span>'
-            elif temp_ban > now: status_html = f'<span class="badge bg-warning text-dark">Phạt ({(temp_ban - now)//60000}p)</span>'
-
-            exp = kd.get("exp")
-            if exp == "permanent": exp_str = '<span class="text-success fw-bold">Vĩnh viễn</span>'
-            elif exp == "pending": exp_str = '<span class="text-info">Chưa KH</span>'
-            else:
-                if exp < now: 
-                    exp_str = '<span class="text-danger">Hết hạn</span>'
-                    if not is_banned: status_html = '<span class="badge bg-secondary">Hết hạn</span>'
-                else: 
-                    exp_str = f'<span class="text-warning">{time.strftime("%d/%m/%y", time.localtime(exp/1000))}</span>'
-                
-            rc = kd.get("reset_count", 0)
-            is_vip = kd.get("vip", False)
-            vip_icon = "💎 " if is_vip else "🔑 "
-            bound_olm = kd.get("bound_olm", "")
-            bound_str = f'<span class="text-warning fw-bold">{escape(bound_olm)}</span>' if bound_olm else '<span class="text-muted">Chưa ghim</span>'
-
-            my_keys_html += f'''
-            <tr class="text-nowrap">
-                <td><strong class="text-info" style="cursor:pointer;" onclick="copyMyKey('{k}')" title="Bấm Copy">{vip_icon}{k[:8]}... <i class="fas fa-copy text-secondary fs-6"></i></strong></td>
-                <td>{status_html}</td>
-                <td>{exp_str}</td>
-                <td>{rc}/2 lần</td>
-                <td>{bound_str}</td>
-                <td>
-                    <div class="d-flex justify-content-center gap-2">
-                        <button class="btn btn-sm btn-outline-warning fw-bold py-1 px-2" style="font-size:11px; border-radius:6px;" onclick="confirmTransfer('{k}', '{escape(bound_olm)}', {rc}, {'true' if is_vip else 'false'})" title="Đổi Mã Key & Đổi Nick">DEEP RESET</button>
-                        <form action="/user_delete_key" method="POST" onsubmit="return confirm('Bạn có chắc chắn muốn xóa vĩnh viễn Key này khỏi tài khoản?');" class="m-0">
-                            <input type="hidden" name="key_to_delete" value="{k}">
-                            <button type="submit" class="btn btn-sm btn-outline-danger fw-bold py-1 px-2" style="font-size:11px; border-radius:6px;">XÓA</button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-            '''
-        if not my_keys_html:
-            my_keys_html = '<tr><td colspan="6" class="text-muted py-4">Bạn chưa có Key nào. Vui lòng mua Key bên trên!</td></tr>'
-
-        return f'''
-        <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Dashboard - User</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-        <style>{CSS_GLASS}</style></head>
-        <body class="p-2 p-md-4">
-        {POLLING_SCRIPT}
-        <div class="container" style="max-width:1100px;">
-            <div class="d-flex flex-column flex-md-row justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-                <h2 class="text-neon mb-3 mb-md-0 m-0"><i class="fas fa-bolt"></i> LVT SHOP CÁ NHÂN</h2>
-                <div><span class="me-3">Xin chào, <b class="text-info">{username.upper()}</b></span> <a href="/logout" class="btn btn-sm btn-outline-danger fw-bold rounded-pill px-3">Thoát</a></div>
-            </div>
-            
-            <div class="row g-4 mb-4">
-                <div class="col-md-6">
-                    <div class="balance-card">
-                        <div>
-                            <div style="font-size: 12px; color: #9ca3af; letter-spacing: 1px;">SỐ DƯ TÀI KHOẢN</div>
-                            <div class="balance-amount">{balance:,}đ</div>
-                        </div>
-                        <div>
-                            <a href="https://zalo.me/0343627516" target="_blank" class="btn btn-sm btn-outline-info fw-bold rounded-pill px-3 py-2 text-nowrap">NẠP TIỀN AUTO</a>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="launch-card cursor-pointer" onclick="window.location.href='/key_login'">
-                        <h4 class="text-purple m-0 fw-bold"><i class="fas fa-rocket"></i> VÀO KHOANG LÁI HACK</h4>
-                        <div class="text-muted mt-2" style="font-size: 13px;">Đăng nhập Key để kích hoạt Hack OLM.</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="row g-4">
-                <div class="col-12">
-                    <div class="card p-4 border-secondary h-100">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h4 class="text-info m-0 fw-bold"><i class="fas fa-shopping-cart"></i> MUA MÃ KEY MỚI</h4>
-                        </div>
-                        <div class="row g-2">{shop_html}</div>
-                    </div>
-                </div>
-                
-                <div class="col-12">
-                    <div class="card p-3 border-secondary">
-                        <h5 class="text-purple mb-3 fw-bold"><i class="fas fa-key"></i> QUẢN LÝ KEY CỦA BẠN</h5>
-                        <div class="table-container table-responsive">
-                            <table class="table table-dark table-hover table-sm align-middle text-center mb-0 text-nowrap">
-                                <thead class="table-active">
-                                    <tr><th>🔑 Mã Key (Copy)</th><th>🟢 Trạng thái</th><th>⏳ Hạn dùng</th><th>🔄 Lượt Reset</th><th>👤 OLM Đã Ghim</th><th>⚙️ Thao tác</th></tr>
-                                </thead>
-                                <tbody>
-                                    {my_keys_html}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <form id="buyForm" action="/buy" method="POST"><input type="hidden" name="pkg_id" id="pkgInput"><input type="hidden" name="os_type" id="osInput"><input type="hidden" name="olm_name" id="olmInput"></form>
-        <form id="transferForm" action="/user_transfer_key" method="POST"><input type="hidden" name="old_key" id="transOldKeyInput"><input type="hidden" name="new_olm" id="transNewOlmInput"></form>
-
-        <script>
-            {swal_scripts}
-            function copyMyKey(k) {{ navigator.clipboard.writeText(k); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã copy Key!',showConfirmButton:false,timer:1500,background:'#111',color:'#fff'}}); }}
-            
-            function confirmBuy(id, name, price) {{
-                Swal.fire({{
-                    title: 'CHỈ ĐỊNH TÀI KHOẢN OLM',
-                    html: `<p>Gói <b>${{name}}</b> (${{price.toLocaleString()}}đ)</p>
-                           <input type="text" id="swal-olm" class="swal2-input" placeholder="Nhập nick OLM (Ví dụ: hp_luongvantuyen)" style="width: 80%; background: rgba(10,10,18,0.8); color: #00ffcc; border: 1px solid #00ffcc; border-radius:10px;">
-                           <div style="margin-top: 15px; font-size: 14px;">
-                               <b>CHỌN HỆ ĐIỀU HÀNH BẠN ĐANG XÀI:</b><br>
-                               <label class="me-3 mt-2"><input type="radio" name="swal-os" value="android" checked> <i class="fab fa-android"></i> Android/PC</label>
-                               <label class="mt-2"><input type="radio" name="swal-os" value="ios"> <i class="fab fa-apple"></i> iOS</label>
-                           </div>`,
-                    icon: 'info', showCancelButton: true, confirmButtonText: 'MUA NGAY', cancelButtonText: 'Hủy',
-                    background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff',
-                    preConfirm: () => {{
-                        const olm = document.getElementById('swal-olm').value.trim();
-                        const os = document.querySelector('input[name="swal-os"]:checked').value;
-                        if(!olm) {{ Swal.showValidationMessage('Bạn phải nhập tên tài khoản OLM!'); }}
-                        return {{ olm: olm, os: os }};
-                    }}
-                }}).then((res) => {{
-                    if(res.isConfirmed) {{
-                        document.getElementById('pkgInput').value = id;
-                        document.getElementById('osInput').value = res.value.os;
-                        document.getElementById('olmInput').value = res.value.olm;
-                        document.getElementById('buyForm').submit();
-                    }}
-                }});
-            }}
-
-            function confirmTransfer(oldKey, currentOlm, resetCount, isVip) {{
-                if (!isVip) {{
-                    Swal.fire({{ title: 'Từ chối', text: 'Chức năng Deep Reset chỉ dành cho Key VIP PRO!', icon: 'error', background: '#11111A', color: '#fff' }});
-                    return;
-                }}
-                if (resetCount >= 2) {{
-                    Swal.fire({{ title: 'Giới hạn', text: 'Key này đã hết lượt Reset (Tối đa 2 lần).', icon: 'error', background: '#11111A', color: '#fff' }});
-                    return;
-                }}
-                let fee = resetCount === 0 ? "Miễn phí (Lần 1)" : "10,000đ (Lần 2)";
-                Swal.fire({{
-                    title: 'DEEP RESET KEY & ĐỔI NICK OLM',
-                    html: `
-                        <div style="text-align:left; font-size:14px; margin-bottom: 15px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
-                            <p class="mb-1">Nick đang ghim: <b class="text-danger">${{currentOlm || 'Chưa có'}}</b></p>
-                            <p class="mb-0">Phí đổi: <b class="text-warning">${{fee}}</b></p>
-                        </div>
-                        <p class="text-info fw-bold mb-3" style="font-size:13px;">Hệ thống sẽ tạo 1 mã Key HOÀN TOÀN MỚI và chuyển toàn bộ ngày sử dụng sang nick OLM mới.</p>
-                        <input type="text" id="swal-new-olm" class="swal2-input" placeholder="Nhập nick OLM MỚI (Bắt buộc)" style="width: 85%; background: rgba(10,10,18,0.8); color: #00ffcc; border: 1px solid #00ffcc; border-radius:10px; margin:0 auto;">
-                    `,
-                    icon: 'warning', showCancelButton: true, confirmButtonText: 'ĐỔI NGAY', cancelButtonText: 'Hủy',
-                    background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff',
-                    preConfirm: () => {{
-                        const newOlm = document.getElementById('swal-new-olm').value.trim();
-                        if(!newOlm) {{ Swal.showValidationMessage('Vui lòng nhập nick OLM mới!'); return false; }}
-                        if(newOlm.toLowerCase() === currentOlm.toLowerCase()) {{ Swal.showValidationMessage('Nick mới phải KHÁC nick cũ!'); return false; }}
-                        return newOlm;
-                    }}
-                }}).then((res) => {{
-                    if(res.isConfirmed) {{
-                        document.getElementById('transOldKeyInput').value = oldKey;
-                        document.getElementById('transNewOlmInput').value = res.value;
-                        document.getElementById('transferForm').submit();
-                    }}
-                }});
-            }}
-        </script>
-        </body></html>
-        '''
-    except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
-
-@app.route('/buy', methods=['POST'])
-def buy_key():
-    try:
-        if 'username' not in session or session.get('role') != 'user': return redirect('/login')
-        username = session['username']
-        pkg_id = request.form.get('pkg_id')
-        os_type = request.form.get('os_type', 'android')
-        olm_name = request.form.get('olm_name', '').strip()
-        
-        if pkg_id not in SHOP_PACKAGES: return swal_back("Lỗi", "Gói không tồn tại!", "error")
-        pkg = SHOP_PACKAGES[pkg_id]
-        price = pkg['price']
-        
-        db = load_db()
-        with db_lock:
-            user_data = db["users"].get(username)
-            if user_data['balance'] < price: return swal_back("Số Dư Không Đủ!", "Hãy nạp thêm tiền.", "warning")
-            
-            user_data['balance'] -= price
-            nk = generate_secure_key("TOOL", pkg["vip"])
-            
-            db["keys"][nk] = {
-                "exp": "pending", "durationMs": pkg['dur_ms'], "maxDevices": 1, "devices": [], 
-                "known_ips": {}, "status": "active", "vip": pkg["vip"], "loader_enabled": True, 
-                "violations": 0, "temp_ban_until": 0, "owner": username, "os": os_type, "reset_count": 0, 
-                "bound_olm": olm_name
-            }
-            user_data.setdefault("purchased_keys", []).insert(0, {"key": nk, "package_name": pkg['name'], "buy_time": int(time.time() * 1000)})
-            save_db(db)
-            
-        html_msg = f"""<div style='text-align:left; font-size:14px;'><p>Gói mua: <b class='text-purple'>{pkg['name']}</b> ({'iOS' if os_type=='ios' else 'Android/PC'})</p><p>Ghim OLM: <b style='color:#ff3366'>{escape(olm_name)}</b></p><p>Mã Key của bạn là:</p>
-            <div style='background:#000; padding:10px; border:1px dashed #00ffcc; border-radius:5px; text-align:center; font-family:monospace; font-size:18px; color:#00ffcc; margin-bottom:15px; cursor:pointer;' onclick='navigator.clipboard.writeText("{nk}");Swal.showValidationMessage("Đã copy!");'>{nk}</div></div>"""
-        return swal_redirect("🎉 MUA KEY THÀNH CÔNG!", html_msg, "success", "/dashboard")
-    except Exception as e: return swal_back("Lỗi", f"Có lỗi xảy ra: {str(e)}", "error")
-
-@app.route('/user_delete_key', methods=['POST'])
-def user_delete_key():
-    try:
-        if 'username' not in session or session.get('role') != 'user': return redirect('/login')
-        username = session['username']
-        k = request.form.get('key_to_delete', '').strip()
-        
-        db = load_db()
-        with db_lock:
-            user_data = db["users"].get(username)
-            if user_data:
-                user_data["purchased_keys"] = [pk for pk in user_data.get("purchased_keys", []) if pk["key"] != k]
-                if k in db.get("keys", {}):
-                    del db["keys"][k]
-                save_db(db)
-        
-        if session.get('active_key') == k:
-            session.pop('active_key', None)
-            
-        return swal_redirect("Thành Công!", "Đã xóa Key vĩnh viễn khỏi hệ thống.", "success", "/dashboard")
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
-
-@app.route('/key_login', methods=['GET', 'POST'])
-def key_login():
-    try:
-        if 'username' not in session or session.get('role') != 'user': return redirect('/login')
-        if request.method == 'POST':
-            k = request.form.get('key_input', '').strip()
-            db = load_db()
-            if k in db.get("keys", {}):
-                session['active_key'] = k
-                return swal_redirect("Chấp nhận mã Key!", "Đang đưa bạn vào Khoang Lái...", "success", "/key_dashboard")
-            return swal_back("Thất bại", "Mã Key không tồn tại trong hệ thống!", "error")
-
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kích Hoạt Key</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body>{POLLING_SCRIPT}<div class="glass-panel"><h2 class="text-neon mb-4">🔑 KHỞI ĐỘNG KEY</h2><form method="POST"><input type="text" name="key_input" class="form-control text-center fs-5" placeholder="Dán mã Key của bạn vào đây..." required><button type="submit" class="btn-neon mt-2">ĐĂNG NHẬP KEY</button></form><div class="mt-4"><a href="/dashboard" class="link-neon"><i class="fas fa-arrow-left"></i> Trở về Quầy Shop</a></div></div></body></html>'''
-    except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
-
-@app.route('/logout_key')
-def logout_key():
-    session.pop('active_key', None)
-    return redirect('/key_login')
-
-@app.route('/key_dashboard')
-def key_dashboard():
-    try:
-        if 'username' not in session: return redirect('/login')
-        
-        active_key = session.get('active_key')
-        if not active_key: return redirect('/key_login')
-
-        db = load_db()
-        kd = db.get("keys", {}).get(active_key)
-        if not kd: 
-            session.pop('active_key', None)
-            return swal_redirect("Lỗi", "Key đã bị xóa khỏi hệ thống!", "error", "/key_login")
-
-        now = int(time.time() * 1000)
-        if kd.get("status") == "banned":
-            session.pop('active_key', None)
-            return swal_redirect("BỊ KHÓA TỬ HÌNH", "Key của bạn đã bị BAN vĩnh viễn do vi phạm!", "error", "/key_login")
-        if kd.get("temp_ban_until", 0) > now:
-            rem = (kd["temp_ban_until"] - now) // 60000
-            session.pop('active_key', None)
-            return swal_redirect("PHẠT TẠM THỜI", f"Key bị khóa tạm thời do Share Máy. Thử lại sau {rem} phút.", "warning", "/key_login")
-        if kd.get("exp") != "pending" and kd.get("exp") != "permanent" and kd.get("exp") < now:
-            session.pop('active_key', None)
-            return swal_redirect("HẾT HẠN", "Key của bạn đã hết thời gian sử dụng. Vui lòng mua mới!", "info", "/key_login")
-
-        is_vip = kd.get("vip", False)
-        card_class = "vip-glow" if is_vip else "nor-glow"
-        vip_text = "💎 VIP PRO" if is_vip else "THƯỜNG"
-        
-        exp_ms = kd.get("exp")
-        exp_val = "permanent" if exp_ms == "permanent" else ("pending" if exp_ms == "pending" else exp_ms)
-
-        return f'''
-        <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Phòng Điều Khiển</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-        <style>{CSS_GLASS} .card-key{{background:rgba(17,17,26,0.9) !important;border-radius:16px !important; backdrop-filter: blur(10px);}}</style></head>
-        <body class="p-3">
-        {POLLING_SCRIPT}
-        <div class="container" style="max-width:800px;">
-            <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-2">
-                <h3 style="color:#00ffcc;margin:0;font-weight:900;">⚡ KHOANG LÁI HACK</h3>
-                <div>
-                    <a href="/dashboard" class="btn btn-outline-info btn-sm fw-bold me-2 rounded-pill">Shop/Quản Lý</a>
-                    <a href="/logout_key" class="btn btn-danger btn-sm fw-bold rounded-pill">Đăng Xuất Key</a>
-                </div>
-            </div>
-            
-            <div class="card-key {card_class} p-4 text-center mb-4 shadow">
-                <div class="badge mb-3" style="background:{'#bd00ff' if is_vip else '#0099ff'}; font-size:16px; padding: 6px 12px !important;">{vip_text}</div>
-                <h2 class="text-white mb-2" style="font-family:monospace;letter-spacing:2px;cursor:pointer;" onclick="copyT('{active_key}')">{active_key} <i class="fas fa-copy text-muted fs-5"></i></h2>
-                
-                <div class="my-3 py-3" style="background:rgba(0,0,0,0.5); border-radius:10px; border:1px dashed rgba(255,255,255,0.2);">
-                    <p class="text-secondary mb-1" style="font-size:12px;">KEY OLM MODE CỦA HỆ THỐNG</p>
-                    <b class="text-warning" style="font-family:monospace; font-size:18px; letter-spacing:1px;">OLM_VIP_786B-XQCH-BYEF-SYUS</b>
-                </div>
-
-                <div id="countdown-box" class="mt-3">
-                    <p class="text-muted mb-0">Thời gian còn lại:</p>
-                    <h3 id="timer" class="text-danger fw-bold" style="font-family:monospace; text-shadow: 0 0 10px rgba(255,0,0,0.3);">ĐANG TÍNH...</h3>
-                </div>
-                
-                <div class="d-flex justify-content-center gap-5 mt-4 pt-3 border-top border-secondary">
-                    <div><small class="text-secondary">Thiết Bị Của Bạn</small><br><b class="fs-4 text-info">{len(kd.get('devices', []))}/{kd.get('maxDevices', 1)}</b></div>
-                </div>
-            </div>
-            
-            <div class="row g-3">
-                <div class="col-12 mt-2 text-center">
-                    <p class="text-warning fw-bold mb-3">🚀 Ấn nút bên dưới hệ thống sẽ tự động đồng bộ Key và mở khóa OLM.VN</p>
-                    <a href="https://olm.vn/?lvt_key={active_key}" target="_blank" class="btn w-100 p-3 fw-bold fs-5 text-dark" style="background:linear-gradient(45deg,#00ffcc,#0099ff);box-shadow:0 10px 25px rgba(0,255,204,0.4);border-radius:12px;" onclick="checkInstallFirst(event, this.href)">
-                        MỞ KHÓA VÀ SỬ DỤNG HACK NGAY
-                    </a>
-                    <div class="mt-4">
-                        <small class="text-muted">Chưa cài đặt Userscript? <a href="/api/script/olm_vip.user.js" target="_blank" style="color:#00ffcc; text-decoration:none; border-bottom: 1px dashed #00ffcc;">Bấm vào đây để cài đặt Link Cài Đặt Script Violentmonkey gốc</a></small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <script>
-            function copyT(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã sao chép Key!',showConfirmButton:false,timer:1500,background:'#111',color:'#fff'}}); }}
-            
-            function checkInstallFirst(e, link) {{
-                Swal.fire({{
-                    toast: true, position: 'top', icon: 'info',
-                    title: 'Đang mở khóa OLM...', text: 'Hãy chắc chắn bạn đã cài đặt tiện ích Script trước đó!',
-                    showConfirmButton: false, timer: 2000, background: '#111', color: '#fff'
-                }});
-            }}
-
-            let expVal = "{exp_val}";
-            let timerEl = document.getElementById('timer');
-            if(expVal === "permanent") {{ timerEl.innerHTML = "<span class='text-success'>VĨNH VIỄN</span>"; timerEl.classList.replace('text-danger', 'text-success'); }}
-            else if(expVal === "pending") {{ timerEl.innerHTML = "<span class='text-info'>CHƯA KÍCH HOẠT (Sẽ trừ giờ khi dùng)</span>"; timerEl.classList.replace('text-danger', 'text-info'); }}
-            else {{
-                let expTime = parseInt(expVal);
-                setInterval(() => {{
-                    let now = new Date().getTime();
-                    let distance = expTime - now;
-                    if (distance < 0) {{ timerEl.innerHTML = "ĐÃ HẾT HẠN"; window.location.reload(); return; }}
-                    let days = Math.floor(distance / (1000 * 60 * 60 * 24));
-                    let hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                    let minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-                    let seconds = Math.floor((distance % (1000 * 60)) / 1000);
-                    timerEl.innerHTML = `${{days}}n ${{hours}}g ${{minutes}}p ${{seconds}}s`;
-                }}, 1000);
-            }}
-        </script></body></html>
-        '''
-    except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
-
+# ADMIN WEB ROUTES
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
     try:
@@ -2255,13 +2371,10 @@ def admin_login():
             if u_data and u_data.get("role") == "admin" and u_data.get("password_hash") == hash_pwd(pwd):
                 session['username'] = username
                 session['role'] = 'admin'
-                session['admin_auth'] = True 
-                session['admin_ip'] = get_real_ip()
-                with db_lock: log_admin_action(db, f"Đăng nhập Admin thành công: {get_real_ip()}")
+                with db_lock: log_admin_action(db, f"Đăng nhập Admin: {get_real_ip()}")
                 save_db(db)
                 return redirect('/admin')
             return swal_back("Từ Chối Truy Cập", f"Thông tin sai!", "error")
-        
         return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
@@ -2274,7 +2387,7 @@ def admin_dashboard():
             keys_items = list(db.get("keys", {}).items())
             users_items = list(db.get("users", {}).items())
             banned_ips = list(db.get("banned_ips", []))
-            admin_logs = list(db.get("admin_logs", []))
+            tg_admins = list(db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID]))
 
         now_ms = int(time.time() * 1000)
 
@@ -2282,37 +2395,18 @@ def admin_dashboard():
         for uname, udata in users_items:
             if udata.get("role") == "admin": continue
             bal = udata.get("balance", 0)
-            
             u_keys = "<br>".join([f"🔑 {escape(pk.get('key')[:8])}..." for pk in udata.get("purchased_keys", [])]) or "<span class='text-muted'>Chưa có</span>"
             u_ips = "<br>".join([escape(ip) for ip in udata.get("ips", [])]) or "<span class='text-muted'>Trống</span>"
-            created = time.strftime("%d/%m/%y", time.localtime(udata.get("created_at", 0)/1000))
-            
-            users_html += f'''
-            <tr class="text-nowrap">
-                <td><strong class="text-warning">{escape(uname)}</strong><br><small class="text-muted">{created}</small></td>
-                <td><span class="badge bg-success">{bal:,}đ</span></td>
-                <td style="font-size:11px; text-align:left;">{u_keys}</td>
-                <td style="font-size:11px; text-align:left; color:#ffcc00;">{u_ips}</td>
-                <td>
-                    <form action="/admin/add_balance" method="POST" class="d-flex gap-1 justify-content-center m-0">
-                        <input type="hidden" name="username" value="{escape(uname)}">
-                        <input type="number" name="amount" class="form-control form-control-sm bg-dark text-light border-secondary px-1 text-center m-0" style="width:70px;font-size:12px;height:28px;" placeholder="± Tiền" required>
-                        <button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;height:28px; border-radius:6px;">CỘNG</button>
-                    </form>
-                </td>
-            </tr>
-            '''
+            users_html += f'''<tr class="text-nowrap"><td><strong class="text-warning">{escape(uname)}</strong></td><td><span class="badge bg-success">{bal:,}đ</span></td><td style="font-size:11px; text-align:left;">{u_keys}</td><td style="font-size:11px; text-align:left; color:#ffcc00;">{u_ips}</td><td><form action="/admin/add_balance" method="POST" class="d-flex gap-1 justify-content-center m-0"><input type="hidden" name="username" value="{escape(uname)}"><input type="number" name="amount" class="form-control form-control-sm bg-dark text-light border-secondary px-1 text-center m-0" style="width:70px;font-size:12px;height:28px;" placeholder="± Tiền" required><button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;height:28px; border-radius:6px;">CỘNG</button></form></td></tr>'''
 
         keys_html = ''
         for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
             st = data.get('status', 'active')
             is_banned = (st == 'banned')
             temp_ban = data.get('temp_ban_until', 0)
-            
             status_badge = '<span class="badge bg-success">Hoạt động</span>'
             if is_banned: status_badge = '<span class="badge bg-dark border border-danger text-danger">TỬ HÌNH</span>'
             elif temp_ban > now_ms: status_badge = f'<span class="badge bg-warning text-dark">Phạt Share ({ (temp_ban - now_ms)//60000 }p)</span>'
-
             vip_badge = '<span class="badge bg-danger">VIP</span>' if data.get('vip', False) else '<span class="badge bg-secondary">THƯỜNG</span>'
             
             is_expired = False
@@ -2325,61 +2419,40 @@ def admin_dashboard():
             if is_expired and not is_banned: status_badge = '<span class="badge bg-secondary">HẾT HẠN</span>'
             safe_k = escape(str(k))
             bound_olm = escape(data.get('bound_olm', ''))
-            bnd_html = f"<br><small class='text-danger'>Ghim: {bound_olm}</small>" if bound_olm else ""
+            keys_html += f'''<tr class="key-row text-nowrap"><td><strong class="text-info" style="font-size:12px; cursor:pointer;" onclick="copyKey('{safe_k}')" title="Bấm để copy">{safe_k[:8]}...</strong><br>{vip_badge} {status_badge}<br><small class="text-warning">Chủ: {escape(data.get('owner', 'Admin'))}</small><br><small class="text-danger">Ghim: {bound_olm}</small></td><td style="font-size:11px;">{exp_text}</td><td><span class="badge bg-info text-dark">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td><td><div class="d-flex flex-wrap gap-1 justify-content-center"><button class="btn btn-info btn-sm fw-bold text-dark" style="font-size:10px; border-radius:6px;" onclick="openAddTimeModal('{safe_k}')">⏳ Giờ</button><button class="btn btn-warning btn-sm" style="font-size:10px; border-radius:6px;" onclick="openBindModal('{safe_k}', '{bound_olm}')">Ghim</button><a href="/admin/action/reset-dev/{safe_k}" class="btn btn-primary btn-sm" style="font-size:10px; border-radius:6px;">🔄 Máy</a><a href="/admin/action/unban_temp/{safe_k}" class="btn btn-success btn-sm" style="font-size:10px; border-radius:6px;">Gỡ Phạt</a><a href="/admin/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-{"light" if is_banned else "danger"} btn-sm" style="font-size:10px; border-radius:6px;">{"Cứu" if is_banned else "Trảm"}</a><a href="/admin/action/delete/{safe_k}" class="btn btn-dark btn-sm" onclick="return confirm('Xóa vĩnh viễn Key này?')" style="font-size:10px; border-radius:6px;">🗑️</a></div></td></tr>'''
 
-            keys_html += f'''
-            <tr class="key-row text-nowrap">
-                <td>
-                    <strong class="text-info" style="font-size:12px; cursor:pointer;" onclick="copyKey('{safe_k}')" title="Bấm để copy">{safe_k[:8]}... <i class="fas fa-copy text-muted"></i></strong><br>
-                    {vip_badge} {status_badge}<br>
-                    <small class="text-warning">Chủ: {escape(data.get('owner', 'Admin'))}</small>{bnd_html}
-                </td>
-                <td style="font-size:11px;">{exp_text}</td>
-                <td><span class="badge bg-info text-dark">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
-                <td>
-                    <div class="d-flex flex-wrap gap-1 justify-content-center">
-                        <button class="btn btn-info btn-sm fw-bold text-dark" style="font-size:10px; border-radius:6px;" onclick="openAddTimeModal('{safe_k}')">⏳ Giờ</button>
-                        <button class="btn btn-warning btn-sm" style="font-size:10px; border-radius:6px;" onclick="openBindModal('{safe_k}', '{bound_olm}')">Ghim</button>
-                        <a href="/admin/action/reset-dev/{safe_k}" class="btn btn-primary btn-sm" style="font-size:10px; border-radius:6px;">🔄 Máy</a>
-                        <a href="/admin/action/unban_temp/{safe_k}" class="btn btn-success btn-sm" style="font-size:10px; border-radius:6px;">Gỡ Phạt</a>
-                        <a href="/admin/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-{"light" if is_banned else "danger"} btn-sm" style="font-size:10px; border-radius:6px;">{"Cứu" if is_banned else "Trảm"}</a>
-                        <a href="/admin/action/delete/{safe_k}" class="btn btn-dark btn-sm" onclick="return confirm('Xóa vĩnh viễn Key này?')" style="font-size:10px; border-radius:6px;">🗑️</a>
-                    </div>
-                </td>
-            </tr>'''
-
-        blacklist_rows = "".join([f'<li class="list-group-item bg-transparent text-light d-flex justify-content-between align-items-center border-secondary border-bottom px-1" style="font-size:12px;">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger p-0 px-2 rounded-pill">Gỡ</a></li>' for ip in banned_ips])
-        if not blacklist_rows: blacklist_rows = '<li class="list-group-item bg-transparent text-muted text-center border-0" style="font-size:12px;">Sạch sẽ</li>'
+        blacklist_rows = "".join([f'<li class="list-group-item bg-transparent text-light d-flex justify-content-between align-items-center border-secondary border-bottom px-1" style="font-size:12px;">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger p-0 px-2 rounded-pill">Gỡ</a></li>' for ip in banned_ips]) or '<li class="list-group-item bg-transparent text-muted text-center border-0" style="font-size:12px;">Sạch sẽ</li>'
+        
+        tg_admin_rows = "".join([f'<li class="list-group-item bg-transparent text-light d-flex justify-content-between align-items-center border-secondary border-bottom px-1" style="font-size:12px;">ID: {escape(str(tid))} {"(Chủ Tịch)" if str(tid)==TELEGRAM_CHAT_ID else f"<a href='/admin/del_tg_admin/{escape(str(tid))}' class='btn btn-sm btn-danger p-0 px-2 rounded-pill'>Xóa</a>"}</li>' for tid in tg_admins]) or '<li class="list-group-item bg-transparent text-muted text-center border-0" style="font-size:12px;">Chưa có</li>'
         
         safe_vm_script = escape(db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT))
 
         return f'''
-        <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ADMIN DASHBOARD</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-        <style>{CSS_GLASS} h5{{font-weight:900;}} .table-container{{max-height:450px;overflow-y:auto;}}</style>
-        </head><body class="p-2 p-md-4">
+        <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ADMIN DASHBOARD</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS} h5{{font-weight:900;}} .table-container{{max-height:450px;overflow-y:auto;}}</style></head><body class="p-2 p-md-4">
         <div class="container-fluid">
             <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
                 <h3 class="m-0 text-neon fw-bold"><i class="fas fa-shield-alt"></i> LVT SECURE ADMIN</h3>
                 <div><a href="/logout" class="btn btn-outline-danger btn-sm fw-bold rounded-pill px-3">Thoát</a></div>
             </div>
-            
             <div class="row g-4">
                 <div class="col-lg-7">
                     <div class="card p-4 h-100" style="border-color:rgba(51,102,255,0.4);">
                         <h5 style="color:#3366ff; margin-bottom:20px;"><i class="fas fa-users"></i> DANH SÁCH USER</h5>
-                        <div class="table-container table-responsive">
-                            <table class="table table-dark table-hover table-sm align-middle mb-0 text-center text-nowrap">
-                                <thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Keys Sỡ Hữu</th><th>IP Đăng Nhập</th><th>Cộng/Trừ Tiền</th></tr></thead>
-                                <tbody>{users_html}</tbody>
-                            </table>
-                        </div>
+                        <div class="table-container table-responsive"><table class="table table-dark table-hover table-sm align-middle mb-0 text-center text-nowrap"><thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Keys Sỡ Hữu</th><th>IP Đăng Nhập</th><th>Cộng/Trừ Tiền</th></tr></thead><tbody>{users_html}</tbody></table></div>
                     </div>
                 </div>
-
                 <div class="col-lg-5">
                     <div class="row g-4 h-100">
+                        <div class="col-md-12">
+                            <div class="card p-4 h-100" style="border-color:rgba(0,255,204,0.4);">
+                                <h5 style="color:#00ffcc; margin-bottom:15px;"><i class="fab fa-telegram"></i> CẤP QUYỀN TG ADMIN THAY BẠN</h5>
+                                <form action="/admin/add_tg_admin" method="POST" class="d-flex gap-2 mb-3">
+                                    <input type="text" name="tg_id" class="form-control form-control-sm m-0" placeholder="Nhập ID Telegram..." required>
+                                    <button type="submit" class="btn btn-sm btn-info fw-bold px-3 rounded-pill text-dark">Cấp Quyền</button>
+                                </form>
+                                <ul class="list-group list-group-flush" style="max-height:120px;overflow-y:auto; border: 1px solid rgba(255,255,255,0.05); border-radius:8px; padding:5px;">{tg_admin_rows}</ul>
+                            </div>
+                        </div>
                         <div class="col-md-12">
                             <div class="card p-4 h-100" style="border-color:rgba(189,0,255,0.4);">
                                 <h5 style="color:#bd00ff; margin-bottom:15px;"><i class="fas fa-key"></i> TẠO KEY MỚI</h5>
@@ -2388,91 +2461,32 @@ def admin_dashboard():
                                     <div class="col-6"><input type="number" name="quantity" class="form-control form-control-sm m-0" value="1" placeholder="Số Lượng"></div>
                                     <div class="col-6"><input type="number" name="duration" class="form-control form-control-sm m-0" placeholder="Độ dài" required></div>
                                     <div class="col-6"><select name="type" class="form-select form-select-sm m-0"><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">V.Viễn</option></select></div>
-                                    
-                                    <div class="col-12 d-flex justify-content-center align-items-center">
-                                        <div class="form-check form-switch fs-5 mt-1">
-                                          <input class="form-check-input" type="checkbox" role="switch" name="is_vip" id="vipSwitch">
-                                          <label class="form-check-label text-warning fw-bold ms-2" for="vipSwitch" style="font-size:14px;">🔑 Gắn mác Key VIP PRO</label>
-                                        </div>
-                                    </div>
-                                    
+                                    <div class="col-12 d-flex justify-content-center align-items-center"><div class="form-check form-switch fs-5 mt-1"><input class="form-check-input" type="checkbox" role="switch" name="is_vip" id="vipSwitch"><label class="form-check-label text-warning fw-bold ms-2" for="vipSwitch" style="font-size:14px;">🔑 Gắn mác VIP PRO</label></div></div>
                                     <div class="col-12"><button type="submit" class="btn btn-sm w-100 fw-bold py-2" style="background:linear-gradient(45deg, #bd00ff, #3366ff);color:white; border-radius:10px;">🚀 TẠO NGAY</button></div>
                                 </form>
                             </div>
                         </div>
                         <div class="col-md-12">
-                            <div class="card p-4 h-100" style="border-color:rgba(255,153,0,0.4);">
-                                <h5 style="color:#ff9900; margin-bottom:15px;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH</h5>
-                                <button class="btn btn-sm btn-outline-info w-100 fw-bold py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Dán Code HACK Mới / Cập Nhật Core</button>
-                            </div>
-                        </div>
-                        <div class="col-md-12">
                             <div class="card p-4 h-100" style="border-color:rgba(255,51,102,0.4);">
-                                <h5 class="text-danger margin-bottom:15px;"><i class="fas fa-shield-virus"></i> FIREWALL BANS</h5>
-                                <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">
-                                    <input type="text" name="ip" class="form-control form-control-sm m-0" placeholder="Nhập IP..." required>
-                                    <button type="submit" class="btn btn-sm btn-danger fw-bold px-3 rounded-pill">Chặn</button>
-                                </form>
+                                <h5 class="text-danger margin-bottom:15px;"><i class="fas fa-shield-virus"></i> FIREWALL BANS IP</h5>
+                                <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3"><input type="text" name="ip" class="form-control form-control-sm m-0" placeholder="Nhập IP..." required><button type="submit" class="btn btn-sm btn-danger fw-bold px-3 rounded-pill">Chặn</button></form>
                                 <ul class="list-group list-group-flush" style="max-height:120px;overflow-y:auto; border: 1px solid rgba(255,255,255,0.05); border-radius:8px; padding:5px;">{blacklist_rows}</ul>
                             </div>
                         </div>
                     </div>
                 </div>
-                
                 <div class="col-lg-12">
                     <div class="card p-4 h-100" style="border-color:rgba(0,255,204,0.4);">
-                        <div class="d-flex justify-content-between align-items-center mb-4">
-                            <h5 class="m-0 text-neon"><i class="fas fa-database"></i> TẤT CẢ MÃ KEY</h5>
-                            <input type="text" class="form-control form-control-sm m-0" style="width:250px; background:rgba(0,0,0,0.3);" placeholder="🔍 Tìm Key..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
-                        </div>
-                        <div class="table-container border border-secondary table-responsive">
-                            <table class="table table-dark table-sm align-middle table-hover text-center mb-0 text-nowrap">
-                                <thead class="table-active"><tr><th>🔑 Key / Chủ</th><th>⏳ Hạn Dùng</th><th>💻 Thiết bị</th><th>⚙️ Thao tác</th></tr></thead>
-                                <tbody>{keys_html}</tbody>
-                            </table>
-                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-4"><h5 class="m-0 text-neon"><i class="fas fa-database"></i> TẤT CẢ MÃ KEY</h5><input type="text" class="form-control form-control-sm m-0" style="width:250px; background:rgba(0,0,0,0.3);" placeholder="🔍 Tìm Key..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');"></div>
+                        <div class="table-container border border-secondary table-responsive"><table class="table table-dark table-sm align-middle table-hover text-center mb-0 text-nowrap"><thead class="table-active"><tr><th>🔑 Key / Chủ</th><th>⏳ Hạn Dùng</th><th>💻 Thiết bị</th><th>⚙️ Thao tác</th></tr></thead><tbody>{keys_html}</tbody></table></div>
                     </div>
                 </div>
             </div>
         </div>
-
-        <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
-            <div class="modal-dialog modal-sm modal-dialog-centered">
-                <div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00; backdrop-filter: blur(15px);">
-                    <form action="/admin/bind_olm" method="POST">
-                        <div class="modal-body text-center p-4">
-                            <input type="hidden" name="key" id="bindKeyInput">
-                            <p class="text-white mb-2">Ghim Định Danh OLM cho Key:</p>
-                            <p><strong id="bindKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p>
-                            <input type="text" name="olm_name" id="bindOlmInput" class="form-control mt-3" placeholder="Tên nick OLM khách (để trống: hủy)">
-                        </div>
-                        <div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-warning w-100 fw-bold text-dark rounded-pill">Ghim Chặt Cứng</button></div>
-                    </form>
-                </div>
-            </div>
-        </div>
         
-        <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark">
-            <div class="modal-dialog modal-sm modal-dialog-centered">
-                <div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc; backdrop-filter: blur(15px);">
-                    <form action="/admin/add_time" method="POST">
-                        <div class="modal-body text-center p-4">
-                            <input type="hidden" name="key" id="addTimeKeyInput">
-                            <p class="text-white mb-2">Thêm thời gian cho Key:</p>
-                            <p><strong id="addTimeKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p>
-                            <input type="number" name="time_val" class="form-control mt-3" placeholder="Số lượng (Ví dụ: 10)" required>
-                            <select name="time_unit" class="form-select mt-2" style="background-color:rgba(10,10,18,0.8); color:white;">
-                                <option value="hours">Giờ</option>
-                                <option value="days" selected>Ngày</option>
-                                <option value="months">Tháng</option>
-                            </select>
-                        </div>
-                        <div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-info w-100 fw-bold text-dark rounded-pill">XÁC NHẬN CỘNG</button></div>
-                    </form>
-                </div>
-            </div>
-        </div>
-
+        <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00; backdrop-filter: blur(15px);"><form action="/admin/bind_olm" method="POST"><div class="modal-body text-center p-4"><input type="hidden" name="key" id="bindKeyInput"><p class="text-white mb-2">Ghim Định Danh OLM cho Key:</p><p><strong id="bindKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p><input type="text" name="olm_name" id="bindOlmInput" class="form-control mt-3" placeholder="Tên nick OLM khách (để trống: hủy)"></div><div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-warning w-100 fw-bold text-dark rounded-pill">Ghim Chặt Cứng</button></div></form></div></div></div>
+        <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc; backdrop-filter: blur(15px);"><form action="/admin/add_time" method="POST"><div class="modal-body text-center p-4"><input type="hidden" name="key" id="addTimeKeyInput"><p class="text-white mb-2">Thêm thời gian cho Key:</p><p><strong id="addTimeKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p><input type="number" name="time_val" class="form-control mt-3" placeholder="Số lượng (Ví dụ: 10)" required><select name="time_unit" class="form-select mt-2" style="background-color:rgba(10,10,18,0.8); color:white;"><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option></select></div><div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-info w-100 fw-bold text-dark rounded-pill">XÁC NHẬN CỘNG</button></div></form></div></div></div>
+        
         <div class="modal fade" id="vmScriptModal" tabindex="-1" data-bs-theme="dark">
           <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content" style="background:rgba(17,17,26,0.95); border:1px solid #00ffcc; backdrop-filter: blur(15px);">
@@ -2493,185 +2507,165 @@ def admin_dashboard():
         
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script>
-            function copyKey(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã Copy Key!',showConfirmButton:false,timer:1000,background:'#111',color:'#00ffcc'}}); }}
-            
-            function openBindModal(key, current_olm) {{
-                document.getElementById('bindKeyInput').value = key;
-                document.getElementById('bindKeyDisplay').innerText = key;
-                document.getElementById('bindOlmInput').value = current_olm;
-                new bootstrap.Modal(document.getElementById('bindModal')).show();
-            }}
-            
-            function openAddTimeModal(key) {{
-                document.getElementById('addTimeKeyInput').value = key;
-                document.getElementById('addTimeKeyDisplay').innerText = key;
-                new bootstrap.Modal(document.getElementById('addTimeModal')).show();
-            }}
+            function copyKey(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã Copy!',showConfirmButton:false,timer:1000,background:'#111',color:'#00ffcc'}}); }}
+            function openBindModal(key, current_olm) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = current_olm; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
+            function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
         </script>
         </body></html>
         '''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
+@app.route('/admin/add_tg_admin', methods=['POST'])
+def add_tg_admin():
+    if session.get('role') != 'admin': return redirect('/login')
+    tg_id = request.form.get('tg_id', '').strip()
+    db = load_db()
+    with db_lock:
+        admins = db.setdefault("settings", {}).setdefault("tg_admins", [TELEGRAM_CHAT_ID])
+        if tg_id and tg_id not in admins:
+            admins.append(tg_id)
+            save_db(db)
+    return swal_redirect("Thành công", f"Đã cấp quyền truy cập Mini App cho ID: {tg_id}", "success", "/admin")
+
+@app.route('/admin/del_tg_admin/<path:tg_id>')
+def del_tg_admin(tg_id):
+    if session.get('role') != 'admin': return redirect('/login')
+    if tg_id == TELEGRAM_CHAT_ID: return swal_back("Lỗi", "Không thể xóa quyền của Chủ Tịch (Bot Owner)!", "error")
+    db = load_db()
+    with db_lock:
+        admins = db.setdefault("settings", {}).setdefault("tg_admins", [TELEGRAM_CHAT_ID])
+        if tg_id in admins:
+            admins.remove(tg_id)
+            save_db(db)
+    return redirect('/admin')
+
 @app.route('/admin/add_balance', methods=['POST'])
 def add_balance():
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        username = request.form.get('username')
-        amt = safe_int(request.form.get('amount'))
-        db = load_db()
-        with db_lock:
-            if username in db.get("users", {}):
-                db["users"][username]["balance"] += amt
-                if db["users"][username]["balance"] < 0: db["users"][username]["balance"] = 0
-                if amt > 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa nạp cho bạn +{amt:,}đ")
-                elif amt < 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa trừ của bạn {amt:,}đ")
-                log_admin_action(db, f"Cộng/Trừ {amt}đ cho tài khoản {username}")
-                save_db(db)
-        return redirect('/admin')
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
+    if session.get('role') != 'admin': return redirect('/login')
+    username = request.form.get('username')
+    amt = safe_int(request.form.get('amount'))
+    db = load_db()
+    with db_lock:
+        if username in db.get("users", {}):
+            db["users"][username]["balance"] += amt
+            if db["users"][username]["balance"] < 0: db["users"][username]["balance"] = 0
+            if amt > 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa nạp cho bạn +{amt:,}đ")
+            elif amt < 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa trừ của bạn {amt:,}đ")
+            save_db(db)
+    return redirect('/admin')
 
 @app.route('/admin/create', methods=['POST'])
 def create_key():
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        dur = safe_int(request.form.get('duration'))
-        md = safe_int(request.form.get('maxDevices'), 1)
-        qty = safe_int(request.form.get('quantity'), 1)
-        t = request.form.get('type')
-        vip = request.form.get('is_vip') == 'on'
-        pfx = request.form.get('prefix', '').strip()
-        
-        db = load_db()
-        with db_lock:
-            for _ in range(qty):
-                nk = generate_secure_key(pfx, vip)
-                db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": {}, "status": "active", "vip": vip, "loader_enabled": True, "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": ""}
-                if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
-                else: db["keys"][nk]["exp"] = "permanent"
-            log_admin_action(db, f"Tạo {qty} Key Tool mới ({dur} {t}) - Mác VIP: {vip}")
-            save_db(db)
-        return redirect('/admin')
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
+    if session.get('role') != 'admin': return redirect('/login')
+    dur = safe_int(request.form.get('duration'))
+    md = safe_int(request.form.get('maxDevices'), 1)
+    qty = safe_int(request.form.get('quantity'), 1)
+    t = request.form.get('type')
+    vip = request.form.get('is_vip') == 'on'
+    pfx = request.form.get('prefix', '').strip()
+    db = load_db()
+    with db_lock:
+        for _ in range(qty):
+            nk = generate_secure_key(pfx, vip)
+            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": {}, "status": "active", "vip": vip, "loader_enabled": True, "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": ""}
+            if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
+            else: db["keys"][nk]["exp"] = "permanent"
+        save_db(db)
+    return redirect('/admin')
 
 @app.route('/admin/add_time', methods=['POST'])
 def admin_add_time():
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        key = request.form.get('key', '').strip()
-        t_val = safe_int(request.form.get('time_val', 0))
-        t_unit = request.form.get('time_unit', 'days')
-        
-        if t_val <= 0: return swal_back("Lỗi", "Số lượng phải lớn hơn 0", "error")
-        
-        ms_to_add = 0
-        if t_unit == 'hours': ms_to_add = t_val * 3600000
-        elif t_unit == 'days': ms_to_add = t_val * 86400000
-        elif t_unit == 'months': ms_to_add = t_val * 2592000000
-        
-        db = load_db()
-        with db_lock:
-            if key in db.get("keys", {}):
-                kd = db["keys"][key]
-                if kd.get("exp") == "permanent":
-                    return swal_back("Lỗi", "Key vĩnh viễn không cần cộng giờ!", "error")
-                
-                now = int(time.time() * 1000)
-                if kd.get("exp") == "pending":
-                    kd["durationMs"] = kd.get("durationMs", 0) + ms_to_add
-                else:
-                    current_exp = kd.get("exp", now)
-                    if current_exp < now: current_exp = now
-                    kd["exp"] = current_exp + ms_to_add
-                
-                log_admin_action(db, f"Cộng {t_val} {t_unit} cho Key {key}")
-                save_db(db)
-        return swal_redirect("Thành Công", f"Đã cộng thêm {t_val} {t_unit} cho Key {key}!", "success", "/admin")
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
+    if session.get('role') != 'admin': return redirect('/login')
+    key = request.form.get('key', '').strip()
+    t_val = safe_int(request.form.get('time_val', 0))
+    t_unit = request.form.get('time_unit', 'days')
+    if t_val <= 0: return swal_back("Lỗi", "Số lượng > 0", "error")
+    ms_to_add = 0
+    if t_unit == 'hours': ms_to_add = t_val * 3600000
+    elif t_unit == 'days': ms_to_add = t_val * 86400000
+    elif t_unit == 'months': ms_to_add = t_val * 2592000000
+    db = load_db()
+    with db_lock:
+        if key in db.get("keys", {}):
+            kd = db["keys"][key]
+            if kd.get("exp") == "permanent": return swal_back("Lỗi", "Key vĩnh viễn không cần cộng giờ!", "error")
+            now = int(time.time() * 1000)
+            if kd.get("exp") == "pending": kd["durationMs"] = kd.get("durationMs", 0) + ms_to_add
+            else:
+                current_exp = kd.get("exp", now)
+                if current_exp < now: current_exp = now
+                kd["exp"] = current_exp + ms_to_add
+            save_db(db)
+    return redirect('/admin')
 
 @app.route('/admin/bind_olm', methods=['POST'])
 def admin_bind_olm():
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        key = request.form.get('key', '').strip()
-        olm = request.form.get('olm_name', '').strip()
-        db = load_db()
-        with db_lock:
-            if key in db.get("keys", {}):
-                db["keys"][key]["bound_olm"] = olm
-                log_admin_action(db, f"Ghim OLM {olm} cho Key {key}")
-                save_db(db)
-        return redirect('/admin')
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
+    if session.get('role') != 'admin': return redirect('/login')
+    key = request.form.get('key', '').strip()
+    olm = request.form.get('olm_name', '').strip()
+    db = load_db()
+    with db_lock:
+        if key in db.get("keys", {}):
+            db["keys"][key]["bound_olm"] = olm
+            save_db(db)
+    return redirect('/admin')
 
 @app.route('/admin/update_vm_script', methods=['POST'])
 def admin_update_vm_script():
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        ns = request.form.get('vm_script_content', '')
-        if not ns.strip().startswith('// ==UserScript=='): return swal_back("Lỗi", "Script không hợp lệ (Phải bắt đầu bằng // ==UserScript==)", "error")
-        db = load_db()
-        with db_lock:
-            db.setdefault("settings", {})["violentmonkey_script"] = ns
-            log_admin_action(db, "Cập nhật Script Gốc Mới Nhất")
-            save_db(db)
-        return swal_redirect("Tuyệt Vời!", "Hệ thống đã cập nhật và biên dịch thành công Core mới ngầm không cần cài lại!", "success", "/admin")
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
+    if session.get('role') != 'admin': return redirect('/login')
+    ns = request.form.get('vm_script_content', '')
+    if not ns.strip().startswith('// ==UserScript=='): return swal_back("Lỗi", "Script không hợp lệ", "error")
+    db = load_db()
+    with db_lock:
+        db.setdefault("settings", {})["violentmonkey_script"] = ns
+        save_db(db)
+    return swal_redirect("Thành công", "Đã cập nhật Code mới", "success", "/admin")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        ip = request.form.get('ip', '').strip()
-        if ip:
-            db = load_db()
-            with db_lock:
-                if ip not in db.setdefault("banned_ips", []):
-                    db["banned_ips"].append(ip)
-                    log_admin_action(db, f"Chặn IP: {ip}")
-                    save_db(db)
-        return redirect('/admin')
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
+    if session.get('role') != 'admin': return redirect('/login')
+    ip = request.form.get('ip', '').strip()
+    if ip:
+        db = load_db()
+        with db_lock:
+            if ip not in db.setdefault("banned_ips", []):
+                db["banned_ips"].append(ip)
+                save_db(db)
+    return redirect('/admin')
 
 @app.route('/admin/unban_ip/<path:ip>')
 def unban_ip(ip):
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        db = load_db()
-        with db_lock:
-            if ip in db.setdefault("banned_ips", []):
-                db["banned_ips"].remove(ip)
-                log_admin_action(db, f"Gỡ Firewall cho IP: {ip}")
-                save_db(db)
-        return redirect('/admin')
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
+    if session.get('role') != 'admin': return redirect('/login')
+    db = load_db()
+    with db_lock:
+        if ip in db.setdefault("banned_ips", []):
+            db["banned_ips"].remove(ip)
+            save_db(db)
+    return redirect('/admin')
 
 @app.route('/admin/action/<action>/<key>')
 def key_actions(action, key):
-    try:
-        if session.get('role') != 'admin': return redirect('/login')
-        db = load_db()
-        with db_lock:
-            if key in db.get("keys", {}):
-                kd = db["keys"][key]
-                if action == 'ban': kd['status'] = 'banned'
-                elif action == 'unban': 
-                    kd['status'] = 'active'
-                    kd['temp_ban_until'] = 0
-                    kd['violations'] = 0
-                elif action == 'unban_temp':
-                    kd['temp_ban_until'] = 0
-                    kd['violations'] = 0
-                elif action == 'delete': 
-                    db["keys"].pop(key, None)
-                    for u in db["users"]:
-                        db["users"][u]["purchased_keys"] = [pk for pk in db["users"][u].get("purchased_keys", []) if pk["key"] != key]
-                elif action == 'reset-dev':
-                    kd['devices'] = []
-                    kd['known_ips'] = {}
-                log_admin_action(db, f"Lệnh [{action}] trên Key {key}")
-                save_db(db)
-        return redirect('/admin')
-    except Exception as e: return swal_back("Lỗi", str(e), "error")
+    if session.get('role') != 'admin': return redirect('/login')
+    db = load_db()
+    with db_lock:
+        if key in db.get("keys", {}):
+            kd = db["keys"][key]
+            if action == 'ban': kd['status'] = 'banned'
+            elif action == 'unban': 
+                kd['status'] = 'active'
+                kd['temp_ban_until'] = 0
+                kd['violations'] = 0
+            elif action == 'unban_temp':
+                kd['temp_ban_until'] = 0
+                kd['violations'] = 0
+            elif action == 'delete': 
+                db["keys"].pop(key, None)
+                for u in db["users"]: db["users"][u]["purchased_keys"] = [pk for pk in db["users"][u].get("purchased_keys", []) if pk["key"] != key]
+            elif action == 'reset-dev':
+                kd['devices'] = []
+                kd['known_ips'] = {}
+            save_db(db)
+    return redirect('/admin')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
