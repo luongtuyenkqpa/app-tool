@@ -2,7 +2,7 @@ import os, json, time, random, hashlib, threading, requests, shutil, base64, sec
 import urllib.parse
 from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session, abort
-from werkzeug.exceptions import HTTPException # [VÁ LỖI LVT: Để Catch Exception an toàn]
+from werkzeug.exceptions import HTTPException
 
 # [VÁ LỖI LỆCH MÚI GIỜ CLOUD]
 try:
@@ -12,7 +12,7 @@ except: pass
 
 app = Flask(__name__)
 
-# [VÁ LỖI LVT: Định nghĩa CSS_GLASS bị thiếu gây sập trang Admin]
+# [VÁ LỖI CSS_GLASS]
 CSS_GLASS = """
 .glass-panel { background: rgba(17, 17, 26, 0.7); backdrop-filter: blur(15px); border: 1px solid rgba(0, 255, 204, 0.3); border-radius: 15px; padding: 30px; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); max-width: 400px; margin: 50px auto; text-align: center; }
 .text-neon { color: #00ffcc; text-shadow: 0 0 10px rgba(0, 255, 204, 0.5); }
@@ -27,7 +27,7 @@ TELEGRAM_BOT_TOKEN = "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o"
 TELEGRAM_CHAT_ID = "7363320876"
 WEB_URL = "https://app-tool-trlp.onrender.com" 
 
-# [NÂNG CẤP LVT: Xử lý đa luồng Threading để không treo DB khi tele lag]
+# [NÂNG CẤP: Threading Telegram]
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
     def _send():
@@ -114,7 +114,7 @@ def telegram_polling():
 
 threading.Thread(target=telegram_polling, daemon=True).start()
 
-# GLOBAL EXCEPTION CATCHER [VÁ LỖI LVT: Không bắt nhầm Route Exception]
+# GLOBAL EXCEPTION CATCHER 
 @app.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, HTTPException): return e
@@ -127,6 +127,8 @@ app.secret_key = os.environ.get('SECRET_KEY', hashlib.sha256(f"LVT_SECURE_KEY_20
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = True      
+app.config['SESSION_COOKIE_HTTPONLY'] = True    
 
 DB_FILE = './database.json'
 DB_BACKUP = './database.backup.json'
@@ -137,6 +139,7 @@ api_rate_lock = threading.Lock()
 active_sessions = {}
 api_rate_cache = {}
 used_signatures = {} 
+admin_login_attempts = {}
 
 GLOBAL_DB = {}
 _last_db_mtime = 0
@@ -182,7 +185,6 @@ def render_template_string_safe(content):
     resp.headers['Content-Type'] = 'text/html; charset=utf-8'
     return resp
 
-# [TOÀN BỘ SCRIPT VIOLENTMONKEY VÀ CƠ CHẾ LÕI DATABASE ĐƯỢC GIỮ NGUYÊN HOÀN TOÀN NHƯ YÊU CẦU]
 # ========================================================
 # DATABASE ENGINE & MẶC ĐỊNH SCRIPT V18.1 NGUYÊN BẢN
 # ========================================================
@@ -1352,9 +1354,57 @@ def firewall_and_csrf():
                 return redirect('/admin_login')
     except: pass
 
+# [NÂNG CẤP]: Tiêm các Header chống Clickjacking và Sniffing
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN' 
+    response.headers['X-Content-Type-Options'] = 'nosniff' 
+    response.headers['X-XSS-Protection'] = '1; mode=block' 
+    return response
+
 @app.errorhandler(404)
 def not_found_trap(e):
     return "Not Found", 404
+
+# ========================================================
+# TRANG CHỦ (VÁ LỖI NOT FOUND 404 BẠN GỬI)
+# ========================================================
+@app.route('/')
+def home_page():
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="vi" data-bs-theme="dark">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>LVT SYSTEM - TRANG CHỦ</title>
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;800&display=swap');
+            body {{ background: #05050A; color: #fff; font-family: 'Be Vietnam Pro', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+            .container {{ text-align: center; background: rgba(17,17,26,0.8); padding: 40px; border-radius: 20px; border: 1px solid #00ffcc; box-shadow: 0 0 30px rgba(0,255,204,0.1); backdrop-filter: blur(10px); max-width: 400px; width: 90%; }}
+            h1 {{ color: #00ffcc; font-weight: 800; margin-bottom: 10px; text-shadow: 0 0 10px rgba(0,255,204,0.5); }}
+            p {{ color: #8892b0; font-size: 14px; margin-bottom: 30px; }}
+            .btn-action {{ display: block; width: 100%; padding: 15px; margin-bottom: 15px; border-radius: 12px; font-weight: bold; text-decoration: none; transition: 0.3s; box-sizing: border-box; }}
+            .btn-tg {{ background: linear-gradient(90deg, #0088cc, #00aaff); color: #fff; border: none; }}
+            .btn-tg:hover {{ box-shadow: 0 0 15px rgba(0,170,255,0.5); transform: scale(1.02); }}
+            .btn-admin {{ background: transparent; color: #ffcc00; border: 2px solid #ffcc00; }}
+            .btn-admin:hover {{ background: rgba(255,204,0,0.1); box-shadow: 0 0 15px rgba(255,204,0,0.3); transform: scale(1.02); }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <i class="fas fa-shield-alt" style="font-size: 50px; color: #00ffcc; margin-bottom: 20px;"></i>
+            <h1>LVT SERVER API</h1>
+            <p>Hệ thống máy chủ xử lý & Cấp phát Key bảo mật tự động.</p>
+            <a href="https://t.me/tên_bot_của_bạn" class="btn-action btn-tg" target="_blank"><i class="fab fa-telegram"></i> MỞ BOT TELEGRAM</a>
+            <a href="/telegram_mini_app" class="btn-action" style="background:#bd00ff; color:#fff; text-decoration:none;"><i class="fas fa-mobile-alt"></i> MỞ MINI APP (WEB)</a>
+            <a href="/admin_login" class="btn-action btn-admin"><i class="fas fa-user-shield"></i> DÀNH CHO QUẢN TRỊ VIÊN</a>
+        </div>
+    </body>
+    </html>
+    """
+    return html
 
 # ========================================================
 # API TRẠNG THÁI (CHO WEB CLIENT POLLING BẢO TRÌ & KHÓA)
@@ -1694,7 +1744,6 @@ def open_hack_route():
 
 # ========================================================
 # API BACKEND CHO TELEGRAM MINI APP (ALL IN ONE)
-# [VÁ LỖI BẢO MẬT NGHIÊM TRỌNG (LVT): Ngăn chặn bypass Header X-Admin-ID]
 # ========================================================
 def verify_telegram_webapp(init_data):
     try:
@@ -2040,7 +2089,6 @@ def telegram_mini_app():
         </style>
     </head>
     <body>
-        <!-- SCREEN: AUTH (LOGIN/REG) -->
         <div id="screen-auth" class="screen active">
             <div style="text-align:center; margin-top:30px; margin-bottom: 30px;">
                 <i class="fas fa-shield-alt" style="font-size: 60px; color: #00ffcc;"></i>
@@ -2055,7 +2103,6 @@ def telegram_mini_app():
             </div>
         </div>
 
-        <!-- SCREEN: USER DASHBOARD -->
         <div id="screen-user" class="screen">
             <div class="header-bar">
                 <div>Xin chào, <b id="display-uname" style="color:#00ffcc; text-transform:uppercase;">...</b></div>
@@ -2082,7 +2129,6 @@ def telegram_mini_app():
             <div id="my-keys-container"></div>
         </div>
 
-        <!-- SCREEN: ADMIN MAIN -->
         <div id="screen-admin-main" class="screen">
             <div class="header-bar">
                 <button class="btn-back" style="margin:0;" onclick="navTo('screen-user')"><i class="fas fa-arrow-left"></i> Về Shop</button>
@@ -2127,7 +2173,6 @@ def telegram_mini_app():
             </div>
         </div>
 
-        <!-- CÁC SCREEN ADMIN CON -->
         <div id="screen-admin-system" class="screen">
             <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:0; color:#ffcc00;">🔔 HỆ THỐNG GLOBAL</h3>
@@ -2201,7 +2246,7 @@ def telegram_mini_app():
             let tg = window.Telegram.WebApp;
             tg.expand();
             let adminId = tg.initDataUnsafe?.user?.id || "7363320876"; 
-            let initData = tg.initData || ""; // [VÁ LỖI LVT: Lấy initData để verify bảo mật HMAC]
+            let initData = tg.initData || ""; 
             let allUsersData = [];
 
             function navTo(screenId) {
@@ -2210,7 +2255,6 @@ def telegram_mini_app():
                 if(screenId === 'screen-admin-users') loadAdminUsers();
             }
 
-            // [VÁ LỖI LVT: Kèm theo X-Init-Data chuẩn để bảo mật không bị Bypass bằng ID giả]
             function apiCall(endpoint, data, onSuccess) {
                 tg.MainButton.showProgress();
                 fetch(endpoint, {
@@ -2437,6 +2481,17 @@ def telegram_mini_app():
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
     try:
+        ip = get_real_ip()
+        
+        # [BẢO VỆ]: Chống dò mật khẩu (Brute-force)
+        global admin_login_attempts
+        now = time.time()
+        admin_login_attempts = {k: v for k, v in admin_login_attempts.items() if now - v['time'] < 300} 
+        
+        attempts = admin_login_attempts.get(ip, {'count': 0, 'time': now})
+        if attempts['count'] >= 5:
+            return swal_back("Bị Khóa Tạm Thời", "Bạn đã nhập sai quá nhiều lần. Vui lòng thử lại sau 5 phút!", "error")
+
         if request.method == 'POST':
             db = load_db()
             username = request.form.get('username', '').strip().lower()
@@ -2446,10 +2501,17 @@ def admin_login():
             if u_data and u_data.get("role") == "admin" and u_data.get("password_hash") == hash_pwd(pwd):
                 session['username'] = username
                 session['role'] = 'admin'
-                with db_lock: log_admin_action(db, f"Đăng nhập Admin: {get_real_ip()}")
+                admin_login_attempts.pop(ip, None) 
+                with db_lock: log_admin_action(db, f"Đăng nhập Admin: {ip}")
                 save_db(db)
                 return redirect('/admin')
-            return swal_back("Từ Chối Truy Cập", f"Thông tin sai!", "error")
+            
+            attempts['count'] += 1
+            attempts['time'] = now
+            admin_login_attempts[ip] = attempts
+            
+            return swal_back("Từ Chối Truy Cập", f"Thông tin sai! Bạn còn {5 - attempts['count']} lần thử.", "error")
+            
         return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
@@ -2643,7 +2705,7 @@ def create_key():
         for _ in range(qty):
             nk = generate_secure_key(pfx, vip)
             db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": {}, "status": "active", "vip": vip, "loader_enabled": True, "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": ""}
-            if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":259200000}.get(t, 60000)
+            if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
             else: db["keys"][nk]["exp"] = "permanent"
         save_db(db)
     return redirect('/admin')
