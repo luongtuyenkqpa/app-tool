@@ -16,7 +16,6 @@ app = Flask(__name__)
 # ========================================================
 TELEGRAM_BOT_TOKEN = "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o"
 TELEGRAM_CHAT_ID = "7363320876"
-# Đổi link này thành link web thực tế của bạn trên Render
 WEB_URL = "https://app-tool-trlp.onrender.com" 
 
 def send_telegram_alert(message):
@@ -35,7 +34,6 @@ def send_telegram_backup():
             requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📦 BACKUP DATABASE LVT TOOL\nThời gian: {time.strftime('%d/%m/%Y %H:%M:%S')}"}, files={"document": f}, timeout=10)
     except: pass
 
-# LUỒNG POLLING TELEGRAM
 def telegram_polling():
     offset = 0
     while True:
@@ -57,15 +55,8 @@ def telegram_polling():
                         
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            
-                            welcome = "🌟 <b>HỆ THỐNG LVT MINI APP</b> 🌟\n\n"
-                            welcome += "Hệ thống quản trị đồ họa cao cấp đã sẵn sàng. Vui lòng ấn nút bên dưới để khởi chạy App!"
-                            
-                            keyboard = {
-                                "inline_keyboard": [
-                                    [{"text": "📱 MỞ LVT APP QUẢN TRỊ 📱", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
-                                ]
-                            }
+                            welcome = "🌟 <b>HỆ THỐNG LVT MINI APP</b> 🌟\n\nHệ thống quản trị đồ họa cao cấp đã sẵn sàng. Vui lòng ấn nút bên dưới để khởi chạy App!"
+                            keyboard = {"inline_keyboard": [[{"text": "📱 MỞ LVT APP QUẢN TRỊ 📱", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
                         
                         elif text.startswith("/naptien"):
@@ -157,7 +148,47 @@ _last_db_mtime = 0
 _last_mtime_check = 0 
 
 # ========================================================
-# SCRIPT VIOLENTMONKEY MẶC ĐỊNH
+# CORE CONFIG & UTILS
+# ========================================================
+SHOP_PACKAGES = {
+    "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
+    "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
+    "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
+    "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
+    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
+}
+
+def safe_int(val, default=0):
+    try: return int(val)
+    except: return default
+
+def hash_pwd(pwd):
+    return hashlib.sha256(pwd.encode()).hexdigest()
+
+def swal_redirect(title, text, icon, url):
+    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>
+        Swal.fire({{ title: `{title}`, html: `{text}`, icon: '{icon}', background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false, customClass: {{ popup: 'border border-info' }}
+        }}).then(() => {{ window.location.href = '{url}'; }});
+    </script></body></html>"""
+
+def swal_back(title, text, icon):
+    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>
+        Swal.fire({{ title: `{title}`, html: `{text}`, icon: '{icon}', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false, customClass: {{ popup: 'border border-danger' }}
+        }}).then(() => {{ window.history.back(); }});
+    </script></body></html>"""
+
+def render_template_string_safe(content):
+    resp = make_response(content)
+    resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+    return resp
+
+# ========================================================
+# DATABASE ENGINE
 # ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP
@@ -955,38 +986,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
 })();"""
 
-SHOP_PACKAGES = {
-    "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
-    "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
-    "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
-    "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
-    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
-}
-
-def safe_int(val, default=0):
-    try: return int(val)
-    except: return default
-
-def hash_pwd(pwd):
-    return hashlib.sha256(pwd.encode()).hexdigest()
-
-def swal_redirect(title, text, icon, url):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>
-        Swal.fire({{ title: `{title}`, html: `{text}`, icon: '{icon}', background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false, customClass: {{ popup: 'border border-info' }}
-        }}).then(() => {{ window.location.href = '{url}'; }});
-    </script></body></html>"""
-
-def swal_back(title, text, icon):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>
-        Swal.fire({{ title: `{title}`, html: `{text}`, icon: '{icon}', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false, customClass: {{ popup: 'border border-danger' }}
-        }}).then(() => {{ window.history.back(); }});
-    </script></body></html>"""
-
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
     now = time.time()
@@ -1100,7 +1099,6 @@ def garbage_collector():
                             del db["keys"][k]
                             changed = True
                 
-                # Xóa những OLM đã hết hạn cấm
                 for olm_id in list(db.get("banned_olms", {}).keys()):
                     if db["banned_olms"][olm_id] != "permanent" and db["banned_olms"][olm_id] < now_ms:
                         del db["banned_olms"][olm_id]
@@ -1628,7 +1626,6 @@ def telegram_mini_app():
             .screen.active { display: block; }
             @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
             
-            /* Header */
             .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
             .promo-tag { background: linear-gradient(90deg, #ff416c, #ff4b2b); padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 800; display: flex; align-items: center; gap: 5px; }
             .user-id-badge { background: rgba(255, 255, 255, 0.05); padding: 6px 12px; border-radius: 8px; font-size: 12px; color: #8892b0; border: 1px solid rgba(255,255,255,0.1); }
@@ -1638,34 +1635,29 @@ def telegram_mini_app():
             .profile-name { font-size: 18px; font-weight: 800; margin: 0; }
             .verified-badge { color: #1d9bf0; margin-left: 5px; font-size: 14px; }
             
-            /* Stats */
             .stats-container { display: flex; background: #1a1d29; border-radius: 16px; padding: 15px; margin-bottom: 25px; border: 1px solid rgba(255,255,255,0.05); }
             .stat-box { flex: 1; text-align: center; }
             .stat-value { font-size: 18px; font-weight: 800; }
             .stat-label { font-size: 11px; color: #8892b0; margin-top: 4px; text-transform: uppercase; }
             .stat-divider { width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px; }
             
-            /* Menu Buttons */
             .section-title { font-size: 15px; font-weight: 800; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; color: #8892b0; text-transform: uppercase;}
             .select-btn { background: #1a1d29; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; cursor: pointer; transition: 0.2s;}
             .select-btn:active { transform: scale(0.98); background: #232736; }
             .select-btn-left { display: flex; align-items: center; gap: 15px; }
             .icon-box { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
             
-            /* Utils */
             .btn-back { background: rgba(255,255,255,0.1); border: none; padding: 10px 15px; border-radius: 10px; color: white; font-weight: 600; margin-bottom: 15px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;}
             .btn-primary { background: linear-gradient(90deg, #00ffcc, #0099ff); border: none; width: 100%; padding: 14px; border-radius: 10px; color: #000; font-size: 15px; font-weight: 800; cursor: pointer; margin-top:10px;}
             .form-control { width: 100%; box-sizing: border-box; background: #1a1d29; border: 1px solid rgba(255,255,255,0.1); color: white; padding: 12px; border-radius: 10px; margin-bottom: 12px; font-family: inherit;}
             .form-control:focus { outline: none; border-color: #00ffcc; }
             
-            /* User Card */
             .user-card { background: #1a1d29; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 15px; margin-bottom: 15px; }
             .uc-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 10px; margin-bottom: 10px; }
             .uc-info { font-size: 13px; color: #8892b0; line-height: 1.6; }
             .uc-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
             .uc-btn { border: none; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; color: #fff;}
             
-            /* Custom Colors for Icons */
             .bg-green { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
             .bg-blue { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
             .bg-purple { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
@@ -1674,19 +1666,16 @@ def telegram_mini_app():
         </style>
     </head>
     <body>
-
         <div id="screen-main" class="screen active">
             <div class="top-bar">
                 <div class="promo-tag"><i class="fas fa-fire"></i> LVT ADMIN</div>
                 <div class="user-id-badge" id="displayUserId">...</div>
             </div>
-
             <div class="profile-section">
                 <div class="avatar-circle" id="avatarInitials">LT</div>
                 <h2 class="profile-name" id="displayName">Admin <i class="fas fa-check-circle verified-badge"></i></h2>
                 <div class="profile-username" id="displayUsername">@admin</div>
             </div>
-
             <div class="stats-container">
                 <div class="stat-box">
                     <div class="stat-value" style="color: #fff;" id="s-total">0</div>
@@ -1703,51 +1692,34 @@ def telegram_mini_app():
                     <div class="stat-label">Hết hạn</div>
                 </div>
             </div>
-
             <div class="section-title">CHỨC NĂNG QUẢN TRỊ LÕI</div>
             
             <div class="select-btn" onclick="navTo('screen-keys')">
                 <div class="select-btn-left">
                     <div class="icon-box bg-green"><i class="fas fa-key"></i></div>
-                    <div>
-                        <div style="font-size: 15px; font-weight: 800;">Tạo & Quản Lý Key</div>
-                        <div style="font-size: 12px; color: #8892b0;">Tạo Auto/Thủ công</div>
-                    </div>
-                </div>
-                <i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+                    <div><div style="font-size: 15px; font-weight: 800;">Tạo & Quản Lý Key</div><div style="font-size: 12px; color: #8892b0;">Tạo Auto/Thủ công</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
             
             <div class="select-btn" onclick="navTo('screen-users')">
                 <div class="select-btn-left">
                     <div class="icon-box bg-blue"><i class="fas fa-users"></i></div>
-                    <div>
-                        <div style="font-size: 15px; font-weight: 800;">Quản Lý Người Dùng</div>
-                        <div style="font-size: 12px; color: #8892b0;">Info, Tiền, Khóa, Xóa Web</div>
-                    </div>
-                </div>
-                <i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+                    <div><div style="font-size: 15px; font-weight: 800;">Quản Lý Người Dùng</div><div style="font-size: 12px; color: #8892b0;">Info, Tiền, Khóa, Xóa Web</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
 
             <div class="select-btn" onclick="navTo('screen-olm')">
                 <div class="select-btn-left">
                     <div class="icon-box bg-red"><i class="fas fa-shield-alt"></i></div>
-                    <div>
-                        <div style="font-size: 15px; font-weight: 800;">Cấm Truy Cập OLM</div>
-                        <div style="font-size: 12px; color: #8892b0;">Chặn Tool định danh OLM</div>
-                    </div>
-                </div>
-                <i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+                    <div><div style="font-size: 15px; font-weight: 800;">Cấm Truy Cập OLM</div><div style="font-size: 12px; color: #8892b0;">Chặn Tool định danh OLM</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
 
             <div class="select-btn" onclick="navTo('screen-script')">
                 <div class="select-btn-left">
                     <div class="icon-box bg-purple"><i class="fas fa-code"></i></div>
-                    <div>
-                        <div style="font-size: 15px; font-weight: 800;">Cập Nhật Script Lõi</div>
-                        <div style="font-size: 12px; color: #8892b0;">Thay code Violentmonkey</div>
-                    </div>
-                </div>
-                <i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+                    <div><div style="font-size: 15px; font-weight: 800;">Cập Nhật Script Lõi</div><div style="font-size: 12px; color: #8892b0;">Thay code Violentmonkey</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
         </div>
 
@@ -1778,9 +1750,7 @@ def telegram_mini_app():
             <button class="btn-back" onclick="navTo('screen-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:0; color:#3b82f6;">👥 DANH SÁCH USER WEB</h3>
             <input type="text" id="u-search" class="form-control" placeholder="🔍 Tìm user..." onkeyup="filterUsers()">
-            <div id="user-list-container">
-                <div style="text-align:center; padding:20px; color:#8892b0;">Đang tải dữ liệu...</div>
-            </div>
+            <div id="user-list-container"><div style="text-align:center; padding:20px; color:#8892b0;">Đang tải dữ liệu...</div></div>
         </div>
 
         <div id="screen-olm" class="screen">
@@ -1814,7 +1784,6 @@ def telegram_mini_app():
         <script>
             let tg = window.Telegram.WebApp;
             tg.expand();
-            
             let adminId = tg.initDataUnsafe?.user?.id || "7363320876"; 
             let allUsersData = [];
 
@@ -1844,9 +1813,7 @@ def telegram_mini_app():
                     if(res.status === 'success') {
                         if(onSuccess) onSuccess(res);
                         else Swal.fire({toast:true, position:'top', icon:'success', title: res.msg || 'Thành công!', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});
-                    } else {
-                        Swal.fire({icon:'error', title:'Lỗi', text:res.msg, background:'#1a1d29', color:'#fff'});
-                    }
+                    } else { Swal.fire({icon:'error', title:'Lỗi', text:res.msg, background:'#1a1d29', color:'#fff'}); }
                 }).catch(e => {
                     tg.MainButton.hideProgress();
                     Swal.fire({icon:'error', title:'Lỗi mạng', text:e.toString(), background:'#1a1d29', color:'#fff'});
@@ -1865,7 +1832,6 @@ def telegram_mini_app():
                     document.getElementById('s-total').innerText = data.stats.total;
                     document.getElementById('s-active').innerText = data.stats.active;
                     document.getElementById('s-expired').innerText = data.stats.expired;
-                    
                     allUsersData = data.users;
                     renderUsers(allUsersData);
                 });
@@ -1879,7 +1845,6 @@ def telegram_mini_app():
                 users.forEach(u => {
                     let keysHtml = u.keys.map(k => `<div>🔑 <code style="color:#00ffcc;" onclick="copyT('${k.key}')">${k.key.substring(0,8)}...</code> - <span style="color:${k.status==='active'?'#22c55e':'#ef4444'}">[${k.exp}]</span></div>`).join('');
                     if(!keysHtml) keysHtml = '<div style="color:#8892b0;">Chưa mua key nào.</div>';
-                    
                     let banBadge = u.is_banned ? `<span style="background:rgba(239,68,68,0.2); color:#ef4444; padding:2px 6px; border-radius:4px; font-size:10px; border:1px solid #ef4444;">BỊ KHÓA WEB</span>` : '';
                     
                     let card = `
@@ -1917,17 +1882,12 @@ def telegram_mini_app():
             function actionUser(uname, action) {
                 if(action === 'add_balance') {
                     Swal.fire({
-                        title: `Nạp Tiền: ${uname}`, input: 'number', inputPlaceholder: 'Nhập số tiền (dấu - để trừ)',
-                        showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#22c55e',
-                        preConfirm: (v) => { if(!v) Swal.showValidationMessage('Nhập số tiền!'); return v; }
+                        title: `Nạp Tiền: ${uname}`, input: 'number', inputPlaceholder: 'Nhập số tiền (dấu - để trừ)', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#22c55e', preConfirm: (v) => { if(!v) Swal.showValidationMessage('Nhập số tiền!'); return v; }
                     }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'add_balance', username:uname, amount:r.value}, ()=>{loadData();}); });
                 } 
                 else if(action === 'ban_web') {
                     Swal.fire({
-                        title: `Khóa Web: ${uname}`,
-                        html: `<input type="number" id="b-dur" class="swal2-input" value="1" placeholder="Thời gian"><select id="b-unit" class="swal2-select"><option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select>`,
-                        showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#f97316',
-                        preConfirm: () => { return { dur: document.getElementById('b-dur').value, unit: document.getElementById('b-unit').value }; }
+                        title: `Khóa Web: ${uname}`, html: `<input type="number" id="b-dur" class="swal2-input" value="1" placeholder="Thời gian"><select id="b-unit" class="swal2-select"><option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select>`, showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#f97316', preConfirm: () => { return { dur: document.getElementById('b-dur').value, unit: document.getElementById('b-unit').value }; }
                     }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'ban_web', username:uname, duration:r.value.dur, unit:r.value.unit}, ()=>{loadData();}); });
                 }
                 else if(action === 'reset_pass') {
@@ -1978,8 +1938,9 @@ def telegram_mini_app():
     """
     return render_template_string_safe(html_content)
 
-# CÁC ROUTE WEB USER / ADMIN (GIỮ NGUYÊN HOÀN TOÀN)
-
+# ========================================================
+# CÁC ROUTE WEB USER / ADMIN (GIỮ NGUYÊN 100%)
+# ========================================================
 CSS_GLASS = """
 body { background-color: #05050A !important; color: #fff !important; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0; }
 .glass-panel { background-color: rgba(17, 17, 26, 0.8) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 20px !important; box-shadow: 0 10px 40px rgba(0,0,0,0.8) !important; padding: 40px; text-align: center; width: 100%; max-width: 400px; margin: 50px auto; backdrop-filter: blur(12px); }
@@ -3019,4 +2980,3 @@ def key_actions(action, key):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
-
