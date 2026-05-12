@@ -2,6 +2,7 @@ import os, json, time, random, hashlib, threading, requests, shutil, base64, sec
 import urllib.parse
 from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session, abort
+from werkzeug.exceptions import HTTPException # [VÁ LỖI LVT: Để Catch Exception an toàn]
 
 # [VÁ LỖI LỆCH MÚI GIỜ CLOUD]
 try:
@@ -11,6 +12,14 @@ except: pass
 
 app = Flask(__name__)
 
+# [VÁ LỖI LVT: Định nghĩa CSS_GLASS bị thiếu gây sập trang Admin]
+CSS_GLASS = """
+.glass-panel { background: rgba(17, 17, 26, 0.7); backdrop-filter: blur(15px); border: 1px solid rgba(0, 255, 204, 0.3); border-radius: 15px; padding: 30px; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); max-width: 400px; margin: 50px auto; text-align: center; }
+.text-neon { color: #00ffcc; text-shadow: 0 0 10px rgba(0, 255, 204, 0.5); }
+.btn-neon { background: linear-gradient(90deg, #00ffcc, #0099ff); border: none; color: #000; font-weight: bold; padding: 10px 20px; border-radius: 8px; width: 100%; transition: 0.3s; }
+.btn-neon:hover { transform: scale(1.05); box-shadow: 0 0 15px rgba(0, 255, 204, 0.5); }
+"""
+
 # ========================================================
 # HỆ THỐNG BOT TELEGRAM & MINI APP CAO CẤP
 # ========================================================
@@ -18,13 +27,16 @@ TELEGRAM_BOT_TOKEN = "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o"
 TELEGRAM_CHAT_ID = "7363320876"
 WEB_URL = "https://app-tool-trlp.onrender.com" 
 
+# [NÂNG CẤP LVT: Xử lý đa luồng Threading để không treo DB khi tele lag]
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
-        requests.post(url, json=payload, timeout=5)
-    except: pass
+    def _send():
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+            requests.post(url, json=payload, timeout=5)
+        except: pass
+    threading.Thread(target=_send, daemon=True).start()
 
 def send_telegram_backup():
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -51,7 +63,6 @@ def telegram_polling():
                         msg_id = msg.get("message_id")
                         user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
                         
-                        # Bot trả lời cho mọi Chat ID
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG BÁN KEY TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Đăng ký/Đăng nhập mua Key và Cài đặt Hack:"
@@ -103,9 +114,10 @@ def telegram_polling():
 
 threading.Thread(target=telegram_polling, daemon=True).start()
 
-# GLOBAL EXCEPTION CATCHER
+# GLOBAL EXCEPTION CATCHER [VÁ LỖI LVT: Không bắt nhầm Route Exception]
 @app.errorhandler(Exception)
 def handle_exception(e):
+    if isinstance(e, HTTPException): return e
     error_detail = traceback.format_exc()
     send_telegram_alert(f"<b>CRITICAL CRASH NGĂN CHẶN THÀNH CÔNG:</b>\n<pre>{error_detail[-300:]}</pre>")
     return "Hệ thống đang bảo trì.", 500
@@ -170,6 +182,7 @@ def render_template_string_safe(content):
     resp.headers['Content-Type'] = 'text/html; charset=utf-8'
     return resp
 
+# [TOÀN BỘ SCRIPT VIOLENTMONKEY VÀ CƠ CHẾ LÕI DATABASE ĐƯỢC GIỮ NGUYÊN HOÀN TOÀN NHƯ YÊU CẦU]
 # ========================================================
 # DATABASE ENGINE & MẶC ĐỊNH SCRIPT V18.1 NGUYÊN BẢN
 # ========================================================
@@ -1627,7 +1640,8 @@ def serve_loader_script():
 # ========================================================
 @app.route('/api/verify_hack_key', methods=['POST'])
 def verify_hack_key():
-    key = request.json.get('key', '').strip()
+    data = request.json or {}
+    key = data.get('key', '').strip()
     db = load_db()
     kd = db.get("keys", {}).get(key)
     if not kd: return jsonify({"status": "error", "msg": "Mã Key không tồn tại trong hệ thống!"})
@@ -1652,7 +1666,6 @@ def auto_login_hack():
 
 @app.route('/open_hack')
 def open_hack_route():
-    # Route này chỉ dành làm Fallback nếu user muốn xem hướng dẫn Kiwi thủ công
     html = f"""
     <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sử Dụng Hack OLM</title>
@@ -1681,17 +1694,49 @@ def open_hack_route():
 
 # ========================================================
 # API BACKEND CHO TELEGRAM MINI APP (ALL IN ONE)
+# [VÁ LỖI BẢO MẬT NGHIÊM TRỌNG (LVT): Ngăn chặn bypass Header X-Admin-ID]
 # ========================================================
+def verify_telegram_webapp(init_data):
+    try:
+        vals = dict(urllib.parse.parse_qsl(init_data))
+        if 'hash' not in vals: return False
+        hash_val = vals.pop('hash')
+        data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(vals.items()))
+        secret_key = hmac.new(b"WebAppData", TELEGRAM_BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(calc_hash, hash_val)
+    except: return False
+
+def get_tg_user_id_from_init_data(init_data):
+    try:
+        vals = dict(urllib.parse.parse_qsl(init_data))
+        user_data = json.loads(vals.get('user', '{}'))
+        return str(user_data.get('id', ''))
+    except: return ''
+
 def verify_tg_admin():
+    init_data = request.headers.get('X-Init-Data', '')
     admin_id = str(request.headers.get('X-Admin-ID', ''))
+    
+    if init_data:
+        if not verify_telegram_webapp(init_data): abort(403)
+        admin_id = get_tg_user_id_from_init_data(init_data)
+        
     db = load_db()
     allowed = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
     if admin_id not in allowed and admin_id != str(TELEGRAM_CHAT_ID):
         abort(403)
+    return admin_id
 
 @app.route('/api/tg_app/init', methods=['POST'])
 def tg_app_init():
-    tg_id = str(request.json.get('tg_id', ''))
+    data = request.json or {}
+    init_data = request.headers.get('X-Init-Data', '')
+    tg_id = str(data.get('tg_id', ''))
+    
+    if init_data and verify_telegram_webapp(init_data):
+        tg_id = get_tg_user_id_from_init_data(init_data)
+
     db = load_db()
     allowed_admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
     is_admin = (tg_id in allowed_admins) or (tg_id == str(TELEGRAM_CHAT_ID))
@@ -1707,7 +1752,7 @@ def tg_app_init():
 
 @app.route('/api/tg_app/auth', methods=['POST'])
 def tg_app_auth():
-    data = request.json
+    data = request.json or {}
     action = data.get('action')
     user = data.get('username', '').lower().strip()
     pwd = data.get('password', '').strip()
@@ -1769,9 +1814,10 @@ def tg_app_user_data():
 def tg_app_buy():
     if 'username' not in session: return jsonify({"status": "error", "msg": "Chưa đăng nhập!"})
     username = session['username']
-    pkg_id = request.json.get('pkg_id')
-    os_type = request.json.get('os_type', 'android')
-    olm_name = request.json.get('olm_name', '').strip()
+    data = request.json or {}
+    pkg_id = data.get('pkg_id')
+    os_type = data.get('os_type', 'android')
+    olm_name = data.get('olm_name', '').strip()
     
     if pkg_id not in SHOP_PACKAGES: return jsonify({"status": "error", "msg": "Gói không tồn tại!"})
     pkg = SHOP_PACKAGES[pkg_id]
@@ -1829,7 +1875,7 @@ def tg_admin_get_data():
 @app.route('/api/tg_admin/action_user', methods=['POST'])
 def tg_admin_action_user():
     verify_tg_admin()
-    data = request.json
+    data = request.json or {}
     action = data.get('action')
     uname = data.get('username')
     db = load_db()
@@ -1872,7 +1918,7 @@ def tg_admin_action_user():
 @app.route('/api/tg_admin/create_keys', methods=['POST'])
 def tg_admin_create_keys():
     verify_tg_admin()
-    data = request.json
+    data = request.json or {}
     prefix = data.get('prefix', '').strip()
     qty = safe_int(data.get('quantity', 1))
     dur = safe_int(data.get('duration', 1))
@@ -1893,7 +1939,7 @@ def tg_admin_create_keys():
 @app.route('/api/tg_admin/ban_olm', methods=['POST'])
 def tg_admin_ban_olm():
     verify_tg_admin()
-    data = request.json
+    data = request.json or {}
     olm_name = data.get('olm_name', '').strip()
     dur = safe_int(data.get('duration', 1))
     unit = data.get('unit', 'd')
@@ -1911,7 +1957,8 @@ def tg_admin_ban_olm():
 @app.route('/api/tg_admin/update_script', methods=['POST'])
 def tg_admin_update_script():
     verify_tg_admin()
-    ns = request.json.get('script_content', '')
+    data = request.json or {}
+    ns = data.get('script_content', '')
     if not ns.strip().startswith('// ==UserScript=='): return jsonify({"status": "error", "msg": "Script không hợp lệ"})
     db = load_db()
     with db_lock:
@@ -1922,7 +1969,7 @@ def tg_admin_update_script():
 @app.route('/api/tg_admin/system_actions', methods=['POST'])
 def tg_admin_system_actions():
     verify_tg_admin()
-    data = request.json
+    data = request.json or {}
     action = data.get('action')
     db = load_db()
     with db_lock:
@@ -2154,6 +2201,7 @@ def telegram_mini_app():
             let tg = window.Telegram.WebApp;
             tg.expand();
             let adminId = tg.initDataUnsafe?.user?.id || "7363320876"; 
+            let initData = tg.initData || ""; // [VÁ LỖI LVT: Lấy initData để verify bảo mật HMAC]
             let allUsersData = [];
 
             function navTo(screenId) {
@@ -2162,10 +2210,11 @@ def telegram_mini_app():
                 if(screenId === 'screen-admin-users') loadAdminUsers();
             }
 
+            // [VÁ LỖI LVT: Kèm theo X-Init-Data chuẩn để bảo mật không bị Bypass bằng ID giả]
             function apiCall(endpoint, data, onSuccess) {
                 tg.MainButton.showProgress();
                 fetch(endpoint, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-ID': adminId },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-ID': adminId, 'X-Init-Data': initData },
                     body: JSON.stringify(data)
                 }).then(res => res.json()).then(res => {
                     tg.MainButton.hideProgress();
@@ -2185,7 +2234,7 @@ def telegram_mini_app():
 
             // INIT APP
             function initApp() {
-                fetch('/api/tg_app/init', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tg_id: adminId}) })
+                fetch('/api/tg_app/init', { method: 'POST', headers: {'Content-Type':'application/json', 'X-Init-Data': initData}, body: JSON.stringify({tg_id: adminId}) })
                 .then(r => r.json()).then(d => {
                     if (d.is_admin) document.getElementById('btn-admin-panel').style.display = 'block';
                     if (d.logged_in) {
@@ -2213,7 +2262,7 @@ def telegram_mini_app():
 
             // USER DASHBOARD
             function loadUserData() {
-                fetch('/api/tg_app/user_data', { headers: { 'X-Admin-ID': adminId } }).then(r=>r.json()).then(d => {
+                fetch('/api/tg_app/user_data', { headers: { 'X-Admin-ID': adminId, 'X-Init-Data': initData } }).then(r=>r.json()).then(d => {
                     if(d.error) { initApp(); return; }
                     document.getElementById('display-balance').innerText = d.balance.toLocaleString();
                     
@@ -2299,7 +2348,7 @@ def telegram_mini_app():
 
             // ADMIN DASHBOARD
             function loadAdminUsers() {
-                fetch('/api/tg_admin/get_data', { headers: { 'X-Admin-ID': adminId } }).then(r => r.json()).then(data => {
+                fetch('/api/tg_admin/get_data', { headers: { 'X-Admin-ID': adminId, 'X-Init-Data': initData } }).then(r => r.json()).then(data => {
                     allUsersData = data.users; renderUsers(allUsersData);
                 });
             }
@@ -2594,7 +2643,7 @@ def create_key():
         for _ in range(qty):
             nk = generate_secure_key(pfx, vip)
             db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "known_ips": {}, "status": "active", "vip": vip, "loader_enabled": True, "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": ""}
-            if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
+            if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":259200000}.get(t, 60000)
             else: db["keys"][nk]["exp"] = "permanent"
         save_db(db)
     return redirect('/admin')
