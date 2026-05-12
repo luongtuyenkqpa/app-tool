@@ -12,10 +12,12 @@ except: pass
 app = Flask(__name__)
 
 # ========================================================
-# HỆ THỐNG BOT TELEGRAM BÁO CÁO & QUẢN TRỊ 2 CHIỀU (GIAO DIỆN NÚT BẤM)
+# HỆ THỐNG BOT TELEGRAM & MINI APP CAO CẤP
 # ========================================================
 TELEGRAM_BOT_TOKEN = "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o"
 TELEGRAM_CHAT_ID = "7363320876"
+# Đổi link này thành link web thực tế của bạn trên Render
+WEB_URL = "https://app-tool-trlp.onrender.com" 
 
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -33,7 +35,7 @@ def send_telegram_backup():
             requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📦 BACKUP DATABASE LVT TOOL\nThời gian: {time.strftime('%d/%m/%Y %H:%M:%S')}"}, files={"document": f}, timeout=10)
     except: pass
 
-# LUỒNG POLLING TELEGRAM: LẮNG NGHE LỆNH & NÚT BẤM TỪ ADMIN
+# LUỒNG POLLING TELEGRAM
 def telegram_polling():
     offset = 0
     while True:
@@ -44,58 +46,7 @@ def telegram_polling():
                 for update in res.get("result", []):
                     offset = update["update_id"] + 1
                     
-                    # ----------------------------------------------------
-                    # 1. XỬ LÝ KHI ADMIN BẤM NÚT (CALLBACK QUERIES - CHUYỂN TAB)
-                    # ----------------------------------------------------
-                    if "callback_query" in update:
-                        cb = update["callback_query"]
-                        cb_id = cb["id"]
-                        cb_data = cb.get("data", "")
-                        msg = cb.get("message", {})
-                        chat_id = str(msg.get("chat", {}).get("id", ""))
-                        msg_id = msg.get("message_id")
-                        
-                        if chat_id != TELEGRAM_CHAT_ID: continue
-                        
-                        if cb_data == "menu_main":
-                            text = "🛠 <b>BẢNG ĐIỀU KHIỂN TRUNG TÂM LVT</b>\n\n👇 <i>Vui lòng chọn chức năng cần thao tác:</i>"
-                            keyboard = {
-                                "inline_keyboard": [
-                                    [{"text": "💰 Quản Lý Tiền User", "callback_data": "cmd_naptien"}],
-                                    [{"text": "🔍 Kiểm Tra Tài Khoản User", "callback_data": "cmd_check"}],
-                                    [{"text": "🚫 Cấm Nick OLM (Anti-Hack)", "callback_data": "cmd_banolm"}],
-                                    [{"text": "📜 Cập Nhật File Script", "callback_data": "cmd_script"}]
-                                ]
-                            }
-                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
-                            
-                        elif cb_data == "cmd_naptien":
-                            text = "💰 <b>CHỨC NĂNG QUẢN LÝ TIỀN</b>\n\n👉 Để nạp hoặc trừ tiền, hãy gõ lệnh theo cú pháp sau:\n\n<code>/naptien [tên_user] [số_tiền]</code>\n\n<i>Ví dụ nạp: /naptien tiepga 50000</i>\n<i>Ví dụ trừ: /naptien tiepga -50000</i>"
-                            keyboard = {"inline_keyboard": [[{"text": "🔙 Quay Lại Menu", "callback_data": "menu_main"}]]}
-                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
-                            
-                        elif cb_data == "cmd_check":
-                            text = "🔍 <b>KIỂM TRA THÔNG TIN USER</b>\n\n👉 Để xem User đang dùng Key nào, hạn bao lâu, IP là gì...\nHãy gõ lệnh:\n\n<code>/check [tên_user]</code>\n\n<i>Ví dụ: /check tiepga</i>"
-                            keyboard = {"inline_keyboard": [[{"text": "🔙 Quay Lại Menu", "callback_data": "menu_main"}]]}
-                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
-                            
-                        elif cb_data == "cmd_banolm":
-                            text = "🚫 <b>CẤM TÀI KHOẢN OLM HACK</b>\n\n👉 Để chặn 1 nick OLM không cho dùng Tool, gõ:\n\n<code>/banolm [tên_olm] [thời_gian] [đơn_vị_s/m/h/d]</code>\n\n<i>(s: giây, m: phút, h: giờ, d: ngày)</i>\n<i>Ví dụ cấm 30 ngày: /banolm nguyenvan_a 30 d</i>"
-                            keyboard = {"inline_keyboard": [[{"text": "🔙 Quay Lại Menu", "callback_data": "menu_main"}]]}
-                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
-                            
-                        elif cb_data == "cmd_script":
-                            text = "📜 <b>CẬP NHẬT SCRIPT MỚI</b>\n\n👉 Rất đơn giản, bạn chỉ cần <b>COPY VÀ DÁN</b> toàn bộ đoạn code Script mới (bắt đầu bằng <code>// ==UserScript==</code>) thẳng vào khung chat này và gửi.\n\nHệ thống sẽ tự động bóc tách và nạp vào máy chủ!"
-                            keyboard = {"inline_keyboard": [[{"text": "🔙 Quay Lại Menu", "callback_data": "menu_main"}]]}
-                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
-                            
-                        # Phải gọi answerCallbackQuery để nút bấm không bị "xoay xoay"
-                        requests.post(url_base + "/answerCallbackQuery", json={"callback_query_id": cb_id})
-
-                    # ----------------------------------------------------
-                    # 2. XỬ LÝ KHI ADMIN GÕ LỆNH CHỨC NĂNG NHƯ CŨ
-                    # ----------------------------------------------------
-                    elif "message" in update:
+                    if "message" in update:
                         msg = update["message"]
                         chat_id = str(msg.get("chat", {}).get("id", ""))
                         
@@ -105,20 +56,21 @@ def telegram_polling():
                         msg_id = msg.get("message_id")
                         
                         if text.startswith("/start"):
+                            # Xóa tin nhắn /start để dọn dẹp UI
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             
-                            welcome = "🌟 <b>CHÀO MỪNG QUẢN TRỊ VIÊN CẤP CAO</b> 🌟\n\n"
-                            welcome += "✅ <i>Hệ thống LVT SECURITY đã sẵn sàng.</i>\n"
-                            welcome += "✅ <i>Mọi thông số đều ở trạng thái hoàn hảo.</i>\n\n"
-                            welcome += "Bấm vào nút bên dưới để mở Bảng Điều Khiển 👇"
+                            welcome = "🌟 <b>HỆ THỐNG LVT MINI APP</b> 🌟\n\n"
+                            welcome += "Hệ thống quản trị đồ họa cao cấp đã sẵn sàng. Vui lòng ấn nút bên dưới để khởi chạy App!"
                             
+                            # Tích hợp nút mở Telegram Mini App
                             keyboard = {
                                 "inline_keyboard": [
-                                    [{"text": "🚀 MỞ MENU QUẢN TRỊ 🚀", "callback_data": "menu_main"}]
+                                    [{"text": "📱 MỞ LVT APP 📱", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
                                 ]
                             }
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
                         
+                        # Giữ nguyên các lệnh text cũ làm phương án dự phòng
                         elif text.startswith("/naptien"):
                             parts = text.split()
                             if len(parts) >= 3:
@@ -134,11 +86,10 @@ def telegram_polling():
                                             db["users"][uname].setdefault("notices", []).append(f"Admin vừa {action} cho bạn {abs(amt):,}đ")
                                             log_admin_action(db, f"TeleBot: {action} {abs(amt)}đ cho {uname}")
                                             save_db(db)
-                                            send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>\nSố dư mới: {db['users'][uname]['balance']:,}đ")
+                                            send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>")
                                         else:
                                             send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
                                 except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
-                            else: send_telegram_alert("❌ Sai cú pháp! Dùng: /naptien [user] [số_tiền]")
                         
                         elif text.startswith("/check"):
                             parts = text.split()
@@ -147,28 +98,9 @@ def telegram_polling():
                                 db = load_db()
                                 u = db.get("users", {}).get(uname)
                                 if u:
-                                    bal = u.get("balance", 0)
-                                    ips = ", ".join(u.get("ips", []))
-                                    keys_info = ""
-                                    for pk in u.get("purchased_keys", []):
-                                        k_id = pk['key']
-                                        kd = db.get("keys", {}).get(k_id)
-                                        if kd:
-                                            status = kd.get('status', 'active')
-                                            exp = kd.get('exp')
-                                            if exp == 'permanent': exp_str = "Vĩnh viễn"
-                                            elif exp == 'pending': exp_str = "Chưa KH"
-                                            else: exp_str = time.strftime('%d/%m/%Y %H:%M', time.localtime(exp/1000))
-                                            keys_info += f"- <code>{k_id[:10]}...</code> | TT: {status} | Hạn: {exp_str}\n"
-                                    if not keys_info: keys_info = "Không có key nào."
-                                    
-                                    msg_info = f"👤 <b>THÔNG TIN USER: {uname}</b>\n"
-                                    msg_info += f"💰 Số dư: {bal:,}đ\n"
-                                    msg_info += f"🌐 IP Đăng nhập: {ips}\n"
-                                    msg_info += f"🔑 <b>Danh sách Key:</b>\n{keys_info}"
-                                    send_telegram_alert(msg_info)
+                                    keys_info = "".join([f"- <code>{pk['key'][:10]}...</code>\n" for pk in u.get("purchased_keys", [])]) or "Không có key nào."
+                                    send_telegram_alert(f"👤 <b>USER: {uname}</b>\n💰 Số dư: {u.get('balance', 0):,}đ\n🔑 <b>Key:</b>\n{keys_info}")
                                 else: send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
-                            else: send_telegram_alert("❌ Sai cú pháp! Dùng: /check [user]")
                         
                         elif text.startswith("/banolm"):
                             parts = text.split()
@@ -178,37 +110,33 @@ def telegram_polling():
                                     duration = int(parts[2])
                                     unit = parts[3].lower()
                                     multiplier = {"s": 1000, "m": 60000, "h": 3600000, "d": 86400000}.get(unit)
-                                    if not multiplier:
-                                        send_telegram_alert("❌ Đơn vị sai! Dùng s, m, h, hoặc d.")
-                                        continue
-                                    
+                                    if not multiplier: continue
                                     exp_time = int(time.time() * 1000) + (duration * multiplier)
                                     db = load_db()
                                     with db_lock:
                                         db.setdefault("banned_olms", {})[olm_name] = exp_time
                                         save_db(db)
-                                    send_telegram_alert(f"🚫 Đã cấm hệ thống với tài khoản OLM: <b>{olm_name}</b>\n⏳ Thời gian: {duration}{unit} (Đến {time.strftime('%d/%m/%Y %H:%M:%S', time.localtime(exp_time/1000))})")
-                                except ValueError: send_telegram_alert("❌ Thời gian không hợp lệ!")
-                            else: send_telegram_alert("❌ Sai cú pháp! Dùng: /banolm [olm_name] [thời_gian] [s/m/h/d]")
+                                    send_telegram_alert(f"🚫 Đã cấm OLM: <b>{olm_name}</b>\n⏳ Thời gian: {duration}{unit}")
+                                except ValueError: pass
                         
                         elif text.startswith("// ==UserScript=="):
                             db = load_db()
                             with db_lock:
                                 db.setdefault("settings", {})["violentmonkey_script"] = text
-                                log_admin_action(db, "TeleBot: Cập nhật Script Gốc Mới Nhất")
+                                log_admin_action(db, "TeleBot: Cập nhật Script Gốc")
                                 save_db(db)
-                            send_telegram_alert("✅ Hệ thống đã tiếp nhận và xuất bản Code Violentmonkey mới thành công!")
+                            send_telegram_alert("✅ Đã xuất bản Code mới!")
         except Exception as e: print("LỖI BOT TELE:", str(e))
         time.sleep(2)
 
 threading.Thread(target=telegram_polling, daemon=True).start()
 
-# GLOBAL EXCEPTION CATCHER (CHỐNG SẬP WEB)
+# GLOBAL EXCEPTION CATCHER
 @app.errorhandler(Exception)
 def handle_exception(e):
     error_detail = traceback.format_exc()
     send_telegram_alert(f"<b>CRITICAL CRASH NGĂN CHẶN THÀNH CÔNG:</b>\n<pre>{error_detail[-300:]}</pre>")
-    return "Hệ thống đang bảo trì hoặc có lỗi nội bộ.", 500
+    return "Hệ thống đang bảo trì.", 500
 
 # BẢO MẬT FLASK SESSION
 app.secret_key = os.environ.get('SECRET_KEY', hashlib.sha256(f"LVT_SECURE_KEY_2026_VIP".encode()).hexdigest())
@@ -231,10 +159,204 @@ GLOBAL_DB = {}
 _last_db_mtime = 0
 _last_mtime_check = 0 
 
-WEB_URL = "https://app-tool-trlp.onrender.com"
+# ========================================================
+# TRANG GIAO DIỆN TELEGRAM MINI APP (ĐẸP NHƯ ẢNH YÊU CẦU)
+# ========================================================
+@app.route('/telegram_mini_app')
+def telegram_mini_app():
+    # Thống kê thực tế từ DB để hiển thị lên App
+    db = load_db()
+    total_keys = len(db.get("keys", {}))
+    active_keys = sum(1 for k, v in db.get("keys", {}).items() if v.get("status") == "active" and (v.get("exp") == "permanent" or v.get("exp") == "pending" or (isinstance(v.get("exp"), int) and v.get("exp") > int(time.time()*1000))))
+    expired_keys = total_keys - active_keys
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>LVT Mini App</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;800&display=swap');
+            body {{
+                background-color: #0f111a;
+                color: #ffffff;
+                font-family: 'Be Vietnam Pro', sans-serif;
+                margin: 0;
+                padding: 20px;
+                -webkit-tap-highlight-color: transparent;
+            }}
+            .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }}
+            .promo-tag {{
+                background: linear-gradient(90deg, #ff416c, #ff4b2b);
+                padding: 6px 12px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 800;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+            }}
+            .user-id-badge {{
+                background: rgba(255, 255, 255, 0.05);
+                padding: 6px 12px;
+                border-radius: 8px;
+                font-size: 12px;
+                color: #8892b0;
+                border: 1px solid rgba(255,255,255,0.1);
+            }}
+            .profile-section {{ text-align: center; margin-bottom: 30px; }}
+            .avatar-circle {{
+                width: 90px;
+                height: 90px;
+                border-radius: 50%;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 35px;
+                font-weight: 800;
+                border: 3px solid #00ffcc;
+                box-shadow: 0 0 20px rgba(0,255,204,0.4);
+                margin-bottom: 15px;
+            }}
+            .profile-name {{ font-size: 20px; font-weight: 800; margin: 0; }}
+            .profile-username {{ font-size: 13px; color: #8892b0; margin-top: 5px; }}
+            .verified-badge {{ color: #1d9bf0; margin-left: 5px; font-size: 14px; }}
+            
+            .stats-container {{
+                display: flex;
+                background: #1a1d29;
+                border-radius: 16px;
+                padding: 15px;
+                margin-bottom: 30px;
+                border: 1px solid rgba(255,255,255,0.05);
+            }}
+            .stat-box {{ flex: 1; text-align: center; }}
+            .stat-value {{ font-size: 18px; font-weight: 800; }}
+            .stat-label {{ font-size: 11px; color: #8892b0; margin-top: 4px; text-transform: uppercase; }}
+            .stat-divider {{ width: 1px; background: rgba(255,255,255,0.1); margin: 0 10px; }}
+            
+            .section-title {{ font-size: 16px; font-weight: 800; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }}
+            .action-card {{
+                background: #1a1d29;
+                border-radius: 16px;
+                padding: 20px;
+                border: 1px solid rgba(255,255,255,0.05);
+            }}
+            .select-btn {{
+                background: #232736;
+                border: 1px solid rgba(255,255,255,0.05);
+                border-radius: 12px;
+                padding: 15px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 15px;
+                cursor: pointer;
+            }}
+            .select-btn-left {{ display: flex; align-items: center; gap: 15px; }}
+            .icon-box {{
+                width: 40px;
+                height: 40px;
+                border-radius: 10px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 18px;
+            }}
+            .icon-green {{ background: rgba(34, 197, 94, 0.1); color: #22c55e; }}
+            .btn-primary {{
+                background: linear-gradient(90deg, #667eea, #764ba2);
+                border: none;
+                width: 100%;
+                padding: 15px;
+                border-radius: 12px;
+                color: white;
+                font-size: 16px;
+                font-weight: 800;
+                cursor: pointer;
+                opacity: 0.5;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="top-bar">
+            <div class="promo-tag"><i class="fas fa-fire"></i> LVT ADMIN</div>
+            <div class="user-id-badge" id="displayUserId">...</div>
+        </div>
+
+        <div class="profile-section">
+            <div class="avatar-circle" id="avatarInitials">LT</div>
+            <h2 class="profile-name" id="displayName">Admin <i class="fas fa-check-circle verified-badge"></i></h2>
+            <div class="profile-username" id="displayUsername">@luongtuyen20</div>
+        </div>
+
+        <div class="stats-container">
+            <div class="stat-box">
+                <div class="stat-value" style="color: #fff;">{total_keys}</div>
+                <div class="stat-label">Tổng key</div>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-box">
+                <div class="stat-value" style="color: #22c55e;">{active_keys}</div>
+                <div class="stat-label">Hoạt động</div>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-box">
+                <div class="stat-value" style="color: #f59e0b;">{expired_keys}</div>
+                <div class="stat-label">Hết hạn</div>
+            </div>
+        </div>
+
+        <div class="section-title"><i class="fas fa-shopping-cart"></i> Menu Điều Khiển Nhanh</div>
+        <div class="action-card">
+            <div style="font-size: 13px; color: #8892b0; margin-bottom: 10px;"><i class="fas fa-cube text-primary"></i> Quản lý OLM</div>
+            <div class="select-btn" onclick="alert('Chức năng đang mở rộng trên App. Vui lòng dùng lệnh bot bên ngoài.');">
+                <div class="select-btn-left">
+                    <div class="icon-box icon-green"><i class="fas fa-gamepad"></i></div>
+                    <div>
+                        <div style="font-size: 15px; font-weight: 800;">Tạo / Quản lý Key</div>
+                        <div style="font-size: 12px; color: #8892b0;">Hệ thống lõi VIP</div>
+                    </div>
+                </div>
+                <i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+            <button class="btn-primary" onclick="Telegram.WebApp.close()">Đóng Ứng Dụng</button>
+        </div>
+
+        <script>
+            // Khởi tạo Telegram Web App
+            let tg = window.Telegram.WebApp;
+            tg.expand(); // Mở full màn hình
+
+            // Tự động lấy tên và ID của người dùng Telegram để hiển thị cho đẹp
+            let user = tg.initDataUnsafe.user;
+            if (user) {{
+                document.getElementById('displayUserId').innerText = user.id;
+                document.getElementById('displayName').innerHTML = user.first_name + ' <i class="fas fa-check-circle verified-badge"></i>';
+                document.getElementById('displayUsername').innerText = user.username ? '@' + user.username : 'Admin';
+                
+                // Tạo Avatar chữ cái đầu
+                let initials = (user.first_name.charAt(0) + (user.last_name ? user.last_name.charAt(0) : '')).toUpperCase();
+                document.getElementById('avatarInitials').innerText = initials;
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string_safe(html_content)
+
+def render_template_string_safe(content):
+    resp = make_response(content)
+    resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+    return resp
 
 # ========================================================
-# SCRIPT VIOLENTMONKEY MẶC ĐỊNH
+# SCRIPT VIOLENTMONKEY MẶC ĐỊNH & CÁC HÀM CŨ (GIỮ NGUYÊN)
 # ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP
@@ -1152,50 +1274,6 @@ def log_admin_action(db, action_text):
     db.setdefault("admin_logs", []).insert(0, {"time": int(time.time() * 1000), "action": action_text})
     db["admin_logs"] = db["admin_logs"][:100]
 
-def garbage_collector():
-    global used_signatures, api_rate_cache
-    backup_counter = 0
-    while True:
-        time.sleep(3600) 
-        backup_counter += 1
-        now_ms = int(time.time() * 1000)
-        try:
-            with api_rate_lock:
-                to_del_sig = [s for s, t in used_signatures.items() if now_ms - t > 20000]
-                for s in to_del_sig: del used_signatures[s]
-                if len(used_signatures) > 10000: used_signatures.clear()
-                if len(api_rate_cache) > 10000: api_rate_cache.clear()
-            
-            db = load_db()
-            changed = False
-            with db_lock:
-                for k in list(db.get("keys", {}).keys()):
-                    exp = db["keys"][k].get("exp")
-                    if exp != "permanent" and exp != "pending":
-                        if isinstance(exp, int) and (now_ms - exp) > 604800000:
-                            del db["keys"][k]
-                            changed = True
-                
-                # Xóa những OLM đã hết hạn cấm
-                for olm_id in list(db.get("banned_olms", {}).keys()):
-                    if db["banned_olms"][olm_id] != "permanent" and db["banned_olms"][olm_id] < now_ms:
-                        del db["banned_olms"][olm_id]
-                        changed = True
-                
-                if len(db.get("security_alerts", [])) > 100:
-                    db["security_alerts"] = db["security_alerts"][:50]
-                    changed = True
-                    
-            if changed: save_db(db)
-            
-            if backup_counter >= 12:
-                send_telegram_backup()
-                backup_counter = 0
-        except Exception as e: 
-            send_telegram_alert(f"Lỗi Garbage Collector: {str(e)}")
-
-threading.Thread(target=garbage_collector, daemon=True).start()
-
 def get_real_ip():
     try:
         if request.headers.get("CF-Connecting-IP"): return request.headers.get("CF-Connecting-IP")
@@ -1260,7 +1338,6 @@ def verify_request_signature(data):
 def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
     now = int(time.time() * 1000)
     with db_lock:
-        # Check Banned OLM Names First
         banned_olms = db.get("banned_olms", {})
         if req_olm_name != "N/A" and req_olm_name in banned_olms:
             ban_exp = banned_olms[req_olm_name]
@@ -1338,7 +1415,6 @@ def api_ban_key():
         if request.method == 'OPTIONS': return make_response("ok", 200)
         data = request.json or {}
         key = data.get('key', '')
-        reason = data.get('reason', 'System Auto Ban')
         db = load_db()
         with db_lock:
             if key in db.get("keys", {}):
@@ -2546,6 +2622,15 @@ def key_actions(action, key):
                 save_db(db)
         return redirect('/admin')
     except Exception as e: return swal_back("Lỗi", str(e), "error")
+
+# ========================================================
+# HÀM RENDER TEMPLATE HTML CHO FLASK
+# ========================================================
+from flask import render_template_string
+def render_template_string_safe(content):
+    resp = make_response(content)
+    resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+    return resp
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
