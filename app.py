@@ -27,7 +27,6 @@ TELEGRAM_BOT_TOKEN = "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o"
 TELEGRAM_CHAT_ID = "7363320876"
 WEB_URL = "https://app-tool-trlp.onrender.com" 
 
-# [NÂNG CẤP: Threading Telegram]
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
     def _send():
@@ -1354,7 +1353,6 @@ def firewall_and_csrf():
                 return redirect('/admin_login')
     except: pass
 
-# [NÂNG CẤP]: Tiêm các Header chống Clickjacking và Sniffing
 @app.after_request
 def add_security_headers(response):
     response.headers['X-Frame-Options'] = 'SAMEORIGIN' 
@@ -1687,6 +1685,7 @@ def serve_loader_script():
 
 # ========================================================
 # API & CHỨC NĂNG VÀO KHOANG LÁI (KIWI BROWSER)
+# [ĐÃ VÁ LỖI NOT FOUND - REDIRECT THẲNG SANG OLM.VN]
 # ========================================================
 @app.route('/api/verify_hack_key', methods=['POST'])
 def verify_hack_key():
@@ -1711,11 +1710,16 @@ def auto_login_hack():
         db = load_db()
         if key in db.get("keys", {}):
             session['active_key'] = key
-            return redirect('/key_dashboard')
-    return swal_redirect("Lỗi Đăng Nhập", "Mã Key không hợp lệ hoặc đã bị xóa!", "error", "/dashboard")
+            # [VÁ LỖI]: Phóng thẳng trang vào OLM truyền luôn mã key
+            return redirect(f'https://olm.vn/?lvt_key={key}')
+    return swal_redirect("Lỗi Đăng Nhập", "Mã Key không hợp lệ hoặc đã bị xóa!", "error", "/")
 
 @app.route('/open_hack')
 def open_hack_route():
+    key = request.args.get('key', '').strip()
+    # [VÁ LỖI]: Ép gọi ứng dụng Kiwi Browser từ Chrome ngoài
+    intent_url = f"intent://{request.host}/auto_login_hack?key={key}#Intent;scheme=https;package=com.kiwibrowser.browser;end"
+    
     html = f"""
     <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sử Dụng Hack OLM</title>
@@ -1724,17 +1728,17 @@ def open_hack_route():
     <body class="d-flex align-items-center justify-content-center vh-100 p-3">
         <div class="text-center" style="background:rgba(17,17,26,0.9); padding:30px; border-radius:15px; border:1px solid #00ffcc; max-width:500px;">
             <i class="fab fa-android text-success mb-3" style="font-size:50px;"></i>
-            <h3 class="text-info fw-bold mb-4">CHUYỂN HƯỚNG SANG KIWI BROWSER</h3>
-            <p>Hệ thống tự động mở trình duyệt Kiwi. Nếu chưa cài đặt, vui lòng tải ứng dụng bên dưới.</p>
-            <a href="intent://{WEB_URL.replace('https://', '')}/login#Intent;scheme=https;package=com.kiwibrowser.browser;end" class="btn btn-primary w-100 fw-bold mb-3 p-3" style="border-radius:10px;">🚀 MỞ BẰNG KIWI BROWSER NẾU ĐÃ CÀI</a>
+            <h3 class="text-info fw-bold mb-4">MỞ HACK TRÊN KIWI BROWSER</h3>
+            <p>Hệ thống tự động mở trình duyệt Kiwi và Nạp Key. Nếu chưa cài đặt, vui lòng tải ứng dụng bên dưới.</p>
+            <a href="{intent_url}" class="btn btn-primary w-100 fw-bold mb-3 p-3" style="border-radius:10px; background: linear-gradient(90deg, #00ffcc, #0099ff); color:#000;">🚀 MỞ BẰNG KIWI BROWSER (BẤM VÀO ĐÂY)</a>
             <a href="https://play.google.com/store/apps/details?id=com.kiwibrowser.browser" target="_blank" class="btn btn-outline-success w-100 fw-bold p-2" style="border-radius:10px;"><i class="fas fa-download"></i> Tải Kiwi Browser Từ CH Play</a>
             <hr class="border-secondary mt-4 mb-4">
             <h5 class="text-warning">CÁCH DÙNG HACK (Chỉ làm 1 lần)</h5>
             <ol class="text-start text-secondary" style="font-size:14px; line-height:1.6;">
                 <li>Tải Kiwi Browser và mở link bằng Kiwi.</li>
                 <li>Cài đặt tiện ích <b>Violentmonkey</b> trên Cửa hàng Chrome.</li>
-                <li>Trở lại web, bấm vào nút <b>Link Cài Đặt Script Violentmonkey</b> để nạp Loader.</li>
-                <li>Đăng nhập Key và Ấn nút Mở Khóa OLM.VN!</li>
+                <li>Gắn script vào Violentmonkey.</li>
+                <li>Bấm vào nút <b>🚀 MỞ BẰNG KIWI BROWSER</b> bên trên!</li>
             </ol>
             <a href="/" class="text-muted mt-3 d-block" style="text-decoration:none;"><i class="fas fa-home"></i> Trở về Trang chủ</a>
         </div>
@@ -2045,6 +2049,7 @@ def tg_admin_system_actions():
 
 # ========================================================
 # TRANG GIAO DIỆN TELEGRAM MINI APP (ALL IN ONE UI)
+# [VÁ LỖI ERR_UNKNOWN_URL_SCHEME - SỬ DỤNG API TELEGRAM ĐỂ MỞ LINK MỚI]
 # ========================================================
 @app.route('/telegram_mini_app')
 def telegram_mini_app():
@@ -2119,7 +2124,7 @@ def telegram_mini_app():
             
             <div class="kiwi-card" onclick="openHackPrompt()">
                 <h4 style="color:#bd00ff; margin:0 0 5px 0;"><i class="fas fa-rocket"></i> NHẬP KEY SỬ DỤNG HACK</h4>
-                <div style="font-size:12px; color:#8892b0;">Hệ thống tự chuyển hướng sang Kiwi Browser</div>
+                <div style="font-size:12px; color:#8892b0;">Hệ thống tự động liên kết với Kiwi Browser</div>
             </div>
             
             <h4 style="color:#fff; margin-bottom:10px;"><i class="fas fa-shopping-cart"></i> MUA KEY MỚI</h4>
@@ -2382,8 +2387,12 @@ def telegram_mini_app():
                         fetch('/api/verify_hack_key', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: r.value}) })
                         .then(res => res.json()).then(data => {
                             if(data.status === 'success') {
-                                Swal.fire({toast:true, position:'top', icon:'success', title:'Đang mở Kiwi Browser...', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});
-                                setTimeout(() => { window.location.href = `intent://${window.location.host}/auto_login_hack?key=${r.value}#Intent;scheme=https;package=com.kiwibrowser.browser;end`; }, 1000);
+                                Swal.fire({toast:true, position:'top', icon:'success', title:'Đang xử lý...', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});
+                                setTimeout(() => { 
+                                    // [VÁ LỖI ERR_UNKNOWN_URL_SCHEME]: 
+                                    // Đẩy ra trình duyệt ngoài vì Telegram WebView không hiểu intent://
+                                    tg.openLink(`https://${window.location.host}/open_hack?key=${r.value}`); 
+                                }, 1000);
                             } else { Swal.fire({icon:'error', title:'Lỗi', text:data.msg, background:'#1a1d29', color:'#fff'}); }
                         }).catch(e => { Swal.fire({icon:'error', title:'Lỗi mạng', text:e.toString(), background:'#1a1d29', color:'#fff'}); });
                     }
