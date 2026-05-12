@@ -12,7 +12,7 @@ except: pass
 app = Flask(__name__)
 
 # ========================================================
-# HỆ THỐNG BOT TELEGRAM BÁO CÁO & QUẢN TRỊ 2 CHIỀU
+# HỆ THỐNG BOT TELEGRAM BÁO CÁO & QUẢN TRỊ 2 CHIỀU (GIAO DIỆN NÚT BẤM)
 # ========================================================
 TELEGRAM_BOT_TOKEN = "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o"
 TELEGRAM_CHAT_ID = "7363320876"
@@ -33,116 +33,172 @@ def send_telegram_backup():
             requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📦 BACKUP DATABASE LVT TOOL\nThời gian: {time.strftime('%d/%m/%Y %H:%M:%S')}"}, files={"document": f}, timeout=10)
     except: pass
 
-# LUỒNG POLLING TELEGRAM: LẮNG NGHE LỆNH TỪ ADMIN
+# LUỒNG POLLING TELEGRAM: LẮNG NGHE LỆNH & NÚT BẤM TỪ ADMIN
 def telegram_polling():
     offset = 0
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-            res = requests.get(url, params={"offset": offset, "timeout": 30}, timeout=35).json()
+            url_base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+            res = requests.get(url_base + "/getUpdates", params={"offset": offset, "timeout": 30}, timeout=35).json()
             if res.get("ok"):
                 for update in res.get("result", []):
                     offset = update["update_id"] + 1
-                    msg = update.get("message", {})
-                    chat_id = str(msg.get("chat", {}).get("id", ""))
                     
-                    # CỰC KỲ BẢO MẬT: Chỉ nhận lệnh từ chính chủ
-                    if chat_id != TELEGRAM_CHAT_ID: continue
-                    
-                    text = msg.get("text", "").strip()
-                    msg_id = msg.get("message_id")
-                    
-                    if text.startswith("/start"):
-                        # Auto-delete tin nhắn /start để dọn dẹp UI Menu
-                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
+                    # ----------------------------------------------------
+                    # 1. XỬ LÝ KHI ADMIN BẤM NÚT (CALLBACK QUERIES - CHUYỂN TAB)
+                    # ----------------------------------------------------
+                    if "callback_query" in update:
+                        cb = update["callback_query"]
+                        cb_id = cb["id"]
+                        cb_data = cb.get("data", "")
+                        msg = cb.get("message", {})
+                        chat_id = str(msg.get("chat", {}).get("id", ""))
+                        msg_id = msg.get("message_id")
                         
-                        menu = "🛠 <b>HỆ THỐNG QUẢN TRỊ LVT BOT</b>\n\n"
-                        menu += "🔹 <code>/naptien [username] [số_tiền]</code>\n<i>VD: /naptien tiepga 50000</i>\n\n"
-                        menu += "🔹 <code>/check [username]</code>\n<i>Xem info, key, time, IP của user</i>\n\n"
-                        menu += "🔹 <code>/banolm [olm_name] [thời_gian] [đơn_vị]</code>\n<i>Đơn vị: s (giây), m (phút), h (giờ), d (ngày)\nVD: /banolm nguyenvan_a 30 m</i>\n\n"
-                        menu += "🔹 <b>Cập nhật Script:</b>\n<i>Chỉ cần dán thẳng code Script bắt đầu bằng <code>// ==UserScript==</code> vào đây.</i>"
-                        send_telegram_alert(menu)
-                    
-                    elif text.startswith("/naptien"):
-                        parts = text.split()
-                        if len(parts) >= 3:
-                            uname = parts[1].lower()
-                            try:
-                                amt = int(parts[2])
+                        if chat_id != TELEGRAM_CHAT_ID: continue
+                        
+                        if cb_data == "menu_main":
+                            text = "🛠 <b>BẢNG ĐIỀU KHIỂN TRUNG TÂM LVT</b>\n\n👇 <i>Vui lòng chọn chức năng cần thao tác:</i>"
+                            keyboard = {
+                                "inline_keyboard": [
+                                    [{"text": "💰 Quản Lý Tiền User", "callback_data": "cmd_naptien"}],
+                                    [{"text": "🔍 Kiểm Tra Tài Khoản User", "callback_data": "cmd_check"}],
+                                    [{"text": "🚫 Cấm Nick OLM (Anti-Hack)", "callback_data": "cmd_banolm"}],
+                                    [{"text": "📜 Cập Nhật File Script", "callback_data": "cmd_script"}]
+                                ]
+                            }
+                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
+                            
+                        elif cb_data == "cmd_naptien":
+                            text = "💰 <b>CHỨC NĂNG QUẢN LÝ TIỀN</b>\n\n👉 Để nạp hoặc trừ tiền, hãy gõ lệnh theo cú pháp sau:\n\n<code>/naptien [tên_user] [số_tiền]</code>\n\n<i>Ví dụ nạp: /naptien tiepga 50000</i>\n<i>Ví dụ trừ: /naptien tiepga -50000</i>"
+                            keyboard = {"inline_keyboard": [[{"text": "🔙 Quay Lại Menu", "callback_data": "menu_main"}]]}
+                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
+                            
+                        elif cb_data == "cmd_check":
+                            text = "🔍 <b>KIỂM TRA THÔNG TIN USER</b>\n\n👉 Để xem User đang dùng Key nào, hạn bao lâu, IP là gì...\nHãy gõ lệnh:\n\n<code>/check [tên_user]</code>\n\n<i>Ví dụ: /check tiepga</i>"
+                            keyboard = {"inline_keyboard": [[{"text": "🔙 Quay Lại Menu", "callback_data": "menu_main"}]]}
+                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
+                            
+                        elif cb_data == "cmd_banolm":
+                            text = "🚫 <b>CẤM TÀI KHOẢN OLM HACK</b>\n\n👉 Để chặn 1 nick OLM không cho dùng Tool, gõ:\n\n<code>/banolm [tên_olm] [thời_gian] [đơn_vị_s/m/h/d]</code>\n\n<i>(s: giây, m: phút, h: giờ, d: ngày)</i>\n<i>Ví dụ cấm 30 ngày: /banolm nguyenvan_a 30 d</i>"
+                            keyboard = {"inline_keyboard": [[{"text": "🔙 Quay Lại Menu", "callback_data": "menu_main"}]]}
+                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
+                            
+                        elif cb_data == "cmd_script":
+                            text = "📜 <b>CẬP NHẬT SCRIPT MỚI</b>\n\n👉 Rất đơn giản, bạn chỉ cần <b>COPY VÀ DÁN</b> toàn bộ đoạn code Script mới (bắt đầu bằng <code>// ==UserScript==</code>) thẳng vào khung chat này và gửi.\n\nHệ thống sẽ tự động bóc tách và nạp vào máy chủ!"
+                            keyboard = {"inline_keyboard": [[{"text": "🔙 Quay Lại Menu", "callback_data": "menu_main"}]]}
+                            requests.post(url_base + "/editMessageText", json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
+                            
+                        # Phải gọi answerCallbackQuery để nút bấm không bị "xoay xoay"
+                        requests.post(url_base + "/answerCallbackQuery", json={"callback_query_id": cb_id})
+
+                    # ----------------------------------------------------
+                    # 2. XỬ LÝ KHI ADMIN GÕ LỆNH CHỨC NĂNG NHƯ CŨ
+                    # ----------------------------------------------------
+                    elif "message" in update:
+                        msg = update["message"]
+                        chat_id = str(msg.get("chat", {}).get("id", ""))
+                        
+                        if chat_id != TELEGRAM_CHAT_ID: continue
+                        
+                        text = msg.get("text", "").strip()
+                        msg_id = msg.get("message_id")
+                        
+                        if text.startswith("/start"):
+                            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
+                            
+                            welcome = "🌟 <b>CHÀO MỪNG QUẢN TRỊ VIÊN CẤP CAO</b> 🌟\n\n"
+                            welcome += "✅ <i>Hệ thống LVT SECURITY đã sẵn sàng.</i>\n"
+                            welcome += "✅ <i>Mọi thông số đều ở trạng thái hoàn hảo.</i>\n\n"
+                            welcome += "Bấm vào nút bên dưới để mở Bảng Điều Khiển 👇"
+                            
+                            keyboard = {
+                                "inline_keyboard": [
+                                    [{"text": "🚀 MỞ MENU QUẢN TRỊ 🚀", "callback_data": "menu_main"}]
+                                ]
+                            }
+                            requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
+                        
+                        elif text.startswith("/naptien"):
+                            parts = text.split()
+                            if len(parts) >= 3:
+                                uname = parts[1].lower()
+                                try:
+                                    amt = int(parts[2])
+                                    db = load_db()
+                                    with db_lock:
+                                        if uname in db.get("users", {}):
+                                            db["users"][uname]["balance"] += amt
+                                            if db["users"][uname]["balance"] < 0: db["users"][uname]["balance"] = 0
+                                            action = "Cộng" if amt >= 0 else "Trừ"
+                                            db["users"][uname].setdefault("notices", []).append(f"Admin vừa {action} cho bạn {abs(amt):,}đ")
+                                            log_admin_action(db, f"TeleBot: {action} {abs(amt)}đ cho {uname}")
+                                            save_db(db)
+                                            send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>\nSố dư mới: {db['users'][uname]['balance']:,}đ")
+                                        else:
+                                            send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
+                                except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
+                            else: send_telegram_alert("❌ Sai cú pháp! Dùng: /naptien [user] [số_tiền]")
+                        
+                        elif text.startswith("/check"):
+                            parts = text.split()
+                            if len(parts) >= 2:
+                                uname = parts[1].lower()
                                 db = load_db()
-                                with db_lock:
-                                    if uname in db.get("users", {}):
-                                        db["users"][uname]["balance"] += amt
-                                        if db["users"][uname]["balance"] < 0: db["users"][uname]["balance"] = 0
-                                        action = "Cộng" if amt >= 0 else "Trừ"
-                                        db["users"][uname].setdefault("notices", []).append(f"Admin vừa {action} cho bạn {abs(amt):,}đ")
-                                        log_admin_action(db, f"TeleBot: {action} {abs(amt)}đ cho {uname}")
+                                u = db.get("users", {}).get(uname)
+                                if u:
+                                    bal = u.get("balance", 0)
+                                    ips = ", ".join(u.get("ips", []))
+                                    keys_info = ""
+                                    for pk in u.get("purchased_keys", []):
+                                        k_id = pk['key']
+                                        kd = db.get("keys", {}).get(k_id)
+                                        if kd:
+                                            status = kd.get('status', 'active')
+                                            exp = kd.get('exp')
+                                            if exp == 'permanent': exp_str = "Vĩnh viễn"
+                                            elif exp == 'pending': exp_str = "Chưa KH"
+                                            else: exp_str = time.strftime('%d/%m/%Y %H:%M', time.localtime(exp/1000))
+                                            keys_info += f"- <code>{k_id[:10]}...</code> | TT: {status} | Hạn: {exp_str}\n"
+                                    if not keys_info: keys_info = "Không có key nào."
+                                    
+                                    msg_info = f"👤 <b>THÔNG TIN USER: {uname}</b>\n"
+                                    msg_info += f"💰 Số dư: {bal:,}đ\n"
+                                    msg_info += f"🌐 IP Đăng nhập: {ips}\n"
+                                    msg_info += f"🔑 <b>Danh sách Key:</b>\n{keys_info}"
+                                    send_telegram_alert(msg_info)
+                                else: send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
+                            else: send_telegram_alert("❌ Sai cú pháp! Dùng: /check [user]")
+                        
+                        elif text.startswith("/banolm"):
+                            parts = text.split()
+                            if len(parts) >= 4:
+                                olm_name = parts[1]
+                                try:
+                                    duration = int(parts[2])
+                                    unit = parts[3].lower()
+                                    multiplier = {"s": 1000, "m": 60000, "h": 3600000, "d": 86400000}.get(unit)
+                                    if not multiplier:
+                                        send_telegram_alert("❌ Đơn vị sai! Dùng s, m, h, hoặc d.")
+                                        continue
+                                    
+                                    exp_time = int(time.time() * 1000) + (duration * multiplier)
+                                    db = load_db()
+                                    with db_lock:
+                                        db.setdefault("banned_olms", {})[olm_name] = exp_time
                                         save_db(db)
-                                        send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>\nSố dư mới: {db['users'][uname]['balance']:,}đ")
-                                    else:
-                                        send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
-                            except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
-                        else: send_telegram_alert("❌ Sai cú pháp! Dùng: /naptien [user] [số_tiền]")
-                    
-                    elif text.startswith("/check"):
-                        parts = text.split()
-                        if len(parts) >= 2:
-                            uname = parts[1].lower()
+                                    send_telegram_alert(f"🚫 Đã cấm hệ thống với tài khoản OLM: <b>{olm_name}</b>\n⏳ Thời gian: {duration}{unit} (Đến {time.strftime('%d/%m/%Y %H:%M:%S', time.localtime(exp_time/1000))})")
+                                except ValueError: send_telegram_alert("❌ Thời gian không hợp lệ!")
+                            else: send_telegram_alert("❌ Sai cú pháp! Dùng: /banolm [olm_name] [thời_gian] [s/m/h/d]")
+                        
+                        elif text.startswith("// ==UserScript=="):
                             db = load_db()
-                            u = db.get("users", {}).get(uname)
-                            if u:
-                                bal = u.get("balance", 0)
-                                ips = ", ".join(u.get("ips", []))
-                                keys_info = ""
-                                for pk in u.get("purchased_keys", []):
-                                    k_id = pk['key']
-                                    kd = db.get("keys", {}).get(k_id)
-                                    if kd:
-                                        status = kd.get('status', 'active')
-                                        exp = kd.get('exp')
-                                        if exp == 'permanent': exp_str = "Vĩnh viễn"
-                                        elif exp == 'pending': exp_str = "Chưa KH"
-                                        else: exp_str = time.strftime('%d/%m/%Y %H:%M', time.localtime(exp/1000))
-                                        keys_info += f"- <code>{k_id[:10]}...</code> | TT: {status} | Hạn: {exp_str}\n"
-                                if not keys_info: keys_info = "Không có key nào."
-                                
-                                msg = f"👤 <b>THÔNG TIN USER: {uname}</b>\n"
-                                msg += f"💰 Số dư: {bal:,}đ\n"
-                                msg += f"🌐 IP Đăng nhập: {ips}\n"
-                                msg += f"🔑 <b>Danh sách Key:</b>\n{keys_info}"
-                                send_telegram_alert(msg)
-                            else: send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
-                        else: send_telegram_alert("❌ Sai cú pháp! Dùng: /check [user]")
-                    
-                    elif text.startswith("/banolm"):
-                        parts = text.split()
-                        if len(parts) >= 4:
-                            olm_name = parts[1]
-                            try:
-                                duration = int(parts[2])
-                                unit = parts[3].lower()
-                                multiplier = {"s": 1000, "m": 60000, "h": 3600000, "d": 86400000}.get(unit)
-                                if not multiplier:
-                                    send_telegram_alert("❌ Đơn vị sai! Dùng s, m, h, hoặc d.")
-                                    continue
-                                
-                                exp_time = int(time.time() * 1000) + (duration * multiplier)
-                                db = load_db()
-                                with db_lock:
-                                    db.setdefault("banned_olms", {})[olm_name] = exp_time
-                                    save_db(db)
-                                send_telegram_alert(f"🚫 Đã cấm hệ thống với tài khoản OLM: <b>{olm_name}</b>\n⏳ Thời gian: {duration}{unit} (Đến {time.strftime('%d/%m/%Y %H:%M:%S', time.localtime(exp_time/1000))})")
-                            except ValueError: send_telegram_alert("❌ Thời gian không hợp lệ!")
-                        else: send_telegram_alert("❌ Sai cú pháp! Dùng: /banolm [olm_name] [thời_gian] [s/m/h/d]")
-                    
-                    elif text.startswith("// ==UserScript=="):
-                        db = load_db()
-                        with db_lock:
-                            db.setdefault("settings", {})["violentmonkey_script"] = text
-                            log_admin_action(db, "TeleBot: Cập nhật Script Gốc Mới Nhất")
-                            save_db(db)
-                        send_telegram_alert("✅ Hệ thống đã tiếp nhận và xuất bản Code Violentmonkey mới thành công!")
-        except Exception as e: pass
+                            with db_lock:
+                                db.setdefault("settings", {})["violentmonkey_script"] = text
+                                log_admin_action(db, "TeleBot: Cập nhật Script Gốc Mới Nhất")
+                                save_db(db)
+                            send_telegram_alert("✅ Hệ thống đã tiếp nhận và xuất bản Code Violentmonkey mới thành công!")
+        except Exception as e: print("LỖI BOT TELE:", str(e))
         time.sleep(2)
 
 threading.Thread(target=telegram_polling, daemon=True).start()
