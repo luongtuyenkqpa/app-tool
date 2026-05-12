@@ -1,7 +1,7 @@
-import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string
+import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string, copy, traceback
 import urllib.parse
 from html import escape
-from flask import Flask, request, jsonify, redirect, make_response, session
+from flask import Flask, request, jsonify, redirect, make_response, session, abort
 
 # [VÁ LỖI LỆCH MÚI GIỜ CLOUD]
 try:
@@ -10,6 +10,149 @@ try:
 except: pass
 
 app = Flask(__name__)
+
+# ========================================================
+# HỆ THỐNG BOT TELEGRAM BÁO CÁO & QUẢN TRỊ 2 CHIỀU
+# ========================================================
+TELEGRAM_BOT_TOKEN = "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o"
+TELEGRAM_CHAT_ID = "7363320876"
+
+def send_telegram_alert(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+        requests.post(url, json=payload, timeout=5)
+    except: pass
+
+def send_telegram_backup():
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        with open(DB_FILE, 'rb') as f:
+            requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📦 BACKUP DATABASE LVT TOOL\nThời gian: {time.strftime('%d/%m/%Y %H:%M:%S')}"}, files={"document": f}, timeout=10)
+    except: pass
+
+# LUỒNG POLLING TELEGRAM: LẮNG NGHE LỆNH TỪ ADMIN
+def telegram_polling():
+    offset = 0
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+            res = requests.get(url, params={"offset": offset, "timeout": 30}, timeout=35).json()
+            if res.get("ok"):
+                for update in res.get("result", []):
+                    offset = update["update_id"] + 1
+                    msg = update.get("message", {})
+                    chat_id = str(msg.get("chat", {}).get("id", ""))
+                    
+                    # CỰC KỲ BẢO MẬT: Chỉ nhận lệnh từ chính chủ
+                    if chat_id != TELEGRAM_CHAT_ID: continue
+                    
+                    text = msg.get("text", "").strip()
+                    msg_id = msg.get("message_id")
+                    
+                    if text.startswith("/start"):
+                        # Auto-delete tin nhắn /start để dọn dẹp UI Menu
+                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
+                        
+                        menu = "🛠 <b>HỆ THỐNG QUẢN TRỊ LVT BOT</b>\n\n"
+                        menu += "🔹 <code>/naptien [username] [số_tiền]</code>\n<i>VD: /naptien tiepga 50000</i>\n\n"
+                        menu += "🔹 <code>/check [username]</code>\n<i>Xem info, key, time, IP của user</i>\n\n"
+                        menu += "🔹 <code>/banolm [olm_name] [thời_gian] [đơn_vị]</code>\n<i>Đơn vị: s (giây), m (phút), h (giờ), d (ngày)\nVD: /banolm nguyenvan_a 30 m</i>\n\n"
+                        menu += "🔹 <b>Cập nhật Script:</b>\n<i>Chỉ cần dán thẳng code Script bắt đầu bằng <code>// ==UserScript==</code> vào đây.</i>"
+                        send_telegram_alert(menu)
+                    
+                    elif text.startswith("/naptien"):
+                        parts = text.split()
+                        if len(parts) >= 3:
+                            uname = parts[1].lower()
+                            try:
+                                amt = int(parts[2])
+                                db = load_db()
+                                with db_lock:
+                                    if uname in db.get("users", {}):
+                                        db["users"][uname]["balance"] += amt
+                                        if db["users"][uname]["balance"] < 0: db["users"][uname]["balance"] = 0
+                                        action = "Cộng" if amt >= 0 else "Trừ"
+                                        db["users"][uname].setdefault("notices", []).append(f"Admin vừa {action} cho bạn {abs(amt):,}đ")
+                                        log_admin_action(db, f"TeleBot: {action} {abs(amt)}đ cho {uname}")
+                                        save_db(db)
+                                        send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>\nSố dư mới: {db['users'][uname]['balance']:,}đ")
+                                    else:
+                                        send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
+                            except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
+                        else: send_telegram_alert("❌ Sai cú pháp! Dùng: /naptien [user] [số_tiền]")
+                    
+                    elif text.startswith("/check"):
+                        parts = text.split()
+                        if len(parts) >= 2:
+                            uname = parts[1].lower()
+                            db = load_db()
+                            u = db.get("users", {}).get(uname)
+                            if u:
+                                bal = u.get("balance", 0)
+                                ips = ", ".join(u.get("ips", []))
+                                keys_info = ""
+                                for pk in u.get("purchased_keys", []):
+                                    k_id = pk['key']
+                                    kd = db.get("keys", {}).get(k_id)
+                                    if kd:
+                                        status = kd.get('status', 'active')
+                                        exp = kd.get('exp')
+                                        if exp == 'permanent': exp_str = "Vĩnh viễn"
+                                        elif exp == 'pending': exp_str = "Chưa KH"
+                                        else: exp_str = time.strftime('%d/%m/%Y %H:%M', time.localtime(exp/1000))
+                                        keys_info += f"- <code>{k_id[:10]}...</code> | TT: {status} | Hạn: {exp_str}\n"
+                                if not keys_info: keys_info = "Không có key nào."
+                                
+                                msg = f"👤 <b>THÔNG TIN USER: {uname}</b>\n"
+                                msg += f"💰 Số dư: {bal:,}đ\n"
+                                msg += f"🌐 IP Đăng nhập: {ips}\n"
+                                msg += f"🔑 <b>Danh sách Key:</b>\n{keys_info}"
+                                send_telegram_alert(msg)
+                            else: send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
+                        else: send_telegram_alert("❌ Sai cú pháp! Dùng: /check [user]")
+                    
+                    elif text.startswith("/banolm"):
+                        parts = text.split()
+                        if len(parts) >= 4:
+                            olm_name = parts[1]
+                            try:
+                                duration = int(parts[2])
+                                unit = parts[3].lower()
+                                multiplier = {"s": 1000, "m": 60000, "h": 3600000, "d": 86400000}.get(unit)
+                                if not multiplier:
+                                    send_telegram_alert("❌ Đơn vị sai! Dùng s, m, h, hoặc d.")
+                                    continue
+                                
+                                exp_time = int(time.time() * 1000) + (duration * multiplier)
+                                db = load_db()
+                                with db_lock:
+                                    db.setdefault("banned_olms", {})[olm_name] = exp_time
+                                    save_db(db)
+                                send_telegram_alert(f"🚫 Đã cấm hệ thống với tài khoản OLM: <b>{olm_name}</b>\n⏳ Thời gian: {duration}{unit} (Đến {time.strftime('%d/%m/%Y %H:%M:%S', time.localtime(exp_time/1000))})")
+                            except ValueError: send_telegram_alert("❌ Thời gian không hợp lệ!")
+                        else: send_telegram_alert("❌ Sai cú pháp! Dùng: /banolm [olm_name] [thời_gian] [s/m/h/d]")
+                    
+                    elif text.startswith("// ==UserScript=="):
+                        db = load_db()
+                        with db_lock:
+                            db.setdefault("settings", {})["violentmonkey_script"] = text
+                            log_admin_action(db, "TeleBot: Cập nhật Script Gốc Mới Nhất")
+                            save_db(db)
+                        send_telegram_alert("✅ Hệ thống đã tiếp nhận và xuất bản Code Violentmonkey mới thành công!")
+        except Exception as e: pass
+        time.sleep(2)
+
+threading.Thread(target=telegram_polling, daemon=True).start()
+
+# GLOBAL EXCEPTION CATCHER (CHỐNG SẬP WEB)
+@app.errorhandler(Exception)
+def handle_exception(e):
+    error_detail = traceback.format_exc()
+    send_telegram_alert(f"<b>CRITICAL CRASH NGĂN CHẶN THÀNH CÔNG:</b>\n<pre>{error_detail[-300:]}</pre>")
+    return "Hệ thống đang bảo trì hoặc có lỗi nội bộ.", 500
 
 # BẢO MẬT FLASK SESSION
 app.secret_key = os.environ.get('SECRET_KEY', hashlib.sha256(f"LVT_SECURE_KEY_2026_VIP".encode()).hexdigest())
@@ -35,13 +178,13 @@ _last_mtime_check = 0
 WEB_URL = "https://app-tool-trlp.onrender.com"
 
 # ========================================================
-# SCRIPT VIOLENTMONKEY MẶC ĐỊNH (FULL CODE GỐC CỦA BẠN)
+# SCRIPT VIOLENTMONKEY MẶC ĐỊNH
 # ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
-// @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE: VIP & NORMAL)
+// @name         OLM GOD MODE VIP - DEV.TIỆP
 // @namespace    http://tampermonkey.net/
 // @version      13.0
-// @description  Hệ thống bảo vệ đa tầng. Phân luồng Key VIP (OLM MODE) và Key Thường (Study Assistant Vũ Trụ).
+// @description  Hệ thống bảo vệ đa tầng. Phân luồng Key VIP và Key Thường.
 // @author       DEV.TIỆP
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
@@ -55,14 +198,9 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
 (function() {
     'use strict';
-    
-    // [FIX LỖI KICK LOOP] Ngăn script chạy trong các khung iframe ngầm
     if (window.top !== window.self) return;
 
-    const Config = {
-        VERSION: '13.0',
-        API_KEYWORDS: ['get-question-of-ids', 'get-question?belongs=1']
-    };
+    const Config = { VERSION: '13.0', API_KEYWORDS: ['get-question-of-ids', 'get-question?belongs=1'] };
 
     const originalCookieGetter = (() => {
         let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
@@ -103,7 +241,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
     }
 
     let REAL_USERNAME = getRealUsername();
-
     const SERVER_URL = "https://app-tool-trlp.onrender.com"; 
     let savedKey = GM_getValue('lvt_olm_vip_key', '');
 
@@ -646,9 +783,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
         }
     };
 
-    // =========================================================================
-    // [PHẦN 3]: GIAO DIỆN CHUYỂN HƯỚNG WEB & CẢNH BÁO
-    // =========================================================================
     function showWelcomePopup(username, isVIP) {
         if(document.getElementById('tiep-welcome-overlay')) return;
         let overlay = document.createElement('div');
@@ -701,9 +835,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
         setTimeout(() => { window.location.href = window.location.pathname; }, 4000); 
     }
 
-    // =========================================================================
-    // [PHẦN 4]: LÕI HACK CHÍNH & MẶT NẠ DÍNH KÈM (DÀNH CHO KEY VIP)
-    // =========================================================================
     function initVipHackSystem(activeKey) {
         const CORE_URL = 'https://fakemoithu.io.vn/core.js';
         let cachedCore = GM_getValue('tiep_core_cache', '');
@@ -714,7 +845,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
         function injectScript(scriptContent) {
             const scriptTag = document.createElement('script');
             const fusedMask = `
-            /* [MẶT NẠ FUSION - CHẠY Ở VỊ TRÍ SỐ 0, TRƯỚC LÕI HACK OLM MODE] */
             (function() {
                 const TARGET = "hp_luongvantuyen";
                 try {
@@ -786,10 +916,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
         setInterval(() => secureApiCall('/api/script_ping', { key: activeKey }).catch(e => {}), 30000);
     }
 
-    // =========================================================================
-    // [PHẦN 5]: BỘ KHỞI ĐỘNG CHÍNH (QUYẾT ĐỊNH LOAD MODULE NÀO)
-    // =========================================================================
-    
     let urlParams = new URLSearchParams(window.location.search);
     let webKey = urlParams.get('lvt_key');
     if (webKey) {
@@ -803,9 +929,8 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             if (res.status === 'success') {
                 
                 let assignedUser = res.assigned_user || REAL_USERNAME;
-                let keyType = (res.key_type || 'NORMAL').toUpperCase(); // Server trả về 'VIP' hoặc 'NORMAL'
+                let keyType = (res.key_type || 'NORMAL').toUpperCase();
 
-                // Vòng lặp chống đổi nick trái phép
                 setInterval(() => {
                     let currentUserNow = getRealUsername();
                     if (assignedUser && currentUserNow !== "N/A" && currentUserNow !== "hp_luongvantuyen" && currentUserNow !== assignedUser) {
@@ -814,7 +939,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                     }
                 }, 2000);
 
-                // Check ngay từ đầu
                 if (res.assigned_user && REAL_USERNAME !== "N/A" && REAL_USERNAME !== "hp_luongvantuyen" && REAL_USERNAME !== res.assigned_user) {
                     secureApiCall('/api/ban_key', { key: savedKey, reason: "Sử dụng sai tài khoản OLM" });
                     kickUserToWeb(`GIAN LẬN: Key này chỉ dành cho tài khoản [${res.assigned_user}]. Bạn đang dùng cho [${REAL_USERNAME}]. Key đã bị Khóa Vĩnh Viễn!`);
@@ -831,12 +955,11 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                     return;
                 }
 
-                // ===== RẼ NHÁNH GIAO DIỆN =====
                 if (keyType === 'VIP') {
-                    console.log("[LVT] Kích hoạt Hack VIP (OLM MODE)");
+                    console.log("[LVT] Kích hoạt Hack VIP");
                     initVipHackSystem(savedKey);
                 } else {
-                    console.log("[LVT] Kích hoạt Hack Thường (Study Assistant)");
+                    console.log("[LVT] Kích hoạt Hack Thường");
                     StudyAssistantManager.init();
                 }
 
@@ -853,9 +976,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
 })();"""
 
-# ========================================================
-# CẤU HÌNH SHOP KEY
-# ========================================================
 SHOP_PACKAGES = {
     "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
     "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
@@ -905,7 +1025,7 @@ def load_db():
                 try:
                     with open(DB_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
                 except Exception: pass
-            if not data: data = {"users": {}, "keys": {}, "banned_ips": [], "admin_logs": [], "security_alerts": [], "settings": {}}
+            if not data: data = {"users": {}, "keys": {}, "banned_ips": [], "admin_logs": [], "security_alerts": [], "settings": {}, "banned_olms": {}}
             try:
                 data.setdefault("users", {})
                 data.setdefault("keys", {})
@@ -913,6 +1033,7 @@ def load_db():
                 data.setdefault("admin_logs", [])
                 data.setdefault("security_alerts", []) 
                 data.setdefault("settings", {})
+                data.setdefault("banned_olms", {})
                 
                 if "violentmonkey_script" not in data["settings"]:
                     data["settings"]["violentmonkey_script"] = DEFAULT_OLM_SCRIPT
@@ -943,15 +1064,24 @@ def save_db(db=None):
     global _last_db_mtime
     if db is None: db = GLOBAL_DB
     with db_lock:
-        try: db_str = json.dumps(db, indent=2, ensure_ascii=False)
-        except: return 
+        try: 
+            safe_db = copy.deepcopy(db)
+            db_str = json.dumps(safe_db, indent=2, ensure_ascii=False)
+        except Exception as e:
+            send_telegram_alert(f"Lỗi Serialize DB: {str(e)}")
+            return 
+            
         temp_file = DB_FILE + f'.{int(time.time() * 1000)}.tmp'
         try:
-            with open(temp_file, 'w', encoding='utf-8') as f: f.write(db_str)
+            with open(temp_file, 'w', encoding='utf-8') as f: 
+                f.write(db_str)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(temp_file, DB_FILE)
             shutil.copy2(DB_FILE, DB_BACKUP)
             _last_db_mtime = os.path.getmtime(DB_FILE)
-        except Exception: 
+        except Exception as e: 
+            send_telegram_alert(f"LỖI GHI FILE DATABASE CHÍ MẠNG: {str(e)}")
             if os.path.exists(temp_file): os.remove(temp_file)
 
 def generate_secure_key(prefix="", is_vip=False):
@@ -967,14 +1097,18 @@ def log_admin_action(db, action_text):
     db["admin_logs"] = db["admin_logs"][:100]
 
 def garbage_collector():
-    global used_signatures
+    global used_signatures, api_rate_cache
+    backup_counter = 0
     while True:
         time.sleep(3600) 
+        backup_counter += 1
         now_ms = int(time.time() * 1000)
         try:
             with api_rate_lock:
                 to_del_sig = [s for s, t in used_signatures.items() if now_ms - t > 20000]
                 for s in to_del_sig: del used_signatures[s]
+                if len(used_signatures) > 10000: used_signatures.clear()
+                if len(api_rate_cache) > 10000: api_rate_cache.clear()
             
             db = load_db()
             changed = False
@@ -985,17 +1119,27 @@ def garbage_collector():
                         if isinstance(exp, int) and (now_ms - exp) > 604800000:
                             del db["keys"][k]
                             changed = True
+                
+                # Xóa những OLM đã hết hạn cấm
+                for olm_id in list(db.get("banned_olms", {}).keys()):
+                    if db["banned_olms"][olm_id] != "permanent" and db["banned_olms"][olm_id] < now_ms:
+                        del db["banned_olms"][olm_id]
+                        changed = True
+                
                 if len(db.get("security_alerts", [])) > 100:
                     db["security_alerts"] = db["security_alerts"][:50]
                     changed = True
+                    
             if changed: save_db(db)
-        except: pass
+            
+            if backup_counter >= 12:
+                send_telegram_backup()
+                backup_counter = 0
+        except Exception as e: 
+            send_telegram_alert(f"Lỗi Garbage Collector: {str(e)}")
 
 threading.Thread(target=garbage_collector, daemon=True).start()
 
-# ========================================================
-# HỆ THỐNG BẢO VỆ LAYER 7 & FIREWALL & IPS
-# ========================================================
 def get_real_ip():
     try:
         if request.headers.get("CF-Connecting-IP"): return request.headers.get("CF-Connecting-IP")
@@ -1013,7 +1157,9 @@ def firewall_and_csrf():
 
         ua = (request.headers.get('User-Agent') or '').lower()
         blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
-        if any(bot in ua for bot in blocked_bots): return "Firewall Blocked Suspicious Bot/Scanner.", 403
+        if any(bot in ua for bot in blocked_bots): 
+            send_telegram_alert(f"Phát hiện Bot/Scanner truy cập trái phép.\nIP: {ip}\nUser-Agent: {ua}")
+            return "Firewall Blocked Suspicious Bot/Scanner.", 403
             
         if request.path.startswith("/admin") and request.path not in ["/admin_login", "/login", "/register", "/logout"]:
             if session.get('role') != 'admin':
@@ -1024,9 +1170,10 @@ def firewall_and_csrf():
 def not_found_trap(e):
     return "Not Found", 404
 
-# ========================================================
-# API SPOOFER & CẤP PHÉP BƠM CODE
-# ========================================================
+@app.route('/api/ping', methods=['GET'])
+def uptime_ping():
+    return jsonify({"status": "alive", "timestamp": int(time.time())}), 200
+
 def check_api_rate_limit(ip):
     try:
         now = time.time()
@@ -1057,6 +1204,13 @@ def verify_request_signature(data):
 def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
     now = int(time.time() * 1000)
     with db_lock:
+        # Check Banned OLM Names First
+        banned_olms = db.get("banned_olms", {})
+        if req_olm_name != "N/A" and req_olm_name in banned_olms:
+            ban_exp = banned_olms[req_olm_name]
+            if ban_exp == "permanent" or ban_exp > now:
+                return False, "Tài khoản OLM này đã bị Admin đưa vào danh sách cấm sử dụng Tool!"
+
         if key not in db["keys"]: return False, "Mã Key không tồn tại!"
         kd = db["keys"][key]
         if kd.get('status') == 'banned': return False, "TÀI KHOẢN BỊ KHÓA: Key của bạn đã bị Admin ban vĩnh viễn!"
@@ -1190,15 +1344,10 @@ def script_ping():
         return "invalid", 403
     except: return "error", 500
 
-# ========================================================
-# 1. API: CUNG CẤP LÕI (CORE) ẨN VÀ TRUYỀN QUYỀN
-# ========================================================
 @app.route('/api/script/core_engine.js')
 def serve_core_engine():
     db = load_db()
     raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
-    
-    # Bóc tách phần Body cực kỳ cẩn thận
     lines = raw_script.split('\n')
     body = []
     in_header = False
@@ -1209,15 +1358,11 @@ def serve_core_engine():
             in_header = False
         elif not in_header:
             body.append(line)
-            
     body_str = '\n'.join(body)
-    
-    # Mã hoá 2 lớp
     quoted_body = urllib.parse.quote(body_str)
     b64 = base64.b64encode(quoted_body.encode('utf-8')).decode('utf-8')
     rev_b64 = b64[::-1]
     
-    # Bẫy F12 Anti-Debug
     anti_debug = """
     const _0xLVT = function() {
         let _0x = new Date().getTime();
@@ -1230,8 +1375,6 @@ def serve_core_engine():
     };
     _0xLVT();
     """
-    
-    # Kế thừa quyền năng trực tiếp, KHÔNG DÙNG new Function() để giữ Context
     secure_core = f"""
     (function() {{
         {anti_debug}
@@ -1239,7 +1382,7 @@ def serve_core_engine():
             const _0x3c = "{rev_b64}";
             const _0x4d = _0x3c.split('').reverse().join('');
             const _0x5e = decodeURIComponent(atob(_0x4d));
-            eval(_0x5e); // Khởi chạy Lõi với 100% quyền năng bản địa
+            eval(_0x5e); 
         }} catch(e) {{ console.error("[LVT] Lỗi cấu trúc Core ngầm:", e); }}
     }})();
     """
@@ -1247,16 +1390,12 @@ def serve_core_engine():
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
-# ========================================================
-# 2. API: CUNG CẤP LOADER CỐ ĐỊNH (CÀI VÀO MÁY KHÁCH 1 LẦN)
-# ========================================================
 @app.route('/api/script/olm_vip.user.js')
 def serve_loader_script():
     db = load_db()
     raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     host_url = WEB_URL if WEB_URL else request.url_root.rstrip('/')
     
-    # Bóc tách và giữ đúng 100% Header gốc của bạn
     lines = raw_script.split('\n')
     header = []
     in_header = False
@@ -1273,7 +1412,6 @@ def serve_loader_script():
             
     header_str = '\n'.join(header)
     
-    # Đảm bảo Loader có quyền kết nối
     if '@grant        GM_xmlhttpRequest' not in header_str and '@grant GM_xmlhttpRequest' not in header_str:
         header_str = header_str.replace('// ==/UserScript==', '// @grant        GM_xmlhttpRequest\n// ==/UserScript==')
     
@@ -1283,13 +1421,9 @@ def serve_loader_script():
 // =========================================================================
 (function() {{
     'use strict';
-    
-    // CHỐNG CHẠY TRONG IFRAME (ĐÂY LÀ CHÌA KHOÁ FIX LỖI KICK VÒNG LẶP)
     if (window.top !== window.self) return;
-
     console.log("%c[LVT SECURITY]%c Đang khởi động Siêu Loader...", "color:#00ffcc; font-weight:bold; font-size:14px", "color:white");
     
-    // Bẫy phím tắt Soi Code
     document.addEventListener('contextmenu', e => e.preventDefault());
     document.addEventListener('keydown', e => {{
         if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) || (e.ctrlKey && e.key === 'u') || (e.ctrlKey && e.key === 'U')) {{
@@ -1297,7 +1431,6 @@ def serve_loader_script():
         }}
     }});
 
-    // Vòng lặp Vô Cực - Bảo vệ API
     setInterval(() => {{
         const t1 = performance.now();
         eval("debugger;");
@@ -1308,17 +1441,12 @@ def serve_loader_script():
         }}
     }}, 1000);
 
-    // Kéo code mới nhất thẳng vào bộ nhớ RAM (Dùng eval trực tiếp để kế thừa GM_setValue)
     GM_xmlhttpRequest({{
         method: 'GET',
         url: '{host_url}/api/script/core_engine.js?t=' + Date.now(),
         onload: function(res) {{
             if (res.status === 200) {{
-                try {{
-                    eval(res.responseText); // Khởi chạy hoàn hảo trong Sandbox gốc
-                }} catch(e) {{
-                    console.error("[LVT] Lỗi khởi chạy Lõi:", e);
-                }}
+                try {{ eval(res.responseText); }} catch(e) {{ console.error("[LVT] Lỗi khởi chạy Lõi:", e); }}
             }}
         }}
     }});
@@ -1328,9 +1456,6 @@ def serve_loader_script():
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
-# ========================================================
-# GIAO DIỆN CSS & HTML TOÀN CỤC (CẢI TIẾN THẨM MỸ + CHỐNG TRÀN BẢNG)
-# ========================================================
 CSS_GLASS = """
 body { background-color: #05050A !important; color: #fff !important; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0; }
 .glass-panel { background-color: rgba(17, 17, 26, 0.8) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 20px !important; box-shadow: 0 10px 40px rgba(0,0,0,0.8) !important; padding: 40px; text-align: center; width: 100%; max-width: 400px; margin: 50px auto; backdrop-filter: blur(12px); }
@@ -1339,23 +1464,16 @@ body { background-color: #05050A !important; color: #fff !important; font-family
 h2, h3, h4, h5 { color: #00ffcc !important; font-weight: 900 !important; letter-spacing: 1px !important; }
 .text-neon { color: #00ffcc !important; text-shadow: 0 0 12px rgba(0,255,204,0.6) !important; }
 .text-purple { color: #bd00ff !important; text-shadow: 0 0 12px rgba(189,0,255,0.6) !important; }
-
-/* USER BALANCE CARD CỰC GỌN */
 .balance-card { background: linear-gradient(135deg, rgba(0, 255, 204, 0.15), rgba(189, 0, 255, 0.1)); border: 1px solid rgba(0, 255, 204, 0.4); border-radius: 16px; padding: 20px 25px; display: flex; align-items: center; justify-content: space-between; backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,255,204,0.1); }
 .balance-card .balance-amount { font-size: 32px; font-weight: 900; color: #00ffcc; text-shadow: 0 0 15px rgba(0,255,204,0.5); line-height: 1; margin-top: 5px; }
-
-/* LAUNCH CARD */
 .launch-card { background: linear-gradient(135deg, rgba(189, 0, 255, 0.15), rgba(0, 153, 255, 0.1)); border: 1px solid rgba(189, 0, 255, 0.4); border-radius: 16px; padding: 20px 25px; display: flex; flex-direction: column; justify-content: center; backdrop-filter: blur(10px); text-align: center; height: 100%; transition: 0.3s; box-shadow: 0 10px 30px rgba(189,0,255,0.1); }
 .launch-card:hover { box-shadow: 0 10px 30px rgba(189,0,255,0.3); border-color: #bd00ff; cursor: pointer; }
-
 .form-control, .form-select, textarea { background-color: rgba(10, 10, 18, 0.8) !important; border: 1px solid rgba(255,255,255,0.1) !important; color: #fff !important; padding: 12px; border-radius: 10px; margin-bottom: 15px; }
 .form-control:focus, .form-select:focus, textarea:focus { border-color: #00ffcc !important; box-shadow: 0 0 12px rgba(0,255,204,0.3) !important; outline: none !important; }
 .btn-neon { background: linear-gradient(45deg, #00ffcc, #bd00ff) !important; border: none !important; color: #000 !important; font-weight: bold !important; width: 100%; padding: 12px; border-radius: 10px; transition: 0.3s !important; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 5px 15px rgba(0,255,204,0.2) !important; }
 .btn-neon:hover { transform: translateY(-2px) !important; box-shadow: 0 8px 25px rgba(0,255,204,0.5) !important; }
 a.link-neon { color: #bd00ff !important; text-decoration: none !important; font-weight: bold !important; transition: 0.3s !important; }
 a.link-neon:hover { color: #00ffcc !important; text-shadow: 0 0 10px #00ffcc !important; }
-
-/* TABLE CUSTOMIZATION (FIX TRÀN BẢNG MOBILE) */
 .table-container { border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table { color: #fff !important; margin-bottom: 0; white-space: nowrap; }
 .table-dark { --bs-table-bg: transparent !important; --bs-table-striped-bg: rgba(0, 255, 204, 0.05) !important; border-color: rgba(255,255,255,0.05) !important; }
@@ -1436,6 +1554,8 @@ def register():
                 if username in db.setdefault("users", {}): return swal_back("Lỗi", "Tên đăng nhập đã tồn tại!", "error")
                 db["users"][username] = {"password_hash": hash_pwd(password), "role": "user", "balance": 0, "created_at": int(time.time() * 1000), "ips": [get_real_ip()], "purchased_keys": [], "notices": [], "custom_script": ""}
                 save_db(db)
+            
+            send_telegram_alert(f"🎉 <b>CÓ NGƯỜI ĐĂNG KÝ WEB MỚI</b>\n- User: <code>{username}</code>\n- IP: {get_real_ip()}\n<i>(Mật khẩu đã được mã hóa Hash SHA-256 an toàn, không hiển thị để bảo mật)</i>")
             return swal_redirect("Tuyệt vời!", "Đăng ký thành công. Hãy đăng nhập!", "success", "/login")
 
         return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng Ký</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">⚡ TẠO TÀI KHOẢN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên đăng nhập (liền không dấu)" required><input type="password" name="password" class="form-control" placeholder="Mật khẩu (Tối thiểu 6 ký tự)" required><button type="submit" class="btn-neon mt-2">ĐĂNG KÝ NGAY</button></form><div class="mt-4"><p class="text-secondary">Đã có tài khoản? <a href="/login" class="link-neon">Đăng nhập</a></p><a href="/" class="text-muted" style="text-decoration:none;font-size:13px;"><i class="fas fa-home"></i> Trở về Trang chủ</a></div></div></body></html>'''
