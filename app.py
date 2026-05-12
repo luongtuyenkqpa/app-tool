@@ -47,16 +47,21 @@ def telegram_polling():
                     if "message" in update:
                         msg = update["message"]
                         chat_id = str(msg.get("chat", {}).get("id", ""))
-                        
                         if chat_id != TELEGRAM_CHAT_ID: continue
                         
                         text = msg.get("text", "").strip()
                         msg_id = msg.get("message_id")
+                        user_first_name = msg.get("from", {}).get("first_name", "Admin")
                         
                         if text.startswith("/start"):
+                            # Tự động xóa tin nhắn rác /start theo yêu cầu
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = "🌟 <b>HỆ THỐNG LVT MINI APP</b> 🌟\n\nHệ thống quản trị đồ họa cao cấp đã sẵn sàng. Vui lòng ấn nút bên dưới để khởi chạy App!"
-                            keyboard = {"inline_keyboard": [[{"text": "📱 MỞ LVT APP QUẢN TRỊ 📱", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]]}
+                            welcome = f"🌟 <b>HỆ THỐNG LVT HACK OLM CAO CẤP</b> 🌟\n\nXin chào <b>{user_first_name}</b>! Hãy chọn chức năng bên dưới:"
+                            keyboard = {"inline_keyboard": [
+                                [{"text": "🛒 CỬA HÀNG BÁN KEY (Đăng Ký/Đăng Nhập)", "url": f"{WEB_URL}/login"}],
+                                [{"text": "🚀 SỬ DỤNG HACK (Auto Mở Kiwi Browser)", "url": f"{WEB_URL}/open_hack"}],
+                                [{"text": "📱 MỞ LVT APP QUẢN TRỊ ADMIN 📱", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
+                            ]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
                         
                         elif text.startswith("/naptien"):
@@ -89,23 +94,6 @@ def telegram_polling():
                                     keys_info = "".join([f"- <code>{pk['key'][:10]}...</code>\n" for pk in u.get("purchased_keys", [])]) or "Không có key nào."
                                     send_telegram_alert(f"👤 <b>USER: {uname}</b>\n💰 Số dư: {u.get('balance', 0):,}đ\n🔑 <b>Key:</b>\n{keys_info}")
                                 else: send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
-                        
-                        elif text.startswith("/banolm"):
-                            parts = text.split()
-                            if len(parts) >= 4:
-                                olm_name = parts[1]
-                                try:
-                                    duration = int(parts[2])
-                                    unit = parts[3].lower()
-                                    multiplier = {"s": 1000, "m": 60000, "h": 3600000, "d": 86400000}.get(unit)
-                                    if not multiplier: continue
-                                    exp_time = int(time.time() * 1000) + (duration * multiplier)
-                                    db = load_db()
-                                    with db_lock:
-                                        db.setdefault("banned_olms", {})[olm_name] = exp_time
-                                        save_db(db)
-                                    send_telegram_alert(f"🚫 Đã cấm OLM: <b>{olm_name}</b>\n⏳ Thời gian: {duration}{unit}")
-                                except ValueError: pass
                         
                         elif text.startswith("// ==UserScript=="):
                             db = load_db()
@@ -140,7 +128,6 @@ api_rate_lock = threading.Lock()
 
 active_sessions = {}
 api_rate_cache = {}
-bad_sig_cache = {} 
 used_signatures = {} 
 
 GLOBAL_DB = {}
@@ -188,13 +175,13 @@ def render_template_string_safe(content):
     return resp
 
 # ========================================================
-# DATABASE ENGINE
+# DATABASE ENGINE & MẶC ĐỊNH
 # ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
-// @name         OLM GOD MODE VIP - DEV.TIỆP
+// @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE + APEX MINER + ANTI-FREEZE)
 // @namespace    http://tampermonkey.net/
-// @version      13.0
-// @description  Hệ thống bảo vệ đa tầng. Phân luồng Key VIP và Key Thường.
+// @version      18.2
+// @description  Hệ thống bảo vệ đa tầng. Đỉnh cao cuối cùng: Window Bruteforcer (Cào bộ nhớ RAM). Fix lỗi đơ web.
 // @author       DEV.TIỆP
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
@@ -208,9 +195,7 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
 (function() {
     'use strict';
-    if (window.top !== window.self) return;
-
-    const Config = { VERSION: '13.0', API_KEYWORDS: ['get-question-of-ids', 'get-question?belongs=1'] };
+    const Config = { VERSION: '18.2', API_KEYWORDS: ['get-question', 'get-exam', 'get-test', 'practice', 'kiem-tra', 'chu-de', 'api/question', 'graphql', 'assignment', 'get-question-of-ids', 'get-question?belongs=1'] };
 
     const originalCookieGetter = (() => {
         let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
@@ -225,24 +210,17 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                 let cookies = rawCookie.split(';');
                 for (let i = 0; i < cookies.length; i++) {
                     let c = cookies[i].trim();
-                    if (c.startsWith("username=")) {
-                        found = decodeURIComponent(c.substring(9)).replace(/^"|"$/g, '').trim();
-                    }
+                    if (c.startsWith("username=")) found = decodeURIComponent(c.substring(9)).replace(/^"|"$/g, '').trim();
                 }
             }
         } catch(e) {}
-
         if (found === "N/A" || found === "hp_luongvantuyen") {
             try {
-                let scripts = document.getElementsByTagName('script');
-                for (let i = 0; i < scripts.length; i++) {
-                    let text = scripts[i].innerHTML;
-                    if (text && text.includes('"username"')) {
-                        let match = text.match(/"username"\s*:\s*"([^"]+)"/);
-                        if (match && match[1] && match[1] !== "hp_luongvantuyen") {
-                            found = match[1].trim();
-                            break; 
-                        }
+                if (typeof unsafeWindow !== 'undefined') {
+                    if (unsafeWindow.userData && unsafeWindow.userData.username && unsafeWindow.userData.username !== "hp_luongvantuyen") {
+                        found = unsafeWindow.userData.username;
+                    } else if (unsafeWindow.__INITIAL_STATE__ && unsafeWindow.__INITIAL_STATE__.currentUser && unsafeWindow.__INITIAL_STATE__.currentUser.username && unsafeWindow.__INITIAL_STATE__.currentUser.username !== "hp_luongvantuyen") {
+                        found = unsafeWindow.__INITIAL_STATE__.currentUser.username;
                     }
                 }
             } catch(e) {}
@@ -255,18 +233,13 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
     let savedKey = GM_getValue('lvt_olm_vip_key', '');
 
     function generateRobustHWID() {
-        let canvas = document.createElement('canvas');
-        let ctx = canvas.getContext('2d');
+        let canvas = document.createElement('canvas'); let ctx = canvas.getContext('2d');
         ctx.textBaseline = "top"; ctx.font = "14px 'Arial'"; ctx.fillStyle = "#f60"; ctx.fillRect(125,1,62,20);
         ctx.fillStyle = "#069"; ctx.fillText("OLM_LVT_VIP", 2, 15); ctx.fillStyle = "rgba(102, 204, 0, 0.7)"; ctx.fillText("OLM_LVT_VIP", 4, 17);
         let b64 = canvas.toDataURL().replace("data:image/png;base64,","");
         let nav = navigator.userAgent + navigator.hardwareConcurrency + navigator.language + screen.width + screen.height;
-        let hash = 0;
-        let combined = b64 + nav;
-        for(let i=0; i<combined.length; i++) {
-            hash = ((hash<<5)-hash)+combined.charCodeAt(i);
-            hash = hash & hash;
-        }
+        let hash = 0; let combined = b64 + nav;
+        for(let i=0; i<combined.length; i++) { hash = ((hash<<5)-hash)+combined.charCodeAt(i); hash = hash & hash; }
         return "HWID-" + Math.abs(hash).toString(16).toUpperCase();
     }
     
@@ -282,182 +255,62 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             let hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(msg));
             sig = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
-        bodyObj.timestamp = ts;
-        bodyObj.signature = sig;
-        bodyObj.olm_name = getRealUsername(); 
+        bodyObj.timestamp = ts; bodyObj.signature = sig; bodyObj.olm_name = getRealUsername(); 
         
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
-                method: 'POST',
-                url: SERVER_URL + path,
-                headers: { 'Content-Type': 'application/json' },
+                method: 'POST', url: SERVER_URL + path, headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify(bodyObj),
-                onload: (res) => {
-                    try { resolve(JSON.parse(res.responseText)); } 
-                    catch(e) { reject("Lỗi phân tích JSON."); }
-                },
-                onerror: () => reject("Lỗi kết nối mạng.")
+                onload: (res) => { try { resolve(JSON.parse(res.responseText)); } catch(e) { reject("Lỗi JSON."); } },
+                onerror: () => reject("Lỗi mạng.")
             });
         });
     }
 
     const Utils = {
-        decodeBase64(base64) {
-            if (!base64) return null;
-            try { return new TextDecoder('utf-8').decode(new Uint8Array(atob(base64).split('').map(c => c.charCodeAt(0)))); } 
-            catch (e) { return null; }
-        },
+        decodeBase64(base64) { if (!base64) return null; try { return new TextDecoder('utf-8').decode(new Uint8Array(atob(base64).split('').map(c => c.charCodeAt(0)))); } catch (e) { return null; } },
         createElement(tag, { id, className, style, children, innerHTML, ...attrs } = {}) {
             const el = document.createElement(tag);
-            if (id) el.id = id;
-            if (className) el.className = className;
-            if (style) Object.assign(el.style, style);
-            if (innerHTML !== undefined) el.innerHTML = innerHTML;
+            if (id) el.id = id; if (className) el.className = className; if (style) Object.assign(el.style, style); if (innerHTML !== undefined) el.innerHTML = innerHTML;
             Object.keys(attrs).forEach(key => el.setAttribute(key, attrs[key]));
-            if (children) children.forEach(child => {
-                if (typeof child === 'string') el.appendChild(document.createTextNode(child));
-                else if (child instanceof Node) el.appendChild(child);
-            });
+            if (children) children.forEach(child => { if (typeof child === 'string') el.appendChild(document.createTextNode(child)); else if (child instanceof Node) el.appendChild(child); });
             return el;
         },
-        sleep: (ms) => new Promise(res => setTimeout(res, ms)),
-        formatNumber: (num) => (typeof num === 'number' ? num.toLocaleString('vi-VN') : '0')
+        sleep: (ms) => new Promise(res => setTimeout(res, ms)), formatNumber: (num) => (typeof num === 'number' ? num.toLocaleString('vi-VN') : '0'),
+        cleanText(str) { if (!str) return ''; return String(str).normalize('NFC').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/gi, ' ').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim(); },
+        smartMatch(target, keyword) { if (!target || !keyword) return false; let t = this.cleanText(target).toLowerCase().replace(/\s/g, ''); let k = this.cleanText(keyword).toLowerCase().replace(/\s/g, ''); return t && k && (t.includes(k) || k.includes(t)); }
     };
 
     const HintParser = {
         _extractTextFromNode(node) {
-            let text = '';
-            if (!node) return text;
-            if (node.text) text += node.text;
-            if (node.children && Array.isArray(node.children)) {
-                text += node.children.map(child => this._extractTextFromNode(child)).join('');
-            }
+            let text = ''; if (!node) return text; if (node.text) text += node.text;
+            if (node.children && Array.isArray(node.children)) { for (let i = 0; i < node.children.length; i++) { text += this._extractTextFromNode(node.children[i]); } }
             return text;
-        },
-        _deepScanJsonNode(node, hints, parentNode = null, q_type = 0) {
-            if (!node || typeof node !== 'object') return;
-            let identified = false;
-
-            if (q_type === 10 && node.name === 'group-list' && node.children) {
-                node.children.forEach((listItem, index) => {
-                    if (listItem.type !== 'olm-list-item' || !listItem.children) return;
-                    const titleNode = listItem.children.find(c => c.type === 'group-title');
-                    const title = titleNode ? this._extractTextFromNode(titleNode).trim() : 'Nhóm';
-                    const answers = listItem.children.filter(c => c.position === 'group').map(c => this._extractTextFromNode(c).trim()).filter(Boolean);
-                    if (answers.length > 0) {
-                        hints.push({ type: 'Kéo nhóm', content: `${title}: ${answers.join(', ')}`, subIndex: index + 1 });
-                    }
-                });
-                identified = true;
-            }
-
-            if (!identified && (q_type === 2 || q_type === 3) && node.type === 'paragraph' && node.children) {
-                const firstChild = node.children[0];
-                if (firstChild && firstChild.text && /^\d+\.\s/.test(firstChild.text.trim())) {
-                    const match = firstChild.text.trim().match(/^(\d+)\./);
-                    const qNum = match ? match[1] : '0';
-                    const inputs = node.children.filter(c => (c.type === 'fillme-input' || c.type === 'olm-input-text') && c.content);
-                    if (inputs.length > 0) {
-                        inputs.forEach(input => {
-                            input.content.split('||').map(s => s.trim()).filter(Boolean).forEach(part => {
-                                hints.push({ type: 'Điền từ', content: part, subIndex: qNum });
-                            });
-                        });
-                        identified = true;
-                    }
-                }
-            }
-
-            if (!identified && node.correct === true && (node.type === 'olm-list-item' || node.type === 'list-item')) {
-                const text = this._extractTextFromNode(node).trim();
-                if (text) {
-                    const type = (node.name === 'true-false' || (parentNode && parentNode.name === 'true-false')) ? 'Đúng/Sai' : 'Trắc nghiệm';
-                    hints.push({ type, content: text.replace(/^#/, '').trim(), subIndex: null });
-                    identified = true;
-                }
-            }
-
-            if (!identified && q_type !== 2 && q_type !== 3) {
-                if (node.type === 'fillme-input' && node.content) {
-                    node.content.split('||').map(s => s.trim()).filter(Boolean).forEach(part => hints.push({ type: 'Điền từ', content: part, subIndex: null }));
-                    identified = true;
-                }
-                if (!identified && node.type === 'olm-input-text' && node.name === 'dragtext' && node.content) {
-                    node.content.split('||').map(s => s.trim()).filter(Boolean).forEach(part => hints.push({ type: 'Điền từ', content: part, subIndex: null }));
-                    identified = true;
-                }
-                if (!identified && node.type === 'drag-more-item' && node.children) {
-                    const text = this._extractTextFromNode(node).trim();
-                    if (text) { hints.push({ type: 'Kéo thả', content: text, subIndex: null }); identified = true; }
-                }
-            }
-
-            if (!identified && node.type === 'olm-list-item' && parentNode && parentNode.name === 'link-list' && Array.isArray(node.children)) {
-                const leftNode = node.children.find(c => c.position === 'left');
-                const rightNode = node.children.find(c => c.position === 'right');
-                if (leftNode && rightNode) {
-                    const leftText = this._extractTextFromNode(leftNode).trim();
-                    const rightText = this._extractTextFromNode(rightNode).trim();
-                    if (leftText && rightText) { hints.push({ type: 'Nối', content: `${leftText} ➔ ${rightText}`, subIndex: null }); identified = true; }
-                }
-            }
-
-            if (!identified && Array.isArray(node.children) && node.children.length >= 3) {
-                const pieces = node.children.map(ch => (ch.text || '').trim()).filter(Boolean);
-                if (pieces.length >= 3 && pieces.every(t => /^[A-Za-zÀ-ỹ0-9'’.,!?-]+$/.test(t))) {
-                    hints.push({ type: 'Sắp xếp', content: pieces.join(' '), subIndex: null });
-                    identified = true;
-                }
-            }
-
-            if (!identified && node.name === 'exp' && (q_type === 18 || q_type === 11) && node.children) {
-                const text = this._extractTextFromNode(node).trim();
-                const cleanText = text.replace(/^Hư[ơớ]ng d[ẫâ]n gi[aả]i:?/i, '').trim();
-                if (cleanText) { hints.push({ type: (q_type === 11) ? 'Chọn từ' : 'Tự luận', content: cleanText, subIndex: null }); identified = true; }
-            }
-
-            if (!identified && node.children && Array.isArray(node.children)) {
-                 node.children.forEach(child => this._deepScanJsonNode(child, hints, node, q_type));
-            }
         },
         parse(question) {
             const hints = [];
-            if (question.json_content) {
-                try {
-                    const data = typeof question.json_content === 'string' ? JSON.parse(question.json_content) : question.json_content;
-                    if (data && data.root) this._deepScanJsonNode(data.root, hints, null, question.q_type);
-                } catch (e) {}
-            }
-            if (question.content) {
-                const htmlContent = Utils.decodeBase64(question.content);
-                if (htmlContent) {
-                    const tempDiv = Utils.createElement('div', { innerHTML: htmlContent });
-                    tempDiv.querySelectorAll('.correctAnswer, .correct-answer').forEach(el => {
-                        const text = el.textContent.trim();
-                        if (text) hints.push({ type: 'Gợi ý (cũ)', content: text });
-                    });
-                    const inputAccept = tempDiv.querySelector('input[data-accept]');
-                    if (inputAccept) {
-                        (inputAccept.getAttribute('data-accept') || '').split('|').forEach(ans => {
-                            if (ans.trim()) hints.push({ type: 'Điền từ (cũ)', content: ans.trim() });
-                        });
-                    }
-                    if (question.q_type === 18 || question.q_type === 11) {
-                        const explanationDiv = tempDiv.querySelector('.exp .exp-in');
-                        if (explanationDiv) {
-                            const expText = Array.from(explanationDiv.childNodes).map(n => (n.textContent || '').trim()).filter(Boolean).join('\n');
-                            if (expText) hints.push({ type: (question.q_type === 11) ? 'Chọn từ' : 'Tự luận', content: expText });
-                        }
-                    }
+            const omniExtract = (obj) => {
+                if (!obj || typeof obj !== 'object') return;
+                if (obj.correct === true || obj.is_correct === true || obj.is_correct === 1 || obj.isCorrect === true || obj.correct === 1 || obj.correct === "1") {
+                    const text = obj.text || obj.content || obj.value || obj.name;
+                    if (text && String(text).trim() && String(text) !== "true") { hints.push({ type: 'Hack Đáp Án', content: Utils.cleanText(String(text).replace(/^#/, '')), subIndex: null }); }
                 }
-            }
-            const uniqueHints = [];
-            const seen = new Set();
-            for (const hint of hints) {
-                const key = (hint.content || '').toLowerCase();
+                ['correctAnswer', 'correct_answer', 'answer', 'correctOption', 'correct_options'].forEach(key => {
+                    if (obj[key] !== undefined && obj[key] !== null) {
+                        let ans = obj[key];
+                        if (typeof ans === 'string' || typeof ans === 'number') { hints.push({ type: 'Hack Kéo/Điền', content: Utils.cleanText(String(ans)), subIndex: null }); } 
+                        else if (Array.isArray(ans)) { ans.forEach(a => { if(a && (typeof a === 'string' || typeof a === 'number')) hints.push({ type: 'Hack Kéo/Điền', content: Utils.cleanText(String(a)), subIndex: null }); else if(a && typeof a === 'object') omniExtract(a); }); }
+                    }
+                });
+                Object.values(obj).forEach(val => { if (val && typeof val === 'object') omniExtract(val); });
+            };
+            try { omniExtract(question); } catch(e) {}
+            
+            const uniqueHints = []; const seen = new Set();
+            for (let i = 0; i < hints.length; i++) {
+                const key = hints[i].content.toLowerCase().replace(/\s+/g, '');
                 if (!key || seen.has(key)) continue;
-                seen.add(key);
-                uniqueHints.push(hint);
+                seen.add(key); uniqueHints.push(hints[i]);
             }
             return uniqueHints;
         }
@@ -469,30 +322,16 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             this.position = GM_getValue('panelPosition', { x: window.innerWidth - 470, y: 100 });
             this.container = null; this.header = null; this.summaryBar = null; this.contentArea = null; this.footer = null; this.collapseButton = null;
         }
-        init() {
-            this.container = this._createPanelContainer();
-            this._addEventListeners();
-            document.body.appendChild(this.container);
-            this.updateCollapseState(true);
-        }
+        init() { this.container = this._createPanelContainer(); this._addEventListeners(); document.body.appendChild(this.container); this.updateCollapseState(true); }
         _createPanelContainer() {
             this.contentArea = Utils.createElement('div', { id: 'study-assistant-content' });
             this.collapseButton = Utils.createElement('button', { className: 'study-control-btn', children: ['−'], title: 'Thu gọn/Mở rộng' });
-            const closeButton = Utils.createElement('button', { className: 'study-control-btn', children: ['×'], title: 'Đóng panel' });
-            closeButton.onclick = () => this.setVisible(false);
-            const renderMathButton = Utils.createElement('button', { className: 'study-control-btn', children: ['∑'], title: 'Render lại Toán' });
-            renderMathButton.onclick = () => this.finalizeRender();
-            const settingsButton = Utils.createElement('button', { className: 'study-control-btn', children: ['⚙'], title: 'Thông tin' });
-            settingsButton.onclick = () => { alert(`Study Assistant Pro v${Config.VERSION}\nThiết bị: ${deviceId}\nKey: ${savedKey}`); };
+            const closeButton = Utils.createElement('button', { className: 'study-control-btn', children: ['×'], title: 'Đóng panel' }); closeButton.onclick = () => this.setVisible(false);
+            const renderMathButton = Utils.createElement('button', { className: 'study-control-btn', children: ['∑'], title: 'Render lại Toán' }); renderMathButton.onclick = () => this.finalizeRender();
+            const settingsButton = Utils.createElement('button', { className: 'study-control-btn', children: ['⚙'], title: 'Thông tin' }); settingsButton.onclick = () => { alert(`Study Assistant Pro v${Config.VERSION}\nThiết bị: ${deviceId}\nKey: ${savedKey}`); };
             
-            const titleSpan = Utils.createElement('span', {
-                className: 'study-header-title',
-                children: [ '🎓 Study Assistant Pro', Utils.createElement('span', { className: 'study-status-badge', children: ['NORMAL'] }) ]
-            });
-            this.header = Utils.createElement('div', {
-                className: 'study-assistant-header',
-                children: [ titleSpan, Utils.createElement('div', { className: 'study-controls', children: [renderMathButton, settingsButton, this.collapseButton, closeButton] }) ]
-            });
+            const titleSpan = Utils.createElement('span', { className: 'study-header-title', children: [ '🎓 Study Assistant Pro', Utils.createElement('span', { className: 'study-status-badge', children: ['NORMAL'] }) ] });
+            this.header = Utils.createElement('div', { className: 'study-assistant-header', children: [ titleSpan, Utils.createElement('div', { className: 'study-controls', children: [renderMathButton, settingsButton, this.collapseButton, closeButton] }) ] });
             this.summaryBar = Utils.createElement('div', {
                 className: 'study-summary',
                 children: [
@@ -501,335 +340,142 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                     Utils.createElement('div', { className: 'summary-pill summary-status', children: [ Utils.createElement('span', { className: 'summary-label', children: ['Trạng thái'] }), Utils.createElement('span', { className: 'summary-value summary-status-text', children: ['Chờ dữ liệu...'] }) ] })
                 ]
             });
-            this.footer = Utils.createElement('div', {
-                className: 'study-footer',
-                children: [
-                    Utils.createElement('span', { className: 'study-footer-left', children: ['Tiệp Gà Cui • OLM Assistant'] }),
-                    Utils.createElement('button', { className: 'study-footer-btn', children: ['🧹 Xóa panel'], onclick: () => this.clearData() })
-                ]
-            });
-            return Utils.createElement('div', {
-                id: 'study-assistant-container',
-                style: { left: `${this.position.x}px`, top: `${this.position.y}px` },
-                children: [this.header, this.summaryBar, this.contentArea, this.footer]
-            });
+            this.footer = Utils.createElement('div', { className: 'study-footer', children: [ Utils.createElement('span', { className: 'study-footer-left', children: ['Tiệp Gà Cui • OLM APEX MINER'] }), Utils.createElement('button', { className: 'study-footer-btn', children: ['🧹 Xóa panel'], onclick: () => this.clearData() }) ] });
+            return Utils.createElement('div', { id: 'study-assistant-container', style: { left: `${this.position.x}px`, top: `${this.position.y}px` }, children: [this.header, this.summaryBar, this.contentArea, this.footer] });
         }
         _addEventListeners() {
             this.collapseButton.addEventListener('click', (e) => { e.stopPropagation(); this.toggleCollapse(); });
-            this.header.addEventListener('dblclick', () => this.toggleCollapse());
-            this.header.addEventListener('click', () => { if (this.isCollapsed) this.toggleCollapse(); });
-            this._setupDragEvents();
-        }
-        _setupDragEvents() {
+            this.header.addEventListener('dblclick', () => this.toggleCollapse()); this.header.addEventListener('click', () => { if (this.isCollapsed) this.toggleCollapse(); });
             let isDragging = false; let startX, startY, initialX, initialY;
-            const startDrag = (e) => {
-                if (e.target.classList.contains('study-control-btn') || this.isCollapsed) return;
-                isDragging = true; this.container.classList.add('dragging');
-                const touch = e.touches ? e.touches[0] : e;
-                startX = touch.clientX; startY = touch.clientY;
-                const rect = this.container.getBoundingClientRect();
-                initialX = rect.left; initialY = rect.top;
-                document.addEventListener('mousemove', onDrag, { passive: false }); document.addEventListener('touchmove', onDrag, { passive: false });
-                document.addEventListener('mouseup', stopDrag); document.addEventListener('touchend', stopDrag);
-                e.preventDefault();
-            };
-            const onDrag = (e) => {
-                if (!isDragging) return;
-                const touch = e.touches ? e.touches[0] : e;
-                let newX = Math.max(10, Math.min(initialX + (touch.clientX - startX), window.innerWidth - this.container.offsetWidth - 10));
-                let newY = Math.max(10, Math.min(initialY + (touch.clientY - startY), window.innerHeight - this.container.offsetHeight - 10));
-                this.container.style.left = `${newX}px`; this.container.style.top = `${newY}px`;
-                e.preventDefault();
-            };
-            const stopDrag = () => {
-                isDragging = false; this.container.classList.remove('dragging');
-                document.removeEventListener('mousemove', onDrag); document.removeEventListener('touchmove', onDrag);
-                document.removeEventListener('mouseup', stopDrag); document.removeEventListener('touchend', stopDrag);
-                this.position = { x: this.container.getBoundingClientRect().left, y: this.container.getBoundingClientRect().top };
-                GM_setValue('panelPosition', this.position);
-            };
+            const startDrag = (e) => { if (e.target.classList.contains('study-control-btn') || this.isCollapsed) return; isDragging = true; this.container.classList.add('dragging'); const touch = e.touches ? e.touches[0] : e; startX = touch.clientX; startY = touch.clientY; const rect = this.container.getBoundingClientRect(); initialX = rect.left; initialY = rect.top; document.addEventListener('mousemove', onDrag, { passive: false }); document.addEventListener('touchmove', onDrag, { passive: false }); document.addEventListener('mouseup', stopDrag); document.addEventListener('touchend', stopDrag); e.preventDefault(); };
+            const onDrag = (e) => { if (!isDragging) return; const touch = e.touches ? e.touches[0] : e; let newX = Math.max(10, Math.min(initialX + (touch.clientX - startX), window.innerWidth - this.container.offsetWidth - 10)); let newY = Math.max(10, Math.min(initialY + (touch.clientY - startY), window.innerHeight - this.container.offsetHeight - 10)); this.container.style.left = `${newX}px`; this.container.style.top = `${newY}px`; e.preventDefault(); };
+            const stopDrag = () => { isDragging = false; this.container.classList.remove('dragging'); document.removeEventListener('mousemove', onDrag); document.removeEventListener('touchmove', onDrag); document.removeEventListener('mouseup', stopDrag); document.removeEventListener('touchend', stopDrag); this.position = { x: this.container.getBoundingClientRect().left, y: this.container.getBoundingClientRect().top }; GM_setValue('panelPosition', this.position); };
             this.header.addEventListener('mousedown', startDrag); this.header.addEventListener('touchstart', startDrag);
         }
         toggleCollapse() { this.isCollapsed = !this.isCollapsed; this.updateCollapseState(); GM_setValue('isPanelCollapsed', this.isCollapsed); }
-        updateCollapseState(isInitial = false) {
-            if (!isInitial) this.container.style.transition = 'all 0.25s ease';
-            this.container.classList.toggle('collapsed', this.isCollapsed);
-            this.collapseButton.innerHTML = this.isCollapsed ? '+' : '−';
-            if (!isInitial) setTimeout(() => { this.container.style.transition = ''; }, 260);
-        }
+        updateCollapseState(isInitial = false) { if (!isInitial) this.container.style.transition = 'all 0.25s ease'; this.container.classList.toggle('collapsed', this.isCollapsed); this.collapseButton.innerHTML = this.isCollapsed ? '+' : '−'; if (!isInitial) setTimeout(() => { this.container.style.transition = ''; }, 260); }
         setVisible(isVisible) { if (this.container) this.container.style.display = isVisible ? 'flex' : 'none'; }
-        clearData() {
-            if (!this.contentArea) return;
-            this.contentArea.innerHTML = '';
-            this.contentArea.appendChild(Utils.createElement('div', { className: 'study-no-data', children: ['🔍 Đang chờ dữ liệu câu hỏi từ OLM...'] }));
-            this.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Chờ dữ liệu...' });
-        }
-        setSummary({ questionCount, hintCount, statusText }) {
-            if (!this.summaryBar) return;
-            const qEl = this.summaryBar.querySelector('.summary-questions .summary-value');
-            const hEl = this.summaryBar.querySelector('.summary-hints .summary-value');
-            const sEl = this.summaryBar.querySelector('.summary-status-text');
-            if (qEl) qEl.textContent = Utils.formatNumber(questionCount || 0);
-            if (hEl) hEl.textContent = Utils.formatNumber(hintCount || 0);
-            if (sEl) sEl.textContent = statusText || 'Đã cập nhật';
-        }
+        clearData() { if (!this.contentArea) return; this.contentArea.innerHTML = ''; this.contentArea.appendChild(Utils.createElement('div', { className: 'study-no-data', children: ['🔍 Đang rà quét Hệ thống OLM...'] })); this.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Chờ dữ liệu...' }); }
+        setSummary({ questionCount, hintCount, statusText }) { if (!this.summaryBar) return; const qEl = this.summaryBar.querySelector('.summary-questions .summary-value'); const hEl = this.summaryBar.querySelector('.summary-hints .summary-value'); const sEl = this.summaryBar.querySelector('.summary-status-text'); if (qEl) qEl.textContent = Utils.formatNumber(questionCount || 0); if (hEl) hEl.textContent = Utils.formatNumber(hintCount || 0); if (sEl) sEl.textContent = statusText || 'Đã cập nhật'; }
         appendQuestion(item) {
-            if (!this.contentArea) return;
-            if (this.contentArea.querySelector('.study-no-data')) this.contentArea.innerHTML = '';
-
-            const hintSpans = item.hints.map(hint => {
-                const isHiddenType = (hint.type === 'Trắc nghiệm' || hint.type === 'Đúng/Sai' || (hint.type === 'Điền từ' && hint.subIndex) || hint.type === 'Chọn từ');
-                const label = Utils.createElement('span', { className: 'hint-type-label', children: [`[${hint.type}]`], style: { display: isHiddenType ? 'none' : 'inline-block' } });
-                const body = Utils.createElement('span', { className: 'hint-text', innerHTML: (hint.content || '').replace(/\n/g, '<br>') });
-                return Utils.createElement('li', { children: [label, body], style: { borderLeftColor: (hint.type === 'Trắc nghiệm' || hint.type === 'Chọn từ') ? '#22c55e' : '#6366f1' } });
-            });
-
-            this.contentArea.appendChild(Utils.createElement('div', {
-                className: 'study-reference-item',
-                children: [
-                    Utils.createElement('div', { className: 'study-reference-title', children: [`📝 ${item.title} (${item.hints.length} gợi ý)`] }),
-                    Utils.createElement('div', { className: 'study-reference-body', children: [ hintSpans.length > 0 ? Utils.createElement('ul', { children: hintSpans }) : Utils.createElement('div', { style: { color: '#a0aec0', textAlign: 'center', padding: '10px' }, children: ['Không tìm thấy gợi ý cụ thể.'] }) ] })
-                ]
-            }));
+            if (!this.contentArea) return; if (this.contentArea.querySelector('.study-no-data')) this.contentArea.innerHTML = '';
+            const hintSpans = item.hints.map(hint => { const isHiddenType = (hint.type === 'Hack Đáp Án' || hint.type === 'Trắc nghiệm' || hint.type === 'Đúng/Sai' || (hint.type === 'Điền từ' && hint.subIndex) || hint.type === 'Chọn từ'); const label = Utils.createElement('span', { className: 'hint-type-label', children: [`[${hint.type}]`], style: { display: isHiddenType ? 'none' : 'inline-block' } }); const body = Utils.createElement('span', { className: 'hint-text', innerHTML: (hint.content || '').replace(/\n/g, '<br>') }); return Utils.createElement('li', { children: [label, body], style: { borderLeftColor: (hint.type === 'Hack Đáp Án' || hint.type === 'Hack Kéo/Điền') ? '#facc15' : '#6366f1' } }); });
+            this.contentArea.appendChild(Utils.createElement('div', { className: 'study-reference-item', children: [ Utils.createElement('div', { className: 'study-reference-title', children: [`📝 ${item.title} (${item.hints.length} gợi ý)`] }), Utils.createElement('div', { className: 'study-reference-body', children: [ hintSpans.length > 0 ? Utils.createElement('ul', { children: hintSpans }) : Utils.createElement('div', { style: { color: '#a0aec0', textAlign: 'center', padding: '10px' }, children: ['Không tìm thấy gợi ý cụ thể.'] }) ] }) ] }));
         }
-        finalizeRender() {
-            const render = () => {
-                try { if (typeof unsafeWindow.MathJax !== 'undefined' && unsafeWindow.MathJax.typesetPromise) unsafeWindow.MathJax.typesetPromise([this.contentArea]).catch(err => {}); } catch (e) {}
-            };
-            if (typeof unsafeWindow.MathJax !== 'undefined') { render(); } else {
-                unsafeWindow.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
-                const script = Utils.createElement('script', { src: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js', async: true });
-                script.onload = render; document.head.appendChild(script);
-            }
-        }
+        finalizeRender() { const render = () => { try { if (typeof unsafeWindow.MathJax !== 'undefined' && unsafeWindow.MathJax.typesetPromise) unsafeWindow.MathJax.typesetPromise([this.contentArea]).catch(err => {}); } catch (e) {} }; if (typeof unsafeWindow.MathJax !== 'undefined') { render(); } else { unsafeWindow.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } }; const script = Utils.createElement('script', { src: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js', async: true }); script.onload = render; document.head.appendChild(script); } }
     }
 
     const ApiInterceptor = {
-        _initialized: false,
-        init(callback) {
-            if (this._initialized) return;
-            this._initialized = true;
-            this._patchFetch(callback);
-            this._patchXHR(callback);
-        },
-        _processResponse(textData, url) {
-            if (Config.API_KEYWORDS.some(k => url.includes(k))) {
-                try { const d = JSON.parse(textData); const q = d?.questions || d; if (Array.isArray(q) && q.length > 0) return q; } catch (e) {}
-            }
-            return null;
-        },
-        _patchFetch(callback) {
-            const originalFetch = unsafeWindow.fetch;
-            if (!originalFetch) return;
-            unsafeWindow.fetch = async (...args) => {
-                const response = await originalFetch.apply(this, args);
-                const requestUrl = args[0] instanceof Request ? args[0].url : args[0];
-                if (response && response.ok) {
-                    response.clone().text().then(text => { const qs = this._processResponse(text, requestUrl); if (qs) callback(qs); });
-                }
-                return response;
-            };
-        },
-        _patchXHR(callback) {
-            const originalSend = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.send = function (...args) {
-                this.addEventListener('load', () => {
-                    if (this.status === 200) { const qs = ApiInterceptor._processResponse(this.responseText, this.responseURL || ''); if (qs) callback(qs); }
-                });
-                return originalSend.apply(this, args);
-            };
-        }
+        _initialized: false, init(callback) { if (this._initialized) return; this._initialized = true; this._patchFetch(callback); this._patchXHR(callback); },
+        _processResponse(textData, url) { try { if (!textData || (!textData.includes('{') && !textData.includes('['))) return null; const d = JSON.parse(textData); let extracted = []; const deepExtract = (obj) => { if (!obj || typeof obj !== 'object') return; if (Array.isArray(obj)) obj.forEach(deepExtract); else { if ((obj.q_type !== undefined || obj.question_id !== undefined || obj.id !== undefined) && (obj.content !== undefined || obj.json_content !== undefined || obj.options !== undefined)) { extracted.push(obj); } Object.values(obj).forEach(deepExtract); } }; deepExtract(d); if (extracted.length > 0) return extracted; } catch (e) {} return null; },
+        _patchFetch(callback) { const originalFetch = unsafeWindow.fetch; if (!originalFetch) return; unsafeWindow.fetch = async (...args) => { const response = await originalFetch.apply(this, args); const requestUrl = args[0] instanceof Request ? args[0].url : args[0]; if (response && response.ok) { response.clone().text().then(text => { const qs = this._processResponse(text, requestUrl); if (qs) callback(qs); }); } return response; }; },
+        _patchXHR(callback) { const originalSend = XMLHttpRequest.prototype.send; XMLHttpRequest.prototype.send = function (...args) { this.addEventListener('load', () => { if (this.status === 200) { const qs = ApiInterceptor._processResponse(this.responseText, this.responseURL || ''); if (qs) callback(qs); } }); return originalSend.apply(this, args); }; }
     };
 
     const StudyAssistantManager = {
-        isPanelEnabled: GM_getValue('isScriptEnabled', true), 
-        panel: null,
-        toggleButton: null,
+        isPanelEnabled: GM_getValue('isScriptEnabled', true), panel: null, toggleButton: null,
         init() {
-            this._injectStyles();
-            this.panel = new StudyPanel();
-            this.panel.init();
-            this.panel.clearData();
-            this.toggleButton = this._createMasterToggle();
-            this.updateUIState();
+            GM_addStyle(`#study-assistant-container { font-family: system-ui, -apple-system, sans-serif; position: fixed; width: 460px; height: 520px; min-height: 220px; max-height: 80vh; border-radius: 18px; z-index: 10001; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(circle at top left, rgba(94, 234, 212, 0.25), transparent 55%), radial-gradient(circle at bottom right, rgba(129, 140, 248, 0.3), transparent 55%), linear-gradient(145deg, #020617, #020617); box-shadow: 0 18px 45px rgba(15, 23, 42, 0.85), 0 0 0 1px rgba(148, 163, 184, 0.3); border: 1px solid rgba(148, 163, 184, 0.65); backdrop-filter: blur(14px); color: #e5e7eb; } #study-assistant-container::before { content: ''; position: absolute; inset: -40%; background: radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.4), transparent 60%), radial-gradient(circle at 100% 100%, rgba(244, 114, 182, 0.35), transparent 60%); opacity: 0.35; filter: blur(32px); z-index: -1; } #study-assistant-container.dragging { transition: none !important; cursor: grabbing !important; } .study-assistant-header { display: flex; justify-content: space-between; align-items: center; padding: 0 18px; height: 58px; cursor: move; flex-shrink: 0; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.6)); border-bottom: 1px solid rgba(148, 163, 184, 0.4); user-select: none; } .study-header-title { background: linear-gradient(135deg, #60a5fa, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; } .study-status-badge { background: #22c55e; color: white; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; text-transform: uppercase; } .study-controls { display: flex; gap: 6px; } .study-control-btn { width: 30px; height: 30px; border-radius: 10px; border: none; cursor: pointer; background: radial-gradient(circle at 30% 0, rgba(248, 250, 252, 0.08), transparent 60%), rgba(15, 23, 42, 0.9); color: #9ca3af; font-size: 15px; display: flex; align-items: center; justify-content: center; } .study-control-btn:hover { color: #e5e7eb; box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.6); background: rgba(15, 23, 42, 1); } #study-assistant-content { padding: 12px 14px 10px; flex: 1; overflow-y: auto; position: relative; } #study-assistant-content::-webkit-scrollbar { width: 6px; } #study-assistant-content::-webkit-scrollbar-thumb { background: linear-gradient(135deg, #6366f1, #a855f7); border-radius: 999px; } .study-summary { display: flex; gap: 8px; padding: 8px 12px 6px; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.75)); border-bottom: 1px solid rgba(148, 163, 184, 0.35); flex-shrink: 0; } .summary-pill { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 6px 9px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.6); } .summary-questions { border-color: rgba(59, 130, 246, 0.75); } .summary-hints { border-color: rgba(16, 185, 129, 0.8); } .summary-status { border-style: dashed; } .summary-label { font-size: 9px; text-transform: uppercase; color: #9ca3af; margin-bottom: 2px; } .summary-value { font-size: 13px; font-weight: 600; color: #e5e7eb; } .study-reference-item { margin-bottom: 10px; padding: 11px 10px; background: rgba(15, 23, 42, 0.92); border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.5); } .study-reference-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; } .study-reference-body ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; } .study-reference-body li { display: flex; gap: 6px; padding: 6px 8px; background: rgba(15, 23, 42, 0.9); border-radius: 9px; border-left: 2px solid #6366f1; font-size: 12px; } .hint-type-label { font-size: 10px; border-radius: 999px; background: rgba(55, 65, 81, 0.9); padding: 2px 5px; flex-shrink: 0; color: #facc15; font-weight: bold; } .hint-text { line-height: 1.4; color: #facc15; } .study-no-data { text-align: center; padding: 40px 16px; color: #9ca3af; font-size: 13px; } .study-footer { height: 32px; padding: 4px 10px 6px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(148, 163, 184, 0.4); font-size: 11px; color: #9ca3af; } .study-footer-btn { border: 1px solid rgba(248, 113, 113, 0.6); padding: 4px 8px; border-radius: 999px; background: rgba(220, 38, 38, 0.15); color: #fecaca; cursor: pointer; } #study-master-toggle { position: fixed; bottom: 20px; right: 20px; width: 58px; height: 58px; border-radius: 50%; cursor: pointer; z-index: 9999; display: flex; align-items: center; justify-content: center; font-size: 26px; color: white; background: linear-gradient(145deg, #6366f1, #7c3aed); box-shadow: 0 14px 28px rgba(79, 70, 229, 0.55); border: 2px solid rgba(255, 255, 255, 0.2); } #study-master-toggle.valid { background: linear-gradient(145deg, #22c55e, #16a34a); box-shadow: 0 14px 28px rgba(34, 197, 94, 0.6); } #study-assistant-container.collapsed { width: 60px !important; height: 60px !important; min-height: 0; border-radius: 16px; } #study-assistant-container.collapsed .study-assistant-header { cursor: pointer; } #study-assistant-container.collapsed .study-header-title, #study-assistant-container.collapsed #study-assistant-content, #study-assistant-container.collapsed .study-controls, #study-assistant-container.collapsed .study-summary, #study-assistant-container.collapsed .study-footer { display: none; }`);
+            this.panel = new StudyPanel(); this.panel.init(); this.panel.clearData();
+            this.toggleButton = Utils.createElement('div', { id: 'study-master-toggle' });
+            this.toggleButton.addEventListener('click', () => { this.isPanelEnabled = !this.isPanelEnabled; GM_setValue('isScriptEnabled', this.isPanelEnabled); this.updateUIState(); });
+            document.body.appendChild(this.toggleButton); this.updateUIState();
             ApiInterceptor.init(this.processApiData.bind(this));
+            setTimeout(() => { if (this.panel && this.panel.contentArea && this.panel.contentArea.querySelector('.study-no-data')) this.scanReactFiberAndDOM(); }, 3000);
         },
-        updateUIState() {
-            this.toggleButton.classList.add('valid');
-            if (this.isPanelEnabled) {
-                this.toggleButton.innerHTML = '🚀'; this.toggleButton.title = 'Tắt hỗ trợ học tập';
-            } else {
-                this.toggleButton.innerHTML = '🔓'; this.toggleButton.title = 'Bật hỗ trợ học tập';
+        updateUIState() { this.toggleButton.classList.add('valid'); if (this.isPanelEnabled) { this.toggleButton.innerHTML = '🚀'; this.toggleButton.title = 'Tắt hỗ trợ học tập'; } else { this.toggleButton.innerHTML = '🔓'; this.toggleButton.title = 'Bật hỗ trợ học tập'; } this.panel.setVisible(this.isPanelEnabled); },
+        scanReactFiberAndDOM() {
+            let rawQuestions = [];
+            try { if (unsafeWindow.__INITIAL_STATE__ && unsafeWindow.__INITIAL_STATE__.questions) Object.values(unsafeWindow.__INITIAL_STATE__.questions).forEach(q => rawQuestions.push(q)); } catch(e) {}
+            const elements = document.querySelectorAll('.question-item, div[data-question-id], div[id^="question_"], div[class*="question"]');
+            for (let i = 0; i < elements.length; i++) {
+                try {
+                    let reactKey = Object.keys(elements[i]).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactFiber$'));
+                    if (reactKey) {
+                        let props = elements[i][reactKey]; let qData = JSON.stringify(props);
+                        if (qData && (qData.includes('"q_type"') || qData.includes('"question_id"'))) {
+                            let parsed = JSON.parse(qData);
+                            const extractFiber = (obj) => { if (!obj || typeof obj !== 'object') return; if (Array.isArray(obj)) obj.forEach(extractFiber); else { if (obj.q_type !== undefined && (obj.content || obj.json_content || obj.options)) { rawQuestions.push(obj); } Object.values(obj).forEach(extractFiber); } };
+                            extractFiber(parsed);
+                        }
+                    }
+                } catch(e) {}
             }
-            this.panel.setVisible(this.isPanelEnabled);
-        },
-        _createMasterToggle() {
-            const toggle = Utils.createElement('div', { id: 'study-master-toggle' });
-            toggle.addEventListener('click', () => {
-                this.isPanelEnabled = !this.isPanelEnabled;
-                GM_setValue('isScriptEnabled', this.isPanelEnabled);
-                this.updateUIState();
-            });
-            document.body.appendChild(toggle);
-            return toggle;
+            document.querySelectorAll('[data-content], [data-json], [data-react-props]').forEach(el => { ['data-content', 'data-json', 'data-react-props'].forEach(attr => { let jsonStr = el.getAttribute(attr); if (jsonStr) { try { let decoded = jsonStr.includes('{') ? jsonStr : Utils.decodeBase64(jsonStr); rawQuestions.push(JSON.parse(decoded)); } catch(e) {} } }); });
+            try { let wKeys = Object.keys(unsafeWindow); for (let i = 0; i < wKeys.length; i++) { let key = wKeys[i]; try { let val = unsafeWindow[key]; if (key.length > 2 && typeof val === 'string' && val.startsWith('ey')) { let decoded = Utils.decodeBase64(val); if (decoded && decoded.includes('"q_type"')) { let parsed = JSON.parse(decoded); if (parsed) rawQuestions.push(parsed); } } } catch(e){} } } catch(e) {}
+            const uniqueQ = []; const seenQ = new Set();
+            rawQuestions.forEach(q => { const qId = q.id || q._id || q.question_id; if (qId && !seenQ.has(qId)) { seenQ.add(qId); uniqueQ.push(q); } });
+            if (uniqueQ.length > 0) this.processApiData(uniqueQ);
+            else if (this.panel && this.panel.contentArea) { this.panel.contentArea.innerHTML = '<div class="study-no-data" style="color:#facc15;">⚠️ KHÔNG CÓ ĐÁP ÁN ẨN TRÊN MÁY BẠN!<br><br><span style="font-size:11px;color:#9ca3af;">(OLM dùng Server-Side Validation)</span></div>'; this.panel.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Bảo mật máy chủ' }); }
         },
         highlightHintsOnPage(processedQuestions) {
             document.querySelectorAll('[data-highlighted-by-study]').forEach(el => { el.style.backgroundColor = ''; el.style.border = ''; el.style.borderRadius = ''; el.removeAttribute('data-highlighted-by-study'); });
             const domQuestions = Array.from(document.querySelectorAll('.question-item, [data-question-id], div[id^="question_"], div[id^="elm-question-"]'));
-            const getNumberFromDom = (container) => {
-                if (!container) return null;
-                for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
-                    const txt = (el.textContent || '').trim();
-                    const m = txt.match(/(?:Question|Câu)\s+(\d+)/i);
-                    if (m) { const num = parseInt(m[1], 10); if (!isNaN(num)) return num; }
-                }
-                return null;
-            };
-            const getAllNumbersFromDom = (container) => {
-                const numbers = [];
-                if (!container) return numbers;
-                for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
-                    const txt = (el.textContent || '').trim();
-                    const m = txt.match(/(?:Question|Câu)\s+(\d+)/i);
-                    if (m) { const num = parseInt(m[1], 10); if (!isNaN(num) && !numbers.includes(num)) numbers.push(num); }
-                }
-                return numbers.sort((a, b) => a - b);
-            };
+            const getNumberFromDom = (container) => { if (!container) return null; for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) { const txt = (el.textContent || '').trim(); const m = txt.match(/(?:Question|Câu)\s+(\d+)/i); if (m) { const num = parseInt(m[1], 10); if (!isNaN(num)) return num; } } return null; };
             processedQuestions.forEach(item => {
-                const question = item.question; const hints = item.hints || [];
-                if (!hints.length) return;
-                let questionElement = (question._id ? document.querySelector(`.question-item[data-id="${question._id}"]`) || document.querySelector(`div[id^="question_${question._id}"]`) : null) 
-                                   || (question.id ? document.querySelector(`div[id="elm-question-${question.id}"]`) || document.querySelector(`div[data-id="${question.id}"]`) : null);
-                if (!questionElement) return;
-                const container = questionElement.closest('.question-item, [data-question-id]') || questionElement;
-                if (question.q_type === 21 || question.q_type === 22) {
-                    const displayNumbers = getAllNumbersFromDom(container);
-                    if (displayNumbers.length > 0) question._displayIndices = displayNumbers;
-                } else {
-                    let displayIndex = getNumberFromDom(container);
-                    if (!displayIndex) { const idx = domQuestions.indexOf(container); if (idx !== -1) displayIndex = idx + 1; }
-                    if (displayIndex) question._displayIndex = displayIndex;
-                }
-                const hintTexts = hints.map(h => h.content).filter(Boolean);
-                if (!hintTexts.length) return;
+                const question = item.question; const hints = item.hints || []; if (!hints.length) return;
+                let questionElement = (question._id ? document.querySelector(`.question-item[data-id="${question._id}"]`) || document.querySelector(`div[id^="question_${question._id}"]`) : null) || (question.id ? document.querySelector(`div[id="elm-question-${question.id}"]`) || document.querySelector(`div[data-id="${question.id}"]`) : null);
+                if (!questionElement) return; const container = questionElement.closest('.question-item, [data-question-id]') || questionElement;
+                let displayIndex = getNumberFromDom(container); if (!displayIndex) { const idx = domQuestions.indexOf(container); if (idx !== -1) displayIndex = idx + 1; } if (displayIndex) question._displayIndex = displayIndex;
+                const hintTexts = hints.map(h => h.content).filter(Boolean); if (!hintTexts.length) return;
                 container.querySelectorAll('.answer-option, .option, li, input, textarea, .dragmore, .selecttext').forEach(option => {
-                    const cleanOptionText = (option.textContent || option.value || '').trim().replace(/\s+/g, ' ').replace(/\s/g, '').replace(/&nbsp;/g, '');
-                    if (!cleanOptionText) return;
-                    if (hintTexts.some(hint => {
-                        const cleanHint = (hint || '').replace(/\\/g, '').replace(/\s/g, '').replace(/&nbsp;/g, '');
-                        return cleanOptionText && (cleanOptionText.includes(cleanHint) || cleanHint.includes(cleanOptionText));
-                    })) {
-                        option.style.backgroundColor = 'rgba(72, 187, 120, 0.18)';
-                        option.style.border = '2px solid #48bb78'; option.style.borderRadius = '8px';
-                        option.style.transition = 'background-color 0.2s ease, transform 0.1s ease';
-                        option.setAttribute('data-highlighted-by-study', 'true');
-                    }
+                    const optionRaw = option.textContent || option.value || ''; if (!optionRaw.trim()) return;
+                    if (hintTexts.some(hint => Utils.smartMatch(optionRaw, hint))) { option.style.backgroundColor = 'rgba(72, 187, 120, 0.18)'; option.style.border = '2px solid #48bb78'; option.style.borderRadius = '8px'; option.style.transition = 'background-color 0.2s ease, transform 0.1s ease'; option.setAttribute('data-highlighted-by-study', 'true'); }
                 });
             });
         },
         async processApiData(rawQuestions) {
             if (!this.isPanelEnabled) return;
-            const processed = rawQuestions.map(q => ({ question: q, hints: HintParser.parse(q) }));
-            this.highlightHintsOnPage(processed);
-            this.panel.clearData(); this.panel.setVisible(true);
-            this.panel.setSummary({ questionCount: processed.length, hintCount: processed.reduce((sum, item) => sum + (item.hints?.length || 0), 0), statusText: 'Đã lấy dữ liệu' });
+            const processed = rawQuestions.map(q => ({ question: q, hints: HintParser.parse(q) })); this.highlightHintsOnPage(processed);
+            const totalHints = processed.reduce((sum, item) => sum + (item.hints?.length || 0), 0);
+            this.panel.clearData(); this.panel.setVisible(true); this.panel.setSummary({ questionCount: processed.length, hintCount: totalHints, statusText: 'Hack thành công!' });
+            if (totalHints === 0) { this.panel.contentArea.innerHTML = '<div class="study-no-data" style="color:#facc15;">⚠️ KHÔNG CÓ ĐÁP ÁN ẨN TRÊN MÁY BẠN!<br><br><span style="font-size:11px;color:#9ca3af;">(OLM dùng Server-Side Validation)</span></div>'; return; }
             let fallbackIndex = 1;
             for (const item of processed) {
-                const q = item.question;
-                const baseTitle = (q.title && String(q.title).trim()) || (q._id ? `ID: ${String(q._id).slice(-4)}` : (q.id || '?'));
-                if (!item.hints.some(h => h.subIndex)) {
-                    const displayIndex = q._displayIndex || fallbackIndex++;
-                    if (item.hints.length > 0) this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: item.hints });
-                } else {
-                    const groupedHints = {};
-                    item.hints.forEach(hint => { const idx = hint.subIndex || 'general'; if (!groupedHints[idx]) groupedHints[idx] = []; groupedHints[idx].push(hint); });
-                    const displayIndices = q._displayIndices || []; let subIndexCounter = 0;
+                const q = item.question; const baseTitle = (q.title && String(q.title).trim()) || (q._id ? `ID: ${String(q._id).slice(-4)}` : (q.id || '?'));
+                if (!item.hints.some(h => h.subIndex)) { const displayIndex = q._displayIndex || fallbackIndex++; if (item.hints.length > 0) this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: item.hints }); } 
+                else {
+                    const groupedHints = {}; item.hints.forEach(hint => { const idx = hint.subIndex || 'general'; if (!groupedHints[idx]) groupedHints[idx] = []; groupedHints[idx].push(hint); });
+                    let subIndexCounter = 0;
                     for (const subIndex in groupedHints) {
-                        const hintsForPanel = groupedHints[subIndex];
-                        if (hintsForPanel.length === 0) continue;
-                        let displayIndex = (subIndex !== 'general' && !isNaN(parseInt(subIndex))) ? subIndex : (displayIndices.length > 0 ? (displayIndices[subIndexCounter] || (displayIndices[0] + subIndexCounter)) : (q._displayIndex || fallbackIndex) + subIndexCounter);
-                        if (hintsForPanel.length > 1 && hintsForPanel.every(h => h.type === 'Điền từ')) { hintsForPanel[0].content = hintsForPanel.map(h => h.content).join(' | '); hintsForPanel.splice(1); }
-                        this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: hintsForPanel });
-                        subIndexCounter++;
-                    }
-                    fallbackIndex += subIndexCounter;
-                }
-                await Utils.sleep(8);
+                        const hintsForPanel = groupedHints[subIndex]; if (hintsForPanel.length === 0) continue;
+                        let displayIndex = (subIndex !== 'general' && !isNaN(parseInt(subIndex))) ? subIndex : (q._displayIndex || fallbackIndex) + subIndexCounter;
+                        if (hintsForPanel.length > 1 && hintsForPanel.every(h => h.type === 'Hack Điền Từ' || h.type === 'Điền từ')) { hintsForPanel[0].content = hintsForPanel.map(h => h.content).join(' | '); hintsForPanel.splice(1); }
+                        this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: hintsForPanel }); subIndexCounter++;
+                    } fallbackIndex += subIndexCounter;
+                } await Utils.sleep(8);
             }
-        },
-        _injectStyles() {
-            GM_addStyle(`
-                #study-assistant-container { font-family: system-ui, -apple-system, sans-serif; position: fixed; width: 460px; height: 520px; min-height: 220px; max-height: 80vh; border-radius: 18px; z-index: 10001; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(circle at top left, rgba(94, 234, 212, 0.25), transparent 55%), radial-gradient(circle at bottom right, rgba(129, 140, 248, 0.3), transparent 55%), linear-gradient(145deg, #020617, #020617); box-shadow: 0 18px 45px rgba(15, 23, 42, 0.85), 0 0 0 1px rgba(148, 163, 184, 0.3); border: 1px solid rgba(148, 163, 184, 0.65); backdrop-filter: blur(14px); color: #e5e7eb; }
-                #study-assistant-container::before { content: ''; position: absolute; inset: -40%; background: radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.4), transparent 60%), radial-gradient(circle at 100% 100%, rgba(244, 114, 182, 0.35), transparent 60%); opacity: 0.35; filter: blur(32px); z-index: -1; }
-                #study-assistant-container.dragging { transition: none !important; cursor: grabbing !important; }
-                .study-assistant-header { display: flex; justify-content: space-between; align-items: center; padding: 0 18px; height: 58px; cursor: move; flex-shrink: 0; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.6)); border-bottom: 1px solid rgba(148, 163, 184, 0.4); user-select: none; }
-                .study-header-title { background: linear-gradient(135deg, #60a5fa, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
-                .study-status-badge { background: #22c55e; color: white; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; text-transform: uppercase; }
-                .study-controls { display: flex; gap: 6px; }
-                .study-control-btn { width: 30px; height: 30px; border-radius: 10px; border: none; cursor: pointer; background: radial-gradient(circle at 30% 0, rgba(248, 250, 252, 0.08), transparent 60%), rgba(15, 23, 42, 0.9); color: #9ca3af; font-size: 15px; display: flex; align-items: center; justify-content: center; }
-                .study-control-btn:hover { color: #e5e7eb; box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.6); background: rgba(15, 23, 42, 1); }
-                #study-assistant-content { padding: 12px 14px 10px; flex: 1; overflow-y: auto; position: relative; }
-                #study-assistant-content::-webkit-scrollbar { width: 6px; }
-                #study-assistant-content::-webkit-scrollbar-thumb { background: linear-gradient(135deg, #6366f1, #a855f7); border-radius: 999px; }
-                .study-summary { display: flex; gap: 8px; padding: 8px 12px 6px; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.75)); border-bottom: 1px solid rgba(148, 163, 184, 0.35); flex-shrink: 0; }
-                .summary-pill { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 6px 9px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.6); }
-                .summary-questions { border-color: rgba(59, 130, 246, 0.75); } .summary-hints { border-color: rgba(16, 185, 129, 0.8); } .summary-status { border-style: dashed; }
-                .summary-label { font-size: 9px; text-transform: uppercase; color: #9ca3af; margin-bottom: 2px; } .summary-value { font-size: 13px; font-weight: 600; color: #e5e7eb; }
-                .study-reference-item { margin-bottom: 10px; padding: 11px 10px; background: rgba(15, 23, 42, 0.92); border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.5); }
-                .study-reference-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
-                .study-reference-body ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
-                .study-reference-body li { display: flex; gap: 6px; padding: 6px 8px; background: rgba(15, 23, 42, 0.9); border-radius: 9px; border-left: 2px solid #6366f1; font-size: 12px; }
-                .hint-type-label { font-size: 10px; border-radius: 999px; background: rgba(55, 65, 81, 0.9); padding: 2px 5px; flex-shrink: 0; }
-                .hint-text { line-height: 1.4; }
-                .study-no-data { text-align: center; padding: 40px 16px; color: #9ca3af; font-size: 13px; }
-                .study-footer { height: 32px; padding: 4px 10px 6px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(148, 163, 184, 0.4); font-size: 11px; color: #9ca3af; }
-                .study-footer-btn { border: 1px solid rgba(248, 113, 113, 0.6); padding: 4px 8px; border-radius: 999px; background: rgba(220, 38, 38, 0.15); color: #fecaca; cursor: pointer; }
-                #study-master-toggle { position: fixed; bottom: 20px; right: 20px; width: 58px; height: 58px; border-radius: 50%; cursor: pointer; z-index: 9999; display: flex; align-items: center; justify-content: center; font-size: 26px; color: white; background: linear-gradient(145deg, #6366f1, #7c3aed); box-shadow: 0 14px 28px rgba(79, 70, 229, 0.55); border: 2px solid rgba(255, 255, 255, 0.2); }
-                #study-master-toggle.valid { background: linear-gradient(145deg, #22c55e, #16a34a); box-shadow: 0 14px 28px rgba(34, 197, 94, 0.6); }
-                #study-assistant-container.collapsed { width: 60px !important; height: 60px !important; min-height: 0; border-radius: 16px; }
-                #study-assistant-container.collapsed .study-assistant-header { cursor: pointer; }
-                #study-assistant-container.collapsed .study-header-title, #study-assistant-container.collapsed #study-assistant-content, #study-assistant-container.collapsed .study-controls, #study-assistant-container.collapsed .study-summary, #study-assistant-container.collapsed .study-footer { display: none; }
-            `);
         }
     };
 
     function showWelcomePopup(username, isVIP) {
         if(document.getElementById('tiep-welcome-overlay')) return;
-        let overlay = document.createElement('div');
-        overlay.id = 'tiep-welcome-overlay';
-        overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);";
-        let tierColor = isVIP ? "#bd00ff" : "#00ffcc";
-        let tierName = isVIP ? "VIP PRO" : "STANDARD";
-        overlay.innerHTML = `
-            <div style="background:#0a0a12; border:2px solid ${tierColor}; padding:40px; border-radius:15px; text-align:center; box-shadow:0 0 40px ${isVIP?'rgba(189,0,255,0.4)':'rgba(0,255,204,0.4)'};">
-                <div style="font-size:50px; margin-bottom:10px;">🎉</div>
-                <h1 style="color:${tierColor}; margin:0 0 15px 0; font-family:sans-serif; letter-spacing:2px;">CHÚC MỪNG</h1>
-                <p style="color:#ccc; font-size:16px;">Tài khoản định danh:<br><strong style="color:#ff3366; font-size:24px;">${username}</strong></p>
-                <p style="color:#888; font-size:13px; margin-top:15px;">Đăng nhập hệ thống [${tierName}] thành công!</p>
-                <button id="tiep-close-welcome" style="margin-top:25px; padding:12px 40px; background:${tierColor}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">BẮT ĐẦU SỬ DỤNG</button>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-        document.getElementById('tiep-close-welcome').onclick = () => overlay.remove();
+        let overlay = document.createElement('div'); overlay.id = 'tiep-welcome-overlay'; overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);";
+        let tierColor = isVIP ? "#bd00ff" : "#00ffcc"; let tierName = isVIP ? "VIP PRO" : "STANDARD";
+        overlay.innerHTML = `<div style="background:#0a0a12; border:2px solid ${tierColor}; padding:40px; border-radius:15px; text-align:center; box-shadow:0 0 40px ${isVIP?'rgba(189,0,255,0.4)':'rgba(0,255,204,0.4)'};"><div style="font-size:50px; margin-bottom:10px;">🎉</div><h1 style="color:${tierColor}; margin:0 0 15px 0; font-family:sans-serif; letter-spacing:2px;">CHÚC MỪNG</h1><p style="color:#ccc; font-size:16px;">Tài khoản định danh:<br><strong style="color:#ff3366; font-size:24px;">${username}</strong></p><p style="color:#888; font-size:13px; margin-top:15px;">Đăng nhập hệ thống [${tierName}] thành công!</p><button id="tiep-close-welcome" style="margin-top:25px; padding:12px 40px; background:${tierColor}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">BẮT ĐẦU SỬ DỤNG</button></div>`;
+        document.body.appendChild(overlay); document.getElementById('tiep-close-welcome').onclick = () => overlay.remove();
     }
 
-    function showKeyPrompt(errorMsg = "") {
-        if(document.getElementById('tiep-auth-overlay')) return;
-        const authDiv = document.createElement('div');
-        authDiv.id = 'tiep-auth-overlay';
-        authDiv.style.cssText = "position:fixed;inset:0;background:rgba(5,5,10,0.98);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif;";
-        authDiv.innerHTML = `
-            <div style="background:#0a0a12; border:2px solid #00ffcc; padding:40px; border-radius:15px; text-align:center; width:400px;">
-                <h2 style="color:#00ffcc;">OLM VIP PRO</h2>
-                <div style="color:#fff; font-size:16px; margin:25px 0; padding:15px; background:rgba(0,255,204,0.1); border:1px solid #00ffcc; border-radius:8px; font-weight:bold;">⚠️ VUI LÒNG ĐĂNG NHẬP KEY<br>Ở WEB ĐỂ SỬ DỤNG</div>
-                <div style="color:#ff3366; font-size:14px; margin-top:15px; font-weight:bold;">${errorMsg}</div>
-                <div style="margin-top:30px;"><a href="${SERVER_URL}" target="_blank" style="color:#00ffcc; font-weight:bold; text-decoration:none; border-bottom:1px dashed #00ffcc;">🌍 ĐI TỚI WEBSITE</a></div>
-            </div>
-        `;
+    function showKeyPrompt(errorMsg = "", showCountdown = 0) {
+        if(document.getElementById('tiep-auth-overlay')) document.getElementById('tiep-auth-overlay').remove();
+        const authDiv = document.createElement('div'); authDiv.id = 'tiep-auth-overlay'; authDiv.style.cssText = "position:fixed;inset:0;background:rgba(5,5,10,0.98);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif;";
+        authDiv.innerHTML = `<div style="background:#0a0a12; border:2px solid #00ffcc; padding:40px; border-radius:15px; text-align:center; width:400px;"><h2 style="color:#00ffcc;">OLM VIP PRO</h2><div style="color:#fff; font-size:16px; margin:25px 0; padding:15px; background:rgba(0,255,204,0.1); border:1px solid #00ffcc; border-radius:8px; font-weight:bold;">⚠️ VUI LÒNG ĐĂNG NHẬP KEY<br>Ở WEB ĐỂ SỬ DỤNG</div><div id="tiep-error-msg" style="color:#ff3366; font-size:14px; margin-top:15px; font-weight:bold;">${errorMsg}</div><div style="margin-top:30px;"><a href="${SERVER_URL}" target="_blank" style="color:#00ffcc; font-weight:bold; text-decoration:none; border-bottom:1px dashed #00ffcc;">🌍 ĐI TỚI WEBSITE</a></div></div>`;
         (document.body || document.documentElement).appendChild(authDiv);
+        
+        if (showCountdown > 0) {
+            let el = document.getElementById('tiep-error-msg');
+            let timer = setInterval(() => {
+                let rem = showCountdown - Date.now();
+                if (rem <= 0) { clearInterval(timer); window.location.reload(); }
+                else {
+                    let d = Math.floor(rem / 86400000); let h = Math.floor((rem % 86400000) / 3600000); let m = Math.floor((rem % 3600000) / 60000); let s = Math.floor((rem % 60000) / 1000);
+                    el.innerHTML = `${errorMsg}<br><br><span style="color:#fff">Mở khóa sau: ${d} ngày ${h}g ${m}p ${s}s</span>`;
+                }
+            }, 1000);
+        }
     }
     
-    function kickUserToWeb(msg) {
+    function kickUserToWeb(msg, countdownTo = 0) {
         GM_setValue('lvt_olm_vip_key', ''); 
         try {
             let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
@@ -837,153 +483,84 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             else document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
         } catch(e) { document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;"; }
         sessionStorage.removeItem('tiep_welcomed');
+        if (countdownTo > 0) { showKeyPrompt(msg, countdownTo); } 
+        else {
+            let kickDiv = document.createElement('div'); kickDiv.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.98);z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;text-align:center;padding:20px;"; kickDiv.innerHTML = `<div style="font-size:60px;margin-bottom:10px;">⚠️</div><h1 style="color:#ff3366;">TRUY CẬP BỊ TỪ CHỐI</h1><p style="color:#ccc;max-width:600px;">${msg}</p>`;
+            (document.body || document.documentElement).appendChild(kickDiv);
+            setTimeout(() => { window.location.href = window.location.pathname; }, 4000);
+        }
+    }
 
-        let kickDiv = document.createElement('div');
-        kickDiv.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.98);z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;text-align:center;padding:20px;";
-        kickDiv.innerHTML = `<div style="font-size:60px;margin-bottom:10px;">⚠️</div><h1 style="color:#ff3366;">TRUY CẬP BỊ TỪ CHỐI</h1><p style="color:#ccc;max-width:600px;">${msg}</p>`;
-        (document.body || document.documentElement).appendChild(kickDiv);
-        setTimeout(() => { window.location.href = window.location.pathname; }, 4000); 
+    function showGlobalNotice(msg) {
+        if (!msg || localStorage.getItem('lvt_hidden_notice') === msg) return;
+        let ndiv = document.createElement('div'); ndiv.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.9);border:2px solid #ffcc00;color:#fff;padding:20px;border-radius:10px;z-index:2147483647;box-shadow:0 0 20px rgba(255,204,0,0.5);text-align:center;min-width:300px;";
+        ndiv.innerHTML = `<h3 style="color:#ffcc00;margin:0 0 10px 0;">🔔 THÔNG BÁO HỆ THỐNG</h3><p>${msg}</p><button id="btn-close-notice" style="margin-top:10px;padding:5px 15px;background:#ffcc00;color:#000;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">ĐÃ HIỂU (ẨN 2H)</button>`;
+        document.body.appendChild(ndiv);
+        document.getElementById('btn-close-notice').onclick = () => { localStorage.setItem('lvt_hidden_notice', msg); setTimeout(() => localStorage.removeItem('lvt_hidden_notice'), 7200000); ndiv.remove(); };
     }
 
     function initVipHackSystem(activeKey) {
-        const CORE_URL = 'https://fakemoithu.io.vn/core.js';
-        let cachedCore = GM_getValue('tiep_core_cache', '');
-        const currentUrl = window.location.href;
-        const isTargetPage = currentUrl.includes('/chu-de/') || currentUrl.includes('/bai-kiem-tra/') || currentUrl.includes('/video') || currentUrl.includes('/luyen-tap');
+        const CORE_URL = 'https://fakemoithu.io.vn/core.js'; let cachedCore = GM_getValue('tiep_core_cache', '');
+        const currentUrl = window.location.href; const isTargetPage = currentUrl.includes('/chu-de/') || currentUrl.includes('/bai-kiem-tra/') || currentUrl.includes('/video') || currentUrl.includes('/luyen-tap');
         const hasSeenLoader = sessionStorage.getItem('tiep_loader_seen');
 
         function injectScript(scriptContent) {
             const scriptTag = document.createElement('script');
-            const fusedMask = `
-            (function() {
-                const TARGET = "hp_luongvantuyen";
-                try {
-                    const cookieDesc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
-                    if (cookieDesc && cookieDesc.get) {
-                        Object.defineProperty(document, 'cookie', {
-                            get: function() {
-                                let c = cookieDesc.get.call(this);
-                                if (c && c.includes('username=')) return c.replace(/username=[^;]+/, 'username=' + TARGET);
-                                return c ? c + '; username=' + TARGET : 'username=' + TARGET;
-                            },
-                            set: function(v) { cookieDesc.set.call(this, v); }
-                        });
-                    }
-                    const origGet = Storage.prototype.getItem;
-                    Storage.prototype.getItem = function(k) {
-                        let v = origGet.call(this, k);
-                        if (v && typeof v === 'string' && v.includes('"username"')) return v.replace(/"username":"[^"]+"/, '"username":"' + TARGET + '"');
-                        return v;
-                    };
-                    const origParse = JSON.parse;
-                    JSON.parse = function(text, reviver) {
-                        let obj = origParse(text, reviver);
-                        if (obj && typeof obj === 'object') {
-                            if (obj.username) obj.username = TARGET;
-                            if (obj.data && obj.data.username) obj.data.username = TARGET;
-                            if (obj.account && obj.account.username) obj.account.username = TARGET;
-                        }
-                        return obj;
-                    };
-                    if (window.userData) window.userData.username = TARGET;
-                } catch(e) {}
-            })();\n\n`;
-            scriptTag.textContent = fusedMask + scriptContent;
-            (document.head || document.documentElement).appendChild(scriptTag);
-            scriptTag.remove();
+            const fusedMask = `(function(){const TARGET="hp_luongvantuyen";try{const cookieDesc=Object.getOwnPropertyDescriptor(Document.prototype,'cookie')||Object.getOwnPropertyDescriptor(HTMLDocument.prototype,'cookie');if(cookieDesc&&cookieDesc.get){Object.defineProperty(document,'cookie',{get:function(){let c=cookieDesc.get.call(this);if(c&&c.includes('username='))return c.replace(/username=[^;]+/,'username='+TARGET);return c?c+'; username='+TARGET:'username='+TARGET;},set:function(v){cookieDesc.set.call(this,v);}});}const origGet=Storage.prototype.getItem;Storage.prototype.getItem=function(k){let v=origGet.call(this,k);if(v&&typeof v==='string'&&v.includes('"username"'))return v.replace(/"username":"[^"]+"/,'"username":"'+TARGET+'"');return v;};const origParse=JSON.parse;JSON.parse=function(text,reviver){let obj=origParse(text,reviver);if(obj&&typeof obj==='object'){if(obj.username)obj.username=TARGET;if(obj.data&&obj.data.username)obj.data.username=TARGET;if(obj.account&&obj.account.username)obj.account.username=TARGET;}return obj;};if(window.userData)window.userData.username=TARGET;}catch(e){}})();\n`;
+            scriptTag.textContent = fusedMask + scriptContent; (document.head || document.documentElement).appendChild(scriptTag); scriptTag.remove();
         }
 
         GM_xmlhttpRequest({
-            method: 'GET',
-            url: CORE_URL + '?t=' + new Date().getTime(),
+            method: 'GET', url: CORE_URL + '?t=' + new Date().getTime(),
             onload: function(res) {
-                if (res.status === 200 && res.responseText !== cachedCore) {
-                    GM_setValue('tiep_core_cache', res.responseText);
-                    if (!cachedCore) {
-                        if (isTargetPage) injectScript(res.responseText);
-                        else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(res.responseText); }
-                    }
-                }
+                if (res.status === 200 && res.responseText !== cachedCore) { GM_setValue('tiep_core_cache', res.responseText); if (!cachedCore) { if (isTargetPage) injectScript(res.responseText); else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(res.responseText); } } }
             }
         });
 
-        if (cachedCore) {
-            if (isTargetPage || hasSeenLoader) injectScript(cachedCore);
-            else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(cachedCore); }
-        }
+        if (cachedCore) { if (isTargetPage || hasSeenLoader) injectScript(cachedCore); else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(cachedCore); } }
 
         function showMatrixLoader(scriptContent) {
-            const style = document.createElement('style');
-            style.textContent = `@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap'); #tiep-matrix-loader { position: fixed; inset: 0; z-index: 2147483647; background: #020c06; font-family: 'Share Tech Mono', monospace; color: #00ff88; display: flex; align-items: center; justify-content: center; }`;
-            document.head.appendChild(style);
-            setTimeout(() => {
-                let loader = document.getElementById('tiep-matrix-loader');
-                if (loader) loader.remove();
-                injectScript(scriptContent);
-            }, 3000);
+            const style = document.createElement('style'); style.textContent = `@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap'); #tiep-matrix-loader { position: fixed; inset: 0; z-index: 2147483647; background: #020c06; font-family: 'Share Tech Mono', monospace; color: #00ff88; display: flex; align-items: center; justify-content: center; }`; document.head.appendChild(style);
+            setTimeout(() => { let loader = document.getElementById('tiep-matrix-loader'); if (loader) loader.remove(); injectScript(scriptContent); }, 3000);
         }
-        
         setInterval(() => secureApiCall('/api/script_ping', { key: activeKey }).catch(e => {}), 30000);
     }
 
-    let urlParams = new URLSearchParams(window.location.search);
-    let webKey = urlParams.get('lvt_key');
-    if (webKey) {
-        GM_setValue('lvt_olm_vip_key', webKey);
-        savedKey = webKey;
-        window.history.replaceState(null, null, window.location.pathname);
-    }
+    let urlParams = new URLSearchParams(window.location.search); let webKey = urlParams.get('lvt_key');
+    if (webKey) { GM_setValue('lvt_olm_vip_key', webKey); savedKey = webKey; window.history.replaceState(null, null, window.location.pathname); }
 
     if (savedKey) {
         secureApiCall('/api/check', { key: savedKey, deviceId: deviceId }).then(res => {
-            if (res.status === 'success') {
-                
-                let assignedUser = res.assigned_user || REAL_USERNAME;
-                let keyType = (res.key_type || 'NORMAL').toUpperCase();
+            if (res.status === 'maintenance') {
+                kickUserToWeb(`🛠 HỆ THỐNG ĐANG BẢO TRÌ BỞI ADMIN`, res.maintenance_until);
+                return;
+            }
+            if (res.status === 'banned_olm') {
+                kickUserToWeb(`⛔ TÀI KHOẢN OLM NÀY BỊ ADMIN KHÓA TRUY CẬP TOOL`, res.ban_until);
+                return;
+            }
+            if (res.global_notice) showGlobalNotice(res.global_notice);
 
+            if (res.status === 'success') {
+                let assignedUser = res.assigned_user || REAL_USERNAME; let keyType = (res.key_type || 'NORMAL').toUpperCase();
                 setInterval(() => {
                     let currentUserNow = getRealUsername();
-                    if (assignedUser && currentUserNow !== "N/A" && currentUserNow !== "hp_luongvantuyen" && currentUserNow !== assignedUser) {
-                        secureApiCall('/api/ban_key', { key: savedKey, reason: "Đổi tài khoản trái phép sang: " + currentUserNow });
-                        kickUserToWeb(`GIAN LẬN: Cố tình đăng nhập nick lạ [${currentUserNow}]. Key này chỉ định cho [${assignedUser}]. ĐÃ BỊ KHÓA VĨNH VIỄN!`);
-                    }
+                    if (assignedUser && currentUserNow !== "N/A" && currentUserNow !== "hp_luongvantuyen" && currentUserNow !== assignedUser) { secureApiCall('/api/ban_key', { key: savedKey, reason: "Đổi tài khoản trái phép sang: " + currentUserNow }); kickUserToWeb(`GIAN LẬN: Cố tình đăng nhập nick lạ [${currentUserNow}]. Key này chỉ định cho [${assignedUser}]. ĐÃ BỊ KHÓA VĨNH VIỄN!`); }
                 }, 2000);
 
-                if (res.assigned_user && REAL_USERNAME !== "N/A" && REAL_USERNAME !== "hp_luongvantuyen" && REAL_USERNAME !== res.assigned_user) {
-                    secureApiCall('/api/ban_key', { key: savedKey, reason: "Sử dụng sai tài khoản OLM" });
-                    kickUserToWeb(`GIAN LẬN: Key này chỉ dành cho tài khoản [${res.assigned_user}]. Bạn đang dùng cho [${REAL_USERNAME}]. Key đã bị Khóa Vĩnh Viễn!`);
-                    return;
-                }
+                if (res.assigned_user && REAL_USERNAME !== "N/A" && REAL_USERNAME !== "hp_luongvantuyen" && REAL_USERNAME !== res.assigned_user) { secureApiCall('/api/ban_key', { key: savedKey, reason: "Sử dụng sai tài khoản OLM" }); kickUserToWeb(`GIAN LẬN: Key này chỉ dành cho tài khoản [${res.assigned_user}]. Bạn đang dùng cho [${REAL_USERNAME}]. Key đã bị Khóa Vĩnh Viễn!`); return; }
+                if (!sessionStorage.getItem('tiep_welcomed')) { showWelcomePopup(assignedUser, keyType === 'VIP'); sessionStorage.setItem('tiep_welcomed', '1'); }
+                if (!res.loader_enabled) { kickUserToWeb("⚠️ ADMIN ĐÃ TẮT HỆ THỐNG SPOOFER CHO KEY NÀY!"); return; }
 
-                if (!sessionStorage.getItem('tiep_welcomed')) {
-                    showWelcomePopup(assignedUser, keyType === 'VIP');
-                    sessionStorage.setItem('tiep_welcomed', '1');
-                }
-
-                if (!res.loader_enabled) {
-                    kickUserToWeb("⚠️ ADMIN ĐÃ TẮT HỆ THỐNG SPOOFER CHO KEY NÀY!");
-                    return;
-                }
-
-                if (keyType === 'VIP') {
-                    console.log("[LVT] Kích hoạt Hack VIP");
-                    initVipHackSystem(savedKey);
-                } else {
-                    console.log("[LVT] Kích hoạt Hack Thường");
-                    StudyAssistantManager.init();
-                }
-
+                if (keyType === 'VIP') { console.log("[LVT] Kích hoạt Hack VIP"); initVipHackSystem(savedKey); } 
+                else { console.log("[LVT] Kích hoạt Hack Thường"); StudyAssistantManager.init(); }
             } else {
                 kickUserToWeb(res.message);
             }
-        }).catch(e => {
-            showKeyPrompt("LỖI KẾT NỐI MÁY CHỦ BẢO MẬT");
-        });
+        }).catch(e => { showKeyPrompt("LỖI KẾT NỐI MÁY CHỦ BẢO MẬT"); });
     } else {
-        if (document.readyState === "loading") window.addEventListener('DOMContentLoaded', () => showKeyPrompt());
-        else showKeyPrompt();
+        if (document.readyState === "loading") window.addEventListener('DOMContentLoaded', () => showKeyPrompt()); else showKeyPrompt();
     }
-
 })();"""
 
 def load_db():
@@ -1013,8 +590,10 @@ def load_db():
                 data.setdefault("settings", {})
                 data.setdefault("banned_olms", {})
                 
-                if "violentmonkey_script" not in data["settings"]:
-                    data["settings"]["violentmonkey_script"] = DEFAULT_OLM_SCRIPT
+                # Cấu trúc Settings Mới (Bảo trì & Thông báo toàn cục)
+                if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
+                if "global_notice" not in data["settings"]: data["settings"]["global_notice"] = ""
+                if "violentmonkey_script" not in data["settings"]: data["settings"]["violentmonkey_script"] = DEFAULT_OLM_SCRIPT
                 
                 if "admin" not in data["users"]:
                     data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin", "balance": 0, "created_at": int(time.time() * 1000), "ips": [], "purchased_keys": [], "notices": [], "custom_script": 'console.log("HACK OLM BY LVT ĐÃ KÍCH HOẠT!");\n// Dán code hack gốc vào đây...', "banned_until": 0}
@@ -1139,7 +718,7 @@ def firewall_and_csrf():
             send_telegram_alert(f"Phát hiện Bot/Scanner truy cập trái phép.\nIP: {ip}\nUser-Agent: {ua}")
             return "Firewall Blocked Suspicious Bot/Scanner.", 403
             
-        if request.path.startswith("/admin") and request.path not in ["/admin_login", "/login", "/register", "/logout", "/telegram_mini_app", "/api/tg_admin/get_data", "/api/tg_admin/action_user", "/api/tg_admin/create_keys", "/api/tg_admin/ban_olm", "/api/tg_admin/update_script"]:
+        if request.path.startswith("/admin") and request.path not in ["/admin_login", "/login", "/register", "/logout", "/telegram_mini_app", "/api/tg_admin/get_data", "/api/tg_admin/action_user", "/api/tg_admin/create_keys", "/api/tg_admin/ban_olm", "/api/tg_admin/update_script", "/api/tg_admin/system_actions"]:
             if session.get('role') != 'admin':
                 return redirect('/admin_login')
     except: pass
@@ -1148,12 +727,24 @@ def firewall_and_csrf():
 def not_found_trap(e):
     return "Not Found", 404
 
-@app.route('/api/ping', methods=['GET'])
-def uptime_ping():
-    return jsonify({"status": "alive", "timestamp": int(time.time())}), 200
+# ========================================================
+# API TRẠNG THÁI (CHO WEB CLIENT POLLING BẢO TRÌ & KHÓA)
+# ========================================================
+@app.route('/api/my_status')
+def my_status():
+    if 'username' not in session: return jsonify({"logged_in": False})
+    db = load_db()
+    u = db.get("users", {}).get(session['username'])
+    if not u: return jsonify({"logged_in": False})
+    mnt = db.get("settings", {}).get("maintenance_until", 0)
+    return jsonify({
+        "logged_in": True,
+        "banned_until": u.get("banned_until", 0),
+        "maintenance_until": mnt
+    })
 
 # ========================================================
-# API SPOOFER & CẤP PHÉP BƠM CODE
+# API SPOOFER & CẤP PHÉP BƠM CODE (CÓ BẢO TRÌ)
 # ========================================================
 def check_api_rate_limit(ip):
     try:
@@ -1184,21 +775,27 @@ def verify_request_signature(data):
 
 def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
     now = int(time.time() * 1000)
+    
+    # Kiểm tra bảo trì trước
+    mnt = db.get("settings", {}).get("maintenance_until", 0)
+    if isinstance(mnt, int) and mnt > now:
+        return False, "maintenance", mnt
+    
     with db_lock:
         banned_olms = db.get("banned_olms", {})
         if req_olm_name != "N/A" and req_olm_name in banned_olms:
             ban_exp = banned_olms[req_olm_name]
             if ban_exp == "permanent" or ban_exp > now:
-                return False, "Tài khoản OLM này đã bị Admin đưa vào danh sách cấm sử dụng Tool!"
+                return False, "banned_olm", ban_exp
 
-        if key not in db["keys"]: return False, "Mã Key không tồn tại!"
+        if key not in db["keys"]: return False, "error", "Mã Key không tồn tại!"
         kd = db["keys"][key]
-        if kd.get('status') == 'banned': return False, "TÀI KHOẢN BỊ KHÓA: Key của bạn đã bị Admin ban vĩnh viễn!"
+        if kd.get('status') == 'banned': return False, "error", "TÀI KHOẢN BỊ KHÓA: Key của bạn đã bị Admin ban vĩnh viễn!"
         
         temp_ban = kd.get("temp_ban_until", 0)
         if temp_ban > now:
             rem = (temp_ban - now) // 60000
-            return False, f"PHẠT SHARE KEY: Key đang bị khóa tạm thời. Thử lại sau {rem} phút."
+            return False, "error", f"PHẠT SHARE KEY: Key đang bị khóa tạm thời. Thử lại sau {rem} phút."
 
         db_changed = False
         if kd.get('exp') == 'pending': 
@@ -1206,7 +803,7 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
             db_changed = True
             
         if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): 
-            return False, "KEY HẾT HẠN: Vui lòng lên Web mua Key mới!"
+            return False, "error", "KEY HẾT HẠN: Vui lòng lên Web mua Key mới!"
         
         bound_olm = kd.get("bound_olm", "").strip()
         if bound_olm and req_olm_name != "N/A":
@@ -1214,17 +811,17 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
                 kd["status"] = "banned"
                 db.setdefault("security_alerts", []).insert(0, {"time": now, "id": ip, "user": req_olm_name, "reason": f"Sử dụng sai định danh"})
                 save_db(db)
-                return False, f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Key đã bị Khóa Vĩnh Viễn!"
+                return False, "error", f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Key đã bị Khóa Vĩnh Viễn!"
 
         if deviceId:
             devices = kd.setdefault("devices", [])
             if deviceId not in devices:
-                if len(devices) >= kd.get("maxDevices", 1): return False, "VƯỢT THIẾT BỊ: Key đã đạt giới hạn thiết bị tối đa!"
+                if len(devices) >= kd.get("maxDevices", 1): return False, "error", "VƯỢT THIẾT BỊ: Key đã đạt giới hạn thiết bị tối đa!"
                 devices.append(deviceId)
                 db_changed = True
         
         if db_changed: save_db(db)
-        return True, "Success"
+        return True, "success", "OK"
 
 @app.route('/api/check', methods=['POST', 'OPTIONS'])
 def check_api():
@@ -1242,17 +839,25 @@ def check_api():
         olm_name = data.get('olm_name', 'N/A')[:100]
         
         db = load_db()
-        valid, msg = _core_validate(db, key, deviceId, olm_name, ip)
-        if not valid: return jsonify({"status": "error", "message": msg}), 400
+        valid, code, msg_or_time = _core_validate(db, key, deviceId, olm_name, ip)
+        
+        if not valid:
+            if code == "maintenance": return jsonify({"status": "maintenance", "maintenance_until": msg_or_time})
+            if code == "banned_olm": return jsonify({"status": "banned_olm", "ban_until": msg_or_time})
+            return jsonify({"status": "error", "message": msg_or_time}), 400
 
         is_vip = db["keys"][key].get("vip", False)
         key_type = "VIP" if is_vip else "NORMAL"
+        
+        # Thêm thông báo toàn cục vào response
+        global_notice = db.get("settings", {}).get("global_notice", "")
 
         return jsonify({
             "status": "success", 
             "loader_enabled": db["keys"][key].get("loader_enabled", True),
             "assigned_user": db["keys"][key].get("bound_olm", ""),
-            "key_type": key_type 
+            "key_type": key_type,
+            "global_notice": global_notice
         })
     except Exception as e: return jsonify({"status": "error", "message": "Lỗi API Check"}), 500
 
@@ -1285,7 +890,7 @@ def serve_core_payload():
         olm_name = data.get('olm_name', 'N/A')
         
         db = load_db()
-        valid, _ = _core_validate(db, key, deviceId, olm_name, ip)
+        valid, code, _ = _core_validate(db, key, deviceId, olm_name, ip)
         if not valid: return jsonify({"status": "error"}), 403
 
         custom_script = db.get("users", {}).get("admin", {}).get("custom_script", "")
@@ -1331,37 +936,22 @@ def serve_core_engine():
     body = []
     in_header = False
     for line in lines:
-        if line.strip().startswith('// ==UserScript=='):
-            in_header = True
-        elif line.strip().startswith('// ==/UserScript=='):
-            in_header = False
-        elif not in_header:
-            body.append(line)
+        if line.strip().startswith('// ==UserScript=='): in_header = True
+        elif line.strip().startswith('// ==/UserScript=='): in_header = False
+        elif not in_header: body.append(line)
     body_str = '\n'.join(body)
-    quoted_body = urllib.parse.quote(body_str)
-    b64 = base64.b64encode(quoted_body.encode('utf-8')).decode('utf-8')
+    
+    # Tối ưu hóa eval và giải mã Base64 cực nhanh
+    b64 = base64.b64encode(body_str.encode('utf-8')).decode('utf-8')
     rev_b64 = b64[::-1]
     
-    anti_debug = """
-    const _0xLVT = function() {
-        let _0x = new Date().getTime();
-        setInterval(() => {
-            let _0y = new Date().getTime();
-            if (_0y - _0x > 1000) { while(true) { eval("debugger"); } }
-            _0x = new Date().getTime();
-            try { Function("debugger")(); } catch(e) {}
-        }, 300);
-    };
-    _0xLVT();
-    """
     secure_core = f"""
     (function() {{
-        {anti_debug}
         try {{
             const _0x3c = "{rev_b64}";
             const _0x4d = _0x3c.split('').reverse().join('');
-            const _0x5e = decodeURIComponent(atob(_0x4d));
-            eval(_0x5e); 
+            const _0x5e = decodeURIComponent(escape(atob(_0x4d)));
+            new Function(_0x5e)(); 
         }} catch(e) {{ console.error("[LVT] Lỗi cấu trúc Core ngầm:", e); }}
     }})();
     """
@@ -1380,17 +970,12 @@ def serve_loader_script():
     in_header = False
     for line in lines:
         if line.strip().startswith('// ==UserScript=='):
-            in_header = True
-            header.append(line)
+            in_header = True; header.append(line)
         elif line.strip().startswith('// ==/UserScript=='):
-            header.append(line)
-            in_header = False
-            break
-        elif in_header:
-            header.append(line)
+            header.append(line); in_header = False; break
+        elif in_header: header.append(line)
             
     header_str = '\n'.join(header)
-    
     if '@grant        GM_xmlhttpRequest' not in header_str and '@grant GM_xmlhttpRequest' not in header_str:
         header_str = header_str.replace('// ==/UserScript==', '// @grant        GM_xmlhttpRequest\n// ==/UserScript==')
     
@@ -1410,16 +995,6 @@ def serve_loader_script():
         }}
     }});
 
-    setInterval(() => {{
-        const t1 = performance.now();
-        eval("debugger;");
-        const t2 = performance.now();
-        if (t2 - t1 > 150) {{ 
-            document.body.innerHTML = "<div style='background:#05050A;color:#ff3366;height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif;font-size:28px;font-weight:bold;text-transform:uppercase;'>HỆ THỐNG BẢO MẬT LVT: GIAN LẬN BỊ PHÁT HIỆN</div>";
-            window.location.href = "about:blank";
-        }}
-    }}, 1000);
-
     GM_xmlhttpRequest({{
         method: 'GET',
         url: '{host_url}/api/script/core_engine.js?t=' + Date.now(),
@@ -1436,12 +1011,45 @@ def serve_loader_script():
     return resp
 
 # ========================================================
-# API BACKEND CHO TELEGRAM MINI APP (GIAO TIẾP QUA AJAX)
+# HƯỚNG DẪN MỞ KIWI BROWSER (HACK OLM)
+# ========================================================
+@app.route('/open_hack')
+def open_hack_route():
+    html = f"""
+    <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sử Dụng Hack OLM</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>body {{ background: #05050A; color: #fff; font-family: sans-serif; }}</style></head>
+    <body class="d-flex align-items-center justify-content-center vh-100 p-3">
+        <div class="text-center" style="background:rgba(17,17,26,0.9); padding:30px; border-radius:15px; border:1px solid #00ffcc; max-width:500px;">
+            <i class="fab fa-android text-success mb-3" style="font-size:50px;"></i>
+            <h3 class="text-info fw-bold mb-4">CHUYỂN HƯỚNG SANG KIWI BROWSER</h3>
+            <p>Hệ thống tự động mở trình duyệt Kiwi. Nếu chưa cài đặt, vui lòng tải ứng dụng bên dưới.</p>
+            <a href="intent://{WEB_URL.replace('https://', '')}/login#Intent;scheme=https;package=com.kiwibrowser.browser;end" class="btn btn-primary w-100 fw-bold mb-3 p-3" style="border-radius:10px;">🚀 MỞ BẰNG KIWI BROWSER</a>
+            <a href="https://play.google.com/store/apps/details?id=com.kiwibrowser.browser" target="_blank" class="btn btn-outline-success w-100 fw-bold p-2" style="border-radius:10px;"><i class="fas fa-download"></i> Tải Kiwi Browser (Nếu chưa có)</a>
+            <hr class="border-secondary mt-4 mb-4">
+            <h5 class="text-warning">CÁCH DÙNG HACK (Chỉ làm 1 lần)</h5>
+            <ol class="text-start text-secondary" style="font-size:14px; line-height:1.6;">
+                <li>Tải Kiwi Browser và mở link bằng Kiwi.</li>
+                <li>Cài đặt tiện ích <b>Violentmonkey</b> trên Cửa hàng Chrome.</li>
+                <li>Trở lại web, bấm vào nút <b>Link Cài Đặt Script Violentmonkey</b> để nạp Loader.</li>
+                <li>Đăng nhập Key và Ấn nút Mở Khóa OLM.VN!</li>
+            </ol>
+            <a href="/" class="text-muted mt-3 d-block" style="text-decoration:none;"><i class="fas fa-home"></i> Trở về Trang chủ</a>
+        </div>
+        <script>
+            setTimeout(() => {{ window.location.href = "intent://{WEB_URL.replace('https://', '')}/login#Intent;scheme=https;package=com.kiwibrowser.browser;end"; }}, 1000);
+        </script>
+    </body></html>
+    """
+    return html
+
+# ========================================================
+# API BACKEND CHO TELEGRAM MINI APP
 # ========================================================
 def verify_tg_admin():
     admin_id = request.headers.get('X-Admin-ID')
-    if str(admin_id) != str(TELEGRAM_CHAT_ID):
-        abort(403)
+    if str(admin_id) != str(TELEGRAM_CHAT_ID): abort(403)
 
 @app.route('/api/tg_admin/get_data', methods=['GET'])
 def tg_admin_get_data():
@@ -1450,16 +1058,12 @@ def tg_admin_get_data():
     now_ms = int(time.time() * 1000)
     
     total_keys = len(db.get("keys", {}))
-    active_keys = 0
-    for k, v in db.get("keys", {}).items():
-        if v.get("status") == "active" and (v.get("exp") == "permanent" or v.get("exp") == "pending" or (isinstance(v.get("exp"), int) and v.get("exp") > now_ms)):
-            active_keys += 1
+    active_keys = sum(1 for v in db.get("keys", {}).values() if v.get("status") == "active" and (v.get("exp") == "permanent" or v.get("exp") == "pending" or (isinstance(v.get("exp"), int) and v.get("exp") > now_ms)))
     expired_keys = total_keys - active_keys
 
     user_list = []
     for uname, udata in db.get("users", {}).items():
         if udata.get("role") == "admin": continue
-        
         u_keys_formatted = []
         for pk in udata.get("purchased_keys", []):
             k_id = pk['key']
@@ -1473,23 +1077,14 @@ def tg_admin_get_data():
                 u_keys_formatted.append({"key": k_id, "exp": exp_str, "status": kd.get("status", "active")})
 
         ban_status = udata.get("banned_until", 0)
-        is_banned = False
-        if ban_status == "permanent" or (isinstance(ban_status, int) and ban_status > now_ms):
-            is_banned = True
+        is_banned = ban_status == "permanent" or (isinstance(ban_status, int) and ban_status > now_ms)
 
         user_list.append({
-            "username": uname,
-            "balance": udata.get("balance", 0),
-            "ips": udata.get("ips", []),
-            "keys": u_keys_formatted,
-            "is_banned": is_banned,
-            "banned_until": ban_status
+            "username": uname, "balance": udata.get("balance", 0), "ips": udata.get("ips", []),
+            "keys": u_keys_formatted, "is_banned": is_banned, "banned_until": ban_status
         })
 
-    return jsonify({
-        "stats": {"total": total_keys, "active": active_keys, "expired": expired_keys},
-        "users": user_list
-    })
+    return jsonify({"stats": {"total": total_keys, "active": active_keys, "expired": expired_keys}, "users": user_list})
 
 @app.route('/api/tg_admin/action_user', methods=['POST'])
 def tg_admin_action_user():
@@ -1515,13 +1110,12 @@ def tg_admin_action_user():
         elif action == "ban_web":
             dur = safe_int(data.get('duration', 0))
             unit = data.get('unit', 'd')
-            if unit == "permanent":
-                u["banned_until"] = "permanent"
+            if unit == "permanent": u["banned_until"] = "permanent"
             else:
                 multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
                 u["banned_until"] = int(time.time() * 1000) + (dur * multiplier)
             save_db(db)
-            return jsonify({"status": "success", "msg": f"Đã khóa truy cập Web của {uname}"})
+            return jsonify({"status": "success", "msg": f"Đã khóa truy cập Web của {uname} thành công. User sẽ bị out ngay lập tức!"})
             
         elif action == "unban_web":
             u["banned_until"] = 0
@@ -1534,10 +1128,11 @@ def tg_admin_action_user():
             return jsonify({"status": "success", "msg": f"Đã xóa vĩnh viễn user {uname}"})
             
         elif action == "reset_pass":
-            new_pass = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+            new_pass = data.get('new_pass', '')
+            if not new_pass: return jsonify({"status": "error", "msg": "Mật khẩu không được để trống!"})
             u["password_hash"] = hash_pwd(new_pass)
             save_db(db)
-            return jsonify({"status": "success", "msg": f"Đã Reset Pass thành công!", "new_pass": new_pass})
+            return jsonify({"status": "success", "msg": f"Đã Reset Pass thành công!"})
 
     return jsonify({"status": "error", "msg": "Lỗi không xác định"})
 
@@ -1561,13 +1156,10 @@ def tg_admin_create_keys():
                 "status": "active", "vip": is_vip, "loader_enabled": True, 
                 "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": ""
             }
-            if unit != 'permanent': 
-                db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(unit, 86400000)
-            else: 
-                db["keys"][nk]["exp"] = "permanent"
+            if unit != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(unit, 86400000)
+            else: db["keys"][nk]["exp"] = "permanent"
             generated.append(nk)
         save_db(db)
-    
     return jsonify({"status": "success", "keys": generated})
 
 @app.route('/api/tg_admin/ban_olm', methods=['POST'])
@@ -1579,7 +1171,6 @@ def tg_admin_ban_olm():
     unit = data.get('unit', 'd')
     
     if not olm_name: return jsonify({"status": "error", "msg": "Tên OLM trống!"})
-    
     exp_time = "permanent"
     if unit != "permanent":
         multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
@@ -1589,23 +1180,55 @@ def tg_admin_ban_olm():
     with db_lock:
         db.setdefault("banned_olms", {})[olm_name] = exp_time
         save_db(db)
-    return jsonify({"status": "success", "msg": f"Đã cấm tài khoản OLM: {olm_name} truy cập Tool!"})
+    return jsonify({"status": "success", "msg": f"Đã cấm tài khoản OLM: {olm_name} truy cập Tool. User sẽ bị khóa lập tức khi check API!"})
 
 @app.route('/api/tg_admin/update_script', methods=['POST'])
 def tg_admin_update_script():
     verify_tg_admin()
     ns = request.json.get('script_content', '')
-    if not ns.strip().startswith('// ==UserScript=='):
-        return jsonify({"status": "error", "msg": "Script không hợp lệ (Phải bắt đầu bằng // ==UserScript==)"})
-        
+    if not ns.strip().startswith('// ==UserScript=='): return jsonify({"status": "error", "msg": "Script không hợp lệ (Phải bắt đầu bằng // ==UserScript==)"})
     db = load_db()
     with db_lock:
         db.setdefault("settings", {})["violentmonkey_script"] = ns
         save_db(db)
     return jsonify({"status": "success", "msg": "Đã cập nhật Code Script thành công!"})
 
+@app.route('/api/tg_admin/system_actions', methods=['POST'])
+def tg_admin_system_actions():
+    verify_tg_admin()
+    data = request.json
+    action = data.get('action')
+    db = load_db()
+    
+    with db_lock:
+        if action == "global_notice":
+            msg = data.get('message', '').strip()
+            if msg:
+                db.setdefault("settings", {})["global_notice"] = msg
+                # Gửi thông báo đến trang dashboard
+                for u in db.get("users", {}):
+                    db["users"][u].setdefault("notices", []).append(f"🔔 THÔNG BÁO TỪ ADMIN: {msg}")
+                save_db(db)
+                return jsonify({"status": "success", "msg": "Đã đẩy thông báo tới toàn bộ Web User và Hack User!"})
+        
+        elif action == "maintenance":
+            dur = safe_int(data.get('duration', 0))
+            unit = data.get('unit', 'h')
+            if dur <= 0:
+                db.setdefault("settings", {})["maintenance_until"] = 0
+                save_db(db)
+                return jsonify({"status": "success", "msg": "Đã TẮT chế độ bảo trì."})
+            
+            multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 3600000)
+            mnt = int(time.time() * 1000) + (dur * multiplier)
+            db.setdefault("settings", {})["maintenance_until"] = mnt
+            save_db(db)
+            return jsonify({"status": "success", "msg": "Đã BẬT bảo trì. Tất cả User web và User Hack sẽ bị chặn!"})
+            
+    return jsonify({"status": "error", "msg": "Hành động không hợp lệ!"})
+
 # ========================================================
-# TRANG GIAO DIỆN TELEGRAM MINI APP (HTML/JS/CSS)
+# TRANG GIAO DIỆN TELEGRAM MINI APP
 # ========================================================
 @app.route('/telegram_mini_app')
 def telegram_mini_app():
@@ -1692,8 +1315,16 @@ def telegram_mini_app():
                     <div class="stat-label">Hết hạn</div>
                 </div>
             </div>
-            <div class="section-title">CHỨC NĂNG QUẢN TRỊ LÕI</div>
             
+            <div class="section-title">HỆ THỐNG GLOBAL</div>
+            <div class="select-btn" onclick="navTo('screen-system')">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(255,204,0,0.1); color:#ffcc00;"><i class="fas fa-bullhorn"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800;">Thông Báo & Bảo Trì</div><div style="font-size: 12px; color: #8892b0;">Gửi thông báo, Đóng server</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+            
+            <div class="section-title">CHỨC NĂNG QUẢN TRỊ LÕI</div>
             <div class="select-btn" onclick="navTo('screen-keys')">
                 <div class="select-btn-left">
                     <div class="icon-box bg-green"><i class="fas fa-key"></i></div>
@@ -1704,7 +1335,7 @@ def telegram_mini_app():
             <div class="select-btn" onclick="navTo('screen-users')">
                 <div class="select-btn-left">
                     <div class="icon-box bg-blue"><i class="fas fa-users"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800;">Quản Lý Người Dùng</div><div style="font-size: 12px; color: #8892b0;">Info, Tiền, Khóa, Xóa Web</div></div>
+                    <div><div style="font-size: 15px; font-weight: 800;">Quản Lý Người Dùng</div><div style="font-size: 12px; color: #8892b0;">Khóa Web Đếm Ngược, Tùy chỉnh Pass</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
 
@@ -1718,8 +1349,33 @@ def telegram_mini_app():
             <div class="select-btn" onclick="navTo('screen-script')">
                 <div class="select-btn-left">
                     <div class="icon-box bg-purple"><i class="fas fa-code"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800;">Cập Nhật Script Lõi</div><div style="font-size: 12px; color: #8892b0;">Thay code Violentmonkey</div></div>
+                    <div><div style="font-size: 15px; font-weight: 800;">Cập Nhật Script Lõi</div><div style="font-size: 12px; color: #8892b0;">Thay code Violentmonkey siêu nhanh</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+        </div>
+        
+        <div id="screen-system" class="screen">
+            <button class="btn-back" onclick="navTo('screen-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:0; color:#ffcc00;">🔔 HỆ THỐNG GLOBAL</h3>
+            
+            <div class="action-card" style="background:#1a1d29; padding:20px; border-radius:15px; margin-bottom: 20px;">
+                <h5 style="color:#fff; margin-top:0;">Gửi Thông Báo Tất Cả User</h5>
+                <textarea id="sys-msg" class="form-control" rows="3" placeholder="Nhập nội dung thông báo..."></textarea>
+                <button class="btn-primary" style="background:linear-gradient(90deg, #ffcc00, #f97316);" onclick="sendGlobalNotice()">GỬI THÔNG BÁO</button>
+            </div>
+            
+            <div class="action-card" style="background:#1a1d29; padding:20px; border-radius:15px;">
+                <h5 style="color:#ef4444; margin-top:0;">Bật Chế Độ Bảo Trì Tool</h5>
+                <p style="font-size:12px; color:#8892b0;">(Web và Script sẽ bị đóng băng theo thời gian này)</p>
+                <div style="display:flex; gap:10px;">
+                    <input type="number" id="mnt-dur" class="form-control" value="0" placeholder="Thời gian (Nhập 0 để Tắt)">
+                    <select id="mnt-unit" class="form-control">
+                        <option value="m">Phút</option>
+                        <option value="h" selected>Giờ</option>
+                        <option value="d">Ngày</option>
+                    </select>
+                </div>
+                <button class="btn-primary" style="background:linear-gradient(90deg, #ef4444, #b91c1c);" onclick="setMaintenance()">CẬP NHẬT BẢO TRÌ</button>
             </div>
         </div>
 
@@ -1775,9 +1431,9 @@ def telegram_mini_app():
             <button class="btn-back" onclick="navTo('screen-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:0; color:#a855f7;">📜 CẬP NHẬT LÕI SCRIPT</h3>
             <div class="action-card" style="background:#1a1d29; padding:20px; border-radius:15px;">
-                <p style="font-size:12px; color:#8892b0;">Dán toàn bộ code Violentmonkey vào đây.</p>
+                <p style="font-size:12px; color:#8892b0;">Dán toàn bộ code Violentmonkey mới vào đây.</p>
                 <textarea id="s-code" class="form-control" rows="8" placeholder="// ==UserScript==\n..."></textarea>
-                <button class="btn-primary" style="background:linear-gradient(90deg, #a855f7, #6366f1);" onclick="updateScript()">LƯU VÀ XUẤT BẢN</button>
+                <button class="btn-primary" style="background:linear-gradient(90deg, #a855f7, #6366f1);" onclick="updateScript()">LƯU VÀ XUẤT BẢN NHANH</button>
             </div>
         </div>
 
@@ -1805,8 +1461,7 @@ def telegram_mini_app():
             function apiCall(endpoint, data, onSuccess) {
                 tg.MainButton.showProgress();
                 fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Admin-ID': adminId },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-ID': adminId },
                     body: JSON.stringify(data)
                 }).then(res => res.json()).then(res => {
                     tg.MainButton.hideProgress();
@@ -1815,14 +1470,12 @@ def telegram_mini_app():
                         else Swal.fire({toast:true, position:'top', icon:'success', title: res.msg || 'Thành công!', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});
                     } else { Swal.fire({icon:'error', title:'Lỗi', text:res.msg, background:'#1a1d29', color:'#fff'}); }
                 }).catch(e => {
-                    tg.MainButton.hideProgress();
-                    Swal.fire({icon:'error', title:'Lỗi mạng', text:e.toString(), background:'#1a1d29', color:'#fff'});
+                    tg.MainButton.hideProgress(); Swal.fire({icon:'error', title:'Lỗi mạng', text:e.toString(), background:'#1a1d29', color:'#fff'});
                 });
             }
 
             function copyT(t) {
-                navigator.clipboard.writeText(t);
-                tg.HapticFeedback.impactOccurred('light');
+                navigator.clipboard.writeText(t); tg.HapticFeedback.impactOccurred('light');
                 Swal.fire({toast:true, position:'top', icon:'success', title:'Đã copy!', showConfirmButton:false, timer:1500, background:'#1a1d29', color:'#fff'});
             }
 
@@ -1832,14 +1485,12 @@ def telegram_mini_app():
                     document.getElementById('s-total').innerText = data.stats.total;
                     document.getElementById('s-active').innerText = data.stats.active;
                     document.getElementById('s-expired').innerText = data.stats.expired;
-                    allUsersData = data.users;
-                    renderUsers(allUsersData);
+                    allUsersData = data.users; renderUsers(allUsersData);
                 });
             }
 
             function renderUsers(users) {
-                let container = document.getElementById('user-list-container');
-                container.innerHTML = '';
+                let container = document.getElementById('user-list-container'); container.innerHTML = '';
                 if(users.length === 0) { container.innerHTML = '<div style="text-align:center; color:#8892b0; padding:20px;">Không có User nào.</div>'; return; }
                 
                 users.forEach(u => {
@@ -1849,24 +1500,18 @@ def telegram_mini_app():
                     
                     let card = `
                     <div class="user-card">
-                        <div class="uc-header">
-                            <b style="font-size:16px; color:#fff;" onclick="copyT('${u.username}')">${u.username} <i class="fas fa-copy text-muted fs-6"></i></b>
-                            ${banBadge}
-                        </div>
+                        <div class="uc-header"><b style="font-size:16px; color:#fff;" onclick="copyT('${u.username}')">${u.username} <i class="fas fa-copy text-muted fs-6"></i></b>${banBadge}</div>
                         <div class="uc-info">
                             <div><i class="fas fa-wallet text-warning"></i> Dư: <b>${u.balance.toLocaleString()}đ</b></div>
                             <div><i class="fas fa-globe text-info"></i> IP: ${u.ips.join(', ') || 'Chưa đăng nhập'}</div>
-                            <div><i class="fas fa-lock text-success"></i> Pass: <i>Đã mã hóa SHA-256 an toàn</i></div>
-                            <div style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;">
-                                <b>Keys đang dùng:</b><br>${keysHtml}
-                            </div>
+                            <div style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;"><b>Keys đang dùng:</b><br>${keysHtml}</div>
                         </div>
                         <div class="uc-actions">
-                            <button class="uc-btn bg-green" onclick="actionUser('${u.username}', 'add_balance')"><i class="fas fa-plus"></i> Nạp/Trừ Tiền</button>
-                            <button class="uc-btn bg-blue" onclick="actionUser('${u.username}', 'reset_pass')"><i class="fas fa-key"></i> Reset Pass</button>
+                            <button class="uc-btn bg-green" onclick="actionUser('${u.username}', 'add_balance')"><i class="fas fa-plus"></i> Nạp Tiền</button>
+                            <button class="uc-btn bg-blue" onclick="actionUser('${u.username}', 'reset_pass')"><i class="fas fa-key"></i> Đổi Pass</button>
                             ${u.is_banned 
-                                ? `<button class="uc-btn bg-orange" onclick="apiCall('/api/tg_admin/action_user', {action:'unban_web', username:'${u.username}'}, ()=>{loadData(); Swal.fire({toast:true, position:'top', icon:'success', title:'Đã mở khóa!', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});})"><i class="fas fa-unlock"></i> Mở Khóa Web</button>`
-                                : `<button class="uc-btn bg-orange" onclick="actionUser('${u.username}', 'ban_web')"><i class="fas fa-ban"></i> Khóa Web</button>`}
+                                ? `<button class="uc-btn bg-orange" onclick="apiCall('/api/tg_admin/action_user', {action:'unban_web', username:'${u.username}'}, ()=>{loadData(); Swal.fire({toast:true, position:'top', icon:'success', title:'Đã mở khóa!', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});})"><i class="fas fa-unlock"></i> Mở Khóa</button>`
+                                : `<button class="uc-btn bg-orange" onclick="actionUser('${u.username}', 'ban_web')"><i class="fas fa-ban"></i> Khóa Khách</button>`}
                             <button class="uc-btn bg-red" onclick="actionUser('${u.username}', 'delete_user')"><i class="fas fa-trash"></i> Xóa Acc</button>
                         </div>
                     </div>`;
@@ -1874,10 +1519,7 @@ def telegram_mini_app():
                 });
             }
 
-            function filterUsers() {
-                let s = document.getElementById('u-search').value.toLowerCase();
-                renderUsers(allUsersData.filter(u => u.username.toLowerCase().includes(s)));
-            }
+            function filterUsers() { let s = document.getElementById('u-search').value.toLowerCase(); renderUsers(allUsersData.filter(u => u.username.toLowerCase().includes(s))); }
 
             function actionUser(uname, action) {
                 if(action === 'add_balance') {
@@ -1887,29 +1529,21 @@ def telegram_mini_app():
                 } 
                 else if(action === 'ban_web') {
                     Swal.fire({
-                        title: `Khóa Web: ${uname}`, html: `<input type="number" id="b-dur" class="swal2-input" value="1" placeholder="Thời gian"><select id="b-unit" class="swal2-select"><option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select>`, showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#f97316', preConfirm: () => { return { dur: document.getElementById('b-dur').value, unit: document.getElementById('b-unit').value }; }
+                        title: `Khóa Web: ${uname}`, html: `<input type="number" id="b-dur" class="swal2-input" value="1" placeholder="Thời gian"><select id="b-unit" class="swal2-select"><option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select><div style="margin-top:10px;font-size:12px;color:#ef4444;">User sẽ bị văng web và hiện thời gian khóa đếm ngược!</div>`, showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#f97316', preConfirm: () => { return { dur: document.getElementById('b-dur').value, unit: document.getElementById('b-unit').value }; }
                     }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'ban_web', username:uname, duration:r.value.dur, unit:r.value.unit}, ()=>{loadData();}); });
                 }
                 else if(action === 'reset_pass') {
-                    Swal.fire({ title: 'Reset Mật Khẩu?', text: `Tạo mật khẩu ngẫu nhiên mới cho ${uname}?`, icon: 'warning', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#3b82f6' })
-                    .then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'reset_pass', username:uname}, (res)=>{
-                        loadData();
-                        Swal.fire({title:'Thành công!', html:`Pass mới của <b>${uname}</b> là:<br><br><code style="font-size:20px; background:#000; padding:10px; border-radius:8px; color:#00ffcc;" onclick="navigator.clipboard.writeText('${res.new_pass}'); Swal.showValidationMessage('Đã Copy!');">${res.new_pass}</code><br><br><small>Bấm vào pass để copy gửi cho khách.</small>`, background:'#1a1d29', color:'#fff', confirmButtonColor:'#3b82f6'});
-                    }); });
+                    Swal.fire({
+                        title: `Tùy chỉnh Pass mới cho: ${uname}`, input: 'text', inputPlaceholder: 'Nhập mật khẩu mới...', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#3b82f6', preConfirm: (v) => { if(!v) Swal.showValidationMessage('Không được để trống!'); return v; }
+                    }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'reset_pass', username:uname, new_pass:r.value}, ()=>{loadData(); Swal.fire({toast:true, position:'top', icon:'success', title:'Đã đổi mật khẩu!', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});}); });
                 }
                 else if(action === 'delete_user') {
-                    Swal.fire({ title: 'CẢNH BÁO!', text: `Xóa vĩnh viễn ${uname} và toàn bộ Key của người này?`, icon: 'error', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#ef4444', confirmButtonText:'XÓA LUN' })
-                    .then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'delete_user', username:uname}, ()=>{loadData();}); });
+                    Swal.fire({ title: 'CẢNH BÁO!', text: `Xóa vĩnh viễn ${uname} và toàn bộ Key của người này?`, icon: 'error', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#ef4444', confirmButtonText:'XÓA LUN' }).then(r => { if(r.isConfirmed) apiCall('/api/tg_admin/action_user', {action:'delete_user', username:uname}, ()=>{loadData();}); });
                 }
             }
 
             function createKeys() {
-                let p = document.getElementById('k-prefix').value;
-                let q = document.getElementById('k-qty').value;
-                let d = document.getElementById('k-dur').value;
-                let u = document.getElementById('k-unit').value;
-                let v = document.getElementById('k-vip').checked;
-                
+                let p = document.getElementById('k-prefix').value; let q = document.getElementById('k-qty').value; let d = document.getElementById('k-dur').value; let u = document.getElementById('k-unit').value; let v = document.getElementById('k-vip').checked;
                 apiCall('/api/tg_admin/create_keys', {prefix: p, quantity: q, duration: d, unit: u, is_vip: v}, (res) => {
                     let kHtml = res.keys.map(k => `<div style="background:#000; color:#00ffcc; padding:8px; margin:5px 0; border-radius:5px; font-family:monospace; font-size:12px; cursor:pointer;" onclick="navigator.clipboard.writeText('${k}'); Swal.showValidationMessage('Đã copy!');">${k}</div>`).join('');
                     Swal.fire({title: 'ĐÃ TẠO XONG', html: `<div style="text-align:left; max-height:200px; overflow-y:auto;">${kHtml}</div><p style="font-size:12px; margin-top:10px; color:#8892b0;">Chạm vào Key để Copy</p>`, background:'#1a1d29', color:'#fff', confirmButtonColor:'#00ffcc'});
@@ -1918,9 +1552,7 @@ def telegram_mini_app():
             }
 
             function banOlm() {
-                let n = document.getElementById('o-name').value;
-                let d = document.getElementById('o-dur').value;
-                let u = document.getElementById('o-unit').value;
+                let n = document.getElementById('o-name').value; let d = document.getElementById('o-dur').value; let u = document.getElementById('o-unit').value;
                 if(!n) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập tên OLM', background:'#1a1d29', color:'#fff'});
                 apiCall('/api/tg_admin/ban_olm', {olm_name: n, duration: d, unit: u});
             }
@@ -1929,6 +1561,17 @@ def telegram_mini_app():
                 let code = document.getElementById('s-code').value;
                 if(!code) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa dán code', background:'#1a1d29', color:'#fff'});
                 apiCall('/api/tg_admin/update_script', {script_content: code});
+            }
+            
+            function sendGlobalNotice() {
+                let msg = document.getElementById('sys-msg').value;
+                if(!msg) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập thông báo', background:'#1a1d29', color:'#fff'});
+                apiCall('/api/tg_admin/system_actions', {action: 'global_notice', message: msg});
+            }
+
+            function setMaintenance() {
+                let d = document.getElementById('mnt-dur').value; let u = document.getElementById('mnt-unit').value;
+                apiCall('/api/tg_admin/system_actions', {action: 'maintenance', duration: d, unit: u});
             }
 
             loadData();
@@ -1939,7 +1582,7 @@ def telegram_mini_app():
     return render_template_string_safe(html_content)
 
 # ========================================================
-# CÁC ROUTE WEB USER / ADMIN (GIỮ NGUYÊN 100%)
+# CÁC ROUTE WEB USER / ADMIN 
 # ========================================================
 CSS_GLASS = """
 body { background-color: #05050A !important; color: #fff !important; font-family: 'Segoe UI', Tahoma, sans-serif; min-height: 100vh; margin:0; }
@@ -1966,6 +1609,55 @@ a.link-neon:hover { color: #00ffcc !important; text-shadow: 0 0 10px #00ffcc !im
 tbody tr:hover { background: rgba(0,255,204,0.05) !important; }
 .badge { font-size: 11px !important; padding: 5px 8px !important; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px; }
 .text-nowrap { white-space: nowrap !important; }
+
+/* Polling Core Script cho Live Ban & Maintenance */
+.swal2-popup { border-radius: 15px !important; }
+"""
+
+# Script inject vào Dashboard để kiểm tra Bảo trì & Ban real-time
+POLLING_SCRIPT = """
+<script>
+    setInterval(() => {
+        fetch('/api/my_status').then(r=>r.json()).then(d=>{
+            if(!d.logged_in) { window.location.href = '/login'; return; }
+            let now = Date.now();
+            
+            // Check bảo trì
+            if (d.maintenance_until > now) {
+                if(!document.getElementById('sys-maintenance-overlay')) {
+                    let ov = document.createElement('div'); ov.id = 'sys-maintenance-overlay';
+                    ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:999999;display:flex;align-items:center;justify-content:center;flex-direction:column;color:#fff;";
+                    ov.innerHTML = `<i class="fas fa-tools text-warning mb-3" style="font-size:60px;"></i><h2 class="text-warning">HỆ THỐNG ĐANG BẢO TRÌ</h2><p class="text-secondary">Web sẽ mở lại sau khi kết thúc đếm ngược.</p><h1 id="mnt-timer" class="text-danger" style="font-family:monospace;">--:--:--</h1>`;
+                    document.body.appendChild(ov);
+                }
+                let rem = d.maintenance_until - now;
+                let hr = Math.floor((rem % 86400000) / 3600000); let mi = Math.floor((rem % 3600000) / 60000); let se = Math.floor((rem % 60000) / 1000);
+                let tm = document.getElementById('mnt-timer'); if(tm) tm.innerText = `${hr}g ${mi}p ${se}s`;
+            } else if (document.getElementById('sys-maintenance-overlay')) {
+                document.getElementById('sys-maintenance-overlay').remove();
+            }
+
+            // Check bị khóa tài khoản web
+            if (d.banned_until === 'permanent' || d.banned_until > now) {
+                if(!document.getElementById('sys-ban-overlay')) {
+                    let ov = document.createElement('div'); ov.id = 'sys-ban-overlay';
+                    ov.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.95);z-index:999999;display:flex;align-items:center;justify-content:center;flex-direction:column;color:#fff;";
+                    ov.innerHTML = `<i class="fas fa-ban text-danger mb-3" style="font-size:60px;"></i><h2 class="text-danger">TÀI KHOẢN BỊ KHÓA</h2><p class="text-secondary">Trạng thái khóa: <span id="ban-timer" class="text-warning fw-bold"></span></p><a href="/logout" class="btn btn-outline-light mt-3">Đăng xuất</a>`;
+                    document.body.appendChild(ov);
+                }
+                let tm = document.getElementById('ban-timer');
+                if(d.banned_until === 'permanent') { if(tm) tm.innerText = "VĨNH VIỄN"; }
+                else {
+                    let rem = d.banned_until - now;
+                    let dy = Math.floor(rem / 86400000); let hr = Math.floor((rem % 86400000) / 3600000); let mi = Math.floor((rem % 3600000) / 60000); let se = Math.floor((rem % 60000) / 1000);
+                    if(tm) tm.innerText = `Còn ${dy} ngày ${hr}g ${mi}p ${se}s`;
+                }
+            } else if (document.getElementById('sys-ban-overlay')) {
+                document.getElementById('sys-ban-overlay').remove();
+            }
+        }).catch(e=>{});
+    }, 5000);
+</script>
 """
 
 @app.route('/')
@@ -1991,10 +1683,10 @@ def home():
         welcome_script = ""
         if not session.get('welcomed'):
             session['welcomed'] = True
-            welcome_script = "Swal.fire({ title: 'CHÀO MỪNG ĐẾN VỚI LVT TOOL!', html: '<b style=\"color:#00ffcc\">Hệ thống tự động hóa và bảo mật đỉnh cao.</b><br><br>👉 Vui lòng Đăng nhập hoặc Đăng ký để trải nghiệm!', icon: 'success', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', confirmButtonText: 'ĐÃ HIỂU' });"
+            welcome_script = "Swal.fire({ title: 'CHÀO MỪNG ĐẾN VỚI LVT TOOL!', html: '<b style=\"color:#00ffcc\">Hệ thống tự động hóa và bảo mật đỉnh cao.</b><br><br>👉 Vui lòng Đăng ký hoặc Đăng nhập để trải nghiệm!', icon: 'success', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', confirmButtonText: 'ĐÃ HIỂU' });"
 
         return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LVT TOOL - Trang Chủ</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>{CSS_GLASS} .hero{{background:linear-gradient(135deg,#000,#0a192f);padding:80px 20px;text-align:center;border-bottom:1px solid rgba(0,255,204,0.3);}}</style></head><body>
-        <div class="hero"><h1 class="text-neon fw-bold mb-3">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1><p class="text-secondary fs-5 mb-4">Tự động hóa thông minh - Bảo mật đa tầng - Kích hoạt trên thiết bị cực dễ</p><a href="#shop" class="btn btn-lg fw-bold mb-2" style="background:#00ffcc;color:#000;border-radius:10px;">XEM BẢNG GIÁ</a> <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-md-2 mb-2" style="border-radius:10px;">ĐĂNG NHẬP LẤY KEY</a> <a href="/register" class="btn btn-outline-light btn-lg fw-bold ms-md-2 mb-2" style="border-radius:10px;">ĐĂNG KÝ</a></div>
+        <div class="hero"><h1 class="text-neon fw-bold mb-3">⚡ HỆ THỐNG LVT TOOL VIP ⚡</h1><p class="text-secondary fs-5 mb-4">Tự động hóa thông minh - Bảo mật đa tầng</p><a href="#shop" class="btn btn-lg fw-bold mb-2" style="background:#00ffcc;color:#000;border-radius:10px;">XEM BẢNG GIÁ</a> <a href="/login" class="btn btn-outline-info btn-lg fw-bold ms-md-2 mb-2" style="border-radius:10px;">ĐĂNG NHẬP</a> <a href="/register" class="btn btn-outline-light btn-lg fw-bold ms-md-2 mb-2" style="border-radius:10px;">ĐĂNG KÝ</a></div>
         <div class="container py-5" id="shop"><h2 class="text-center text-neon fw-bold mb-5">BẢNG GIÁ DỊCH VỤ</h2><div class="row justify-content-center">{shop_html}</div></div><script>{welcome_script}</script></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
@@ -2230,6 +1922,7 @@ def user_dashboard():
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <style>{CSS_GLASS}</style></head>
         <body class="p-2 p-md-4">
+        {POLLING_SCRIPT}
         <div class="container" style="max-width:1100px;">
             <div class="d-flex flex-column flex-md-row justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
                 <h2 class="text-neon mb-3 mb-md-0 m-0"><i class="fas fa-bolt"></i> LVT SHOP CÁ NHÂN</h2>
@@ -2260,7 +1953,7 @@ def user_dashboard():
                 <div class="col-12">
                     <div class="card p-4 border-secondary h-100">
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h4 class="text-info m-0 fw-bold"><i class="fas fa-shopping-cart"></i> MUA M mã KEY MỚI</h4>
+                            <h4 class="text-info m-0 fw-bold"><i class="fas fa-shopping-cart"></i> MUA MÃ KEY MỚI</h4>
                         </div>
                         <div class="row g-2">{shop_html}</div>
                     </div>
@@ -2429,7 +2122,7 @@ def key_login():
                 return swal_redirect("Chấp nhận mã Key!", "Đang đưa bạn vào Khoang Lái...", "success", "/key_dashboard")
             return swal_back("Thất bại", "Mã Key không tồn tại trong hệ thống!", "error")
 
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kích Hoạt Key</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">🔑 KHỞI ĐỘNG KEY</h2><form method="POST"><input type="text" name="key_input" class="form-control text-center fs-5" placeholder="Dán mã Key của bạn vào đây..." required><button type="submit" class="btn-neon mt-2">ĐĂNG NHẬP KEY</button></form><div class="mt-4"><a href="/dashboard" class="link-neon"><i class="fas fa-arrow-left"></i> Trở về Quầy Shop</a></div></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kích Hoạt Key</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body>{POLLING_SCRIPT}<div class="glass-panel"><h2 class="text-neon mb-4">🔑 KHỞI ĐỘNG KEY</h2><form method="POST"><input type="text" name="key_input" class="form-control text-center fs-5" placeholder="Dán mã Key của bạn vào đây..." required><button type="submit" class="btn-neon mt-2">ĐĂNG NHẬP KEY</button></form><div class="mt-4"><a href="/dashboard" class="link-neon"><i class="fas fa-arrow-left"></i> Trở về Quầy Shop</a></div></div></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
 @app.route('/logout_key')
@@ -2476,6 +2169,7 @@ def key_dashboard():
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <style>{CSS_GLASS} .card-key{{background:rgba(17,17,26,0.9) !important;border-radius:16px !important; backdrop-filter: blur(10px);}}</style></head>
         <body class="p-3">
+        {POLLING_SCRIPT}
         <div class="container" style="max-width:800px;">
             <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-2">
                 <h3 style="color:#00ffcc;margin:0;font-weight:900;">⚡ KHOANG LÁI HACK</h3>
@@ -2511,7 +2205,7 @@ def key_dashboard():
                         MỞ KHÓA VÀ SỬ DỤNG HACK NGAY
                     </a>
                     <div class="mt-4">
-                        <small class="text-muted">Chưa cài đặt Userscript? <a href="/api/script/olm_vip.user.js" target="_blank" style="color:#00ffcc; text-decoration:none; border-bottom: 1px dashed #00ffcc;">Bấm vào đây để cài đặt Siêu Loader (Cài 1 lần)</a></small>
+                        <small class="text-muted">Chưa cài đặt Userscript? <a href="/api/script/olm_vip.user.js" target="_blank" style="color:#00ffcc; text-decoration:none; border-bottom: 1px dashed #00ffcc;">Bấm vào đây để cài đặt Link Cài Đặt Script Violentmonkey gốc</a></small>
                     </div>
                 </div>
             </div>
@@ -2709,7 +2403,7 @@ def admin_dashboard():
                         <div class="col-md-12">
                             <div class="card p-4 h-100" style="border-color:rgba(255,153,0,0.4);">
                                 <h5 style="color:#ff9900; margin-bottom:15px;"><i class="fas fa-code"></i> SET SCRIPT MẶC ĐỊNH</h5>
-                                <button class="btn btn-sm btn-outline-info w-100 fw-bold py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Dán Code HACK / Cập Nhật Core</button>
+                                <button class="btn btn-sm btn-outline-info w-100 fw-bold py-2 rounded-pill" data-bs-toggle="modal" data-bs-target="#vmScriptModal">Dán Code HACK Mới / Cập Nhật Core</button>
                             </div>
                         </div>
                         <div class="col-md-12">
@@ -2788,7 +2482,7 @@ def admin_dashboard():
                       <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                   </div>
                   <div class="modal-body p-4">
-                      <p class="text-warning mb-2" style="font-size:13px;">⚠️ Dán toàn bộ Code mới vào đây. Hệ thống sẽ TỰ ĐỘNG bóc tách Header, băm Body tạo Core ẩn và truyền quyền cho Loader.</p>
+                      <p class="text-warning mb-2" style="font-size:13px;">⚠️ Dán toàn bộ Code Violentmonkey mới vào đây. Hệ thống sẽ TỰ ĐỘNG bóc tách Header, băm Body tạo Core ẩn và truyền quyền cho Loader.</p>
                       <textarea name="vm_script_content" class="form-control" rows="15" style="font-family:monospace; font-size:12px;">{safe_vm_script}</textarea>
                   </div>
                   <div class="modal-footer border-secondary p-3"><button type="submit" class="btn btn-info fw-bold w-100 text-dark rounded-pill">LƯU & XUẤT BẢN CODE MỚI</button></div>
@@ -2914,6 +2608,7 @@ def admin_update_vm_script():
     try:
         if session.get('role') != 'admin': return redirect('/login')
         ns = request.form.get('vm_script_content', '')
+        if not ns.strip().startswith('// ==UserScript=='): return swal_back("Lỗi", "Script không hợp lệ (Phải bắt đầu bằng // ==UserScript==)", "error")
         db = load_db()
         with db_lock:
             db.setdefault("settings", {})["violentmonkey_script"] = ns
