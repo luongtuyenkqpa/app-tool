@@ -51,6 +51,7 @@ def telegram_polling():
                         msg_id = msg.get("message_id")
                         user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
                         
+                        # Bot trả lời cho mọi Chat ID
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG BÁN KEY TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Đăng ký/Đăng nhập mua Key và Cài đặt Hack:"
