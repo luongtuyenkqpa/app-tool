@@ -51,7 +51,6 @@ def telegram_polling():
                         msg_id = msg.get("message_id")
                         user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
                         
-                        # Bot trả lời cho mọi Chat ID
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG BÁN KEY TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Đăng ký/Đăng nhập mua Key và Cài đặt Hack:"
@@ -171,7 +170,7 @@ def render_template_string_safe(content):
     return resp
 
 # ========================================================
-# DATABASE ENGINE & MẶC ĐỊNH
+# DATABASE ENGINE & MẶC ĐỊNH SCRIPT V18.1 NGUYÊN BẢN
 # ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE + APEX MINER + ANTI-FREEZE)
@@ -1334,7 +1333,7 @@ def firewall_and_csrf():
             send_telegram_alert(f"Phát hiện Bot/Scanner truy cập trái phép.\nIP: {ip}\nUser-Agent: {ua}")
             return "Firewall Blocked Suspicious Bot/Scanner.", 403
             
-        if request.path.startswith("/admin") and request.path not in ["/admin_login", "/login", "/register", "/logout", "/telegram_mini_app", "/api/tg_admin/get_data", "/api/tg_admin/action_user", "/api/tg_admin/create_keys", "/api/tg_admin/ban_olm", "/api/tg_admin/update_script", "/api/tg_admin/system_actions", "/api/tg_app/auth", "/api/tg_app/user_data", "/api/tg_app/buy", "/api/tg_app/init"]:
+        if request.path.startswith("/admin") and request.path not in ["/admin_login", "/login", "/register", "/logout", "/telegram_mini_app", "/api/tg_admin/get_data", "/api/tg_admin/action_user", "/api/tg_admin/create_keys", "/api/tg_admin/ban_olm", "/api/tg_admin/update_script", "/api/tg_admin/system_actions", "/api/tg_app/auth", "/api/tg_app/user_data", "/api/tg_app/buy", "/api/tg_app/init", "/api/verify_hack_key"]:
             if session.get('role') != 'admin':
                 return redirect('/admin_login')
     except: pass
@@ -1623,10 +1622,36 @@ def serve_loader_script():
     return resp
 
 # ========================================================
-# HƯỚNG DẪN MỞ KIWI BROWSER (HACK OLM)
+# API & CHỨC NĂNG VÀO KHOANG LÁI (KIWI BROWSER)
 # ========================================================
+@app.route('/api/verify_hack_key', methods=['POST'])
+def verify_hack_key():
+    key = request.json.get('key', '').strip()
+    db = load_db()
+    kd = db.get("keys", {}).get(key)
+    if not kd: return jsonify({"status": "error", "msg": "Mã Key không tồn tại trong hệ thống!"})
+    
+    now = int(time.time() * 1000)
+    if kd.get("status") == "banned": return jsonify({"status": "error", "msg": "Key đã bị Admin khóa vĩnh viễn do vi phạm!"})
+    if kd.get("temp_ban_until", 0) > now: return jsonify({"status": "error", "msg": "Key đang bị phạt khóa tạm thời do dùng nhiều máy!"})
+    if kd.get("exp") != "pending" and kd.get("exp") != "permanent" and kd.get("exp") < now:
+        return jsonify({"status": "error", "msg": "Key của bạn đã hết hạn sử dụng!"})
+        
+    return jsonify({"status": "success"})
+
+@app.route('/auto_login_hack')
+def auto_login_hack():
+    key = request.args.get('key', '').strip()
+    if key:
+        db = load_db()
+        if key in db.get("keys", {}):
+            session['active_key'] = key
+            return redirect('/key_dashboard')
+    return swal_redirect("Lỗi Đăng Nhập", "Mã Key không hợp lệ hoặc đã bị xóa!", "error", "/dashboard")
+
 @app.route('/open_hack')
 def open_hack_route():
+    # Route này chỉ dành làm Fallback nếu user muốn xem hướng dẫn Kiwi thủ công
     html = f"""
     <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sử Dụng Hack OLM</title>
@@ -1649,9 +1674,6 @@ def open_hack_route():
             </ol>
             <a href="/" class="text-muted mt-3 d-block" style="text-decoration:none;"><i class="fas fa-home"></i> Trở về Trang chủ</a>
         </div>
-        <script>
-            setTimeout(() => {{ window.location.href = "intent://{WEB_URL.replace('https://', '')}/login#Intent;scheme=https;package=com.kiwibrowser.browser;end"; }}, 1500);
-        </script>
     </body></html>
     """
     return html
@@ -1694,7 +1716,7 @@ def tg_app_auth():
         u_data = db.get("users", {}).get(user)
         if u_data and u_data.get("password_hash") == hash_pwd(pwd):
             if isinstance(u_data.get("banned_until"), int) and u_data.get("banned_until") > int(time.time()*1000) or u_data.get("banned_until") == "permanent":
-                return jsonify({"status": "error", "msg": "Tài khoản của bạn đã bị khóa!"})
+                return jsonify({"status": "error", "msg": "Tài khoản của bạn đã bị Admin khóa!"})
             session['username'] = user
             session['role'] = u_data.get("role", "user")
             return jsonify({"status": "success"})
@@ -1773,13 +1795,11 @@ def tg_app_buy():
         
     return jsonify({"status": "success", "msg": "Mua thành công!", "new_key": nk})
 
-# ADMIN CŨ
 @app.route('/api/tg_admin/get_data', methods=['GET'])
 def tg_admin_get_data():
     verify_tg_admin()
     db = load_db()
     now_ms = int(time.time() * 1000)
-    
     total_keys = len(db.get("keys", {}))
     active_keys = sum(1 for v in db.get("keys", {}).values() if v.get("status") == "active" and (v.get("exp") == "permanent" or v.get("exp") == "pending" or (isinstance(v.get("exp"), int) and v.get("exp") > now_ms)))
     expired_keys = total_keys - active_keys
@@ -1801,11 +1821,7 @@ def tg_admin_get_data():
 
         ban_status = udata.get("banned_until", 0)
         is_banned = ban_status == "permanent" or (isinstance(ban_status, int) and ban_status > now_ms)
-
-        user_list.append({
-            "username": uname, "balance": udata.get("balance", 0), "ips": udata.get("ips", []),
-            "keys": u_keys_formatted, "is_banned": is_banned, "banned_until": ban_status
-        })
+        user_list.append({"username": uname, "balance": udata.get("balance", 0), "ips": udata.get("ips", []), "keys": u_keys_formatted, "is_banned": is_banned, "banned_until": ban_status})
 
     return jsonify({"stats": {"total": total_keys, "active": active_keys, "expired": expired_keys}, "users": user_list})
 
@@ -1819,7 +1835,6 @@ def tg_admin_action_user():
     with db_lock:
         if uname not in db.get("users", {}): return jsonify({"status": "error", "msg": "User không tồn tại"})
         u = db["users"][uname]
-        
         if action == "add_balance":
             amt = safe_int(data.get('amount', 0))
             u["balance"] += amt
@@ -1828,7 +1843,6 @@ def tg_admin_action_user():
             u.setdefault("notices", []).append(f"Admin vừa {act_str} cho bạn {abs(amt):,}đ")
             save_db(db)
             return jsonify({"status": "success", "msg": f"Đã {act_str} {abs(amt):,}đ cho {uname}"})
-            
         elif action == "ban_web":
             dur = safe_int(data.get('duration', 0))
             unit = data.get('unit', 'd')
@@ -1838,17 +1852,14 @@ def tg_admin_action_user():
                 u["banned_until"] = int(time.time() * 1000) + (dur * multiplier)
             save_db(db)
             return jsonify({"status": "success", "msg": f"Đã khóa truy cập Web của {uname}"})
-            
         elif action == "unban_web":
             u["banned_until"] = 0
             save_db(db)
             return jsonify({"status": "success", "msg": f"Đã mở khóa Web cho {uname}"})
-            
         elif action == "delete_user":
             del db["users"][uname]
             save_db(db)
             return jsonify({"status": "success", "msg": f"Đã xóa vĩnh viễn user {uname}"})
-            
         elif action == "reset_pass":
             new_pass = data.get('new_pass', '')
             if not new_pass: return jsonify({"status": "error", "msg": "Mật khẩu không được để trống!"})
@@ -1866,17 +1877,12 @@ def tg_admin_create_keys():
     dur = safe_int(data.get('duration', 1))
     unit = data.get('unit', 'day')
     is_vip = data.get('is_vip', False)
-    
     generated = []
     db = load_db()
     with db_lock:
         for _ in range(qty):
             nk = generate_secure_key(prefix, is_vip)
-            db["keys"][nk] = {
-                "exp": "pending", "maxDevices": 1, "devices": [], "known_ips": {}, 
-                "status": "active", "vip": is_vip, "loader_enabled": True, 
-                "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": ""
-            }
+            db["keys"][nk] = {"exp": "pending", "maxDevices": 1, "devices": [], "known_ips": {}, "status": "active", "vip": is_vip, "loader_enabled": True, "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": ""}
             if unit != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(unit, 86400000)
             else: db["keys"][nk]["exp"] = "permanent"
             generated.append(nk)
@@ -2016,8 +2022,8 @@ def telegram_mini_app():
                 <button style="background:#00ffcc; color:#000; border:none; padding:10px 15px; border-radius:10px; font-weight:bold;" onclick="window.open('https://zalo.me/0343627516', '_blank')">NẠP TIỀN</button>
             </div>
             
-            <div class="kiwi-card" onclick="openHack()">
-                <h4 style="color:#bd00ff; margin:0 0 5px 0;"><i class="fas fa-rocket"></i> VÀO KHOANG LÁI HACK</h4>
+            <div class="kiwi-card" onclick="openHackPrompt()">
+                <h4 style="color:#bd00ff; margin:0 0 5px 0;"><i class="fas fa-rocket"></i> NHẬP KEY SỬ DỤNG HACK</h4>
                 <div style="font-size:12px; color:#8892b0;">Hệ thống tự chuyển hướng sang Kiwi Browser</div>
             </div>
             
@@ -2269,7 +2275,26 @@ def telegram_mini_app():
                 });
             }
 
-            function openHack() { window.location.href = "/open_hack"; }
+            function openHackPrompt() {
+                Swal.fire({
+                    title: 'NHẬP MÃ KEY SỬ DỤNG HACK',
+                    input: 'text',
+                    inputPlaceholder: 'Dán mã Key của bạn...',
+                    showCancelButton: true, confirmButtonText: 'MỞ HACK (KIWI)', cancelButtonText: 'Hủy',
+                    background: '#1a1d29', color: '#fff', confirmButtonColor: '#00ffcc',
+                    preConfirm: (key) => { if (!key) Swal.showValidationMessage('Vui lòng nhập Key!'); return key; }
+                }).then((r) => {
+                    if(r.isConfirmed) {
+                        fetch('/api/verify_hack_key', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: r.value}) })
+                        .then(res => res.json()).then(data => {
+                            if(data.status === 'success') {
+                                Swal.fire({toast:true, position:'top', icon:'success', title:'Đang mở Kiwi Browser...', showConfirmButton:false, timer:2000, background:'#1a1d29', color:'#fff'});
+                                setTimeout(() => { window.location.href = `intent://${window.location.host}/auto_login_hack?key=${r.value}#Intent;scheme=https;package=com.kiwibrowser.browser;end`; }, 1000);
+                            } else { Swal.fire({icon:'error', title:'Lỗi', text:data.msg, background:'#1a1d29', color:'#fff'}); }
+                        }).catch(e => { Swal.fire({icon:'error', title:'Lỗi mạng', text:e.toString(), background:'#1a1d29', color:'#fff'}); });
+                    }
+                });
+            }
 
             // ADMIN DASHBOARD
             function loadAdminUsers() {
