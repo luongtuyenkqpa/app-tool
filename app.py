@@ -234,7 +234,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             }
         } catch(e) {}
 
-        // Dùng Object Memory thay vì cào DOM HTML để tránh 100% CPU usage
         if (found === "N/A" || found === "hp_luongvantuyen") {
             try {
                 if (typeof unsafeWindow !== 'undefined') {
@@ -356,7 +355,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
         parse(question) {
             const hints = [];
 
-            // 1. UNIVERSAL DEEP SCANNER
             const omniExtract = (obj) => {
                 if (!obj || typeof obj !== 'object') return;
                 
@@ -388,7 +386,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 
             try { omniExtract(question); } catch(e) {}
 
-            // 2. LOGIC CŨ DỰ PHÒNG
             const _deepScanLegacy = (node, parentNode = null, q_type = 0) => {
                 if (!node || typeof node !== 'object') return;
                 let identified = false;
@@ -708,14 +705,12 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
             console.log("[LVT] Khởi động Siêu Máy Quét (React Fiber & State Scanner)...");
             let rawQuestions = [];
             
-            // 1. OLM Redux State
             try {
                 if (unsafeWindow.__INITIAL_STATE__ && unsafeWindow.__INITIAL_STATE__.questions) {
                     Object.values(unsafeWindow.__INITIAL_STATE__.questions).forEach(q => rawQuestions.push(q));
                 }
             } catch(e) {}
 
-            // 2. React Fiber Props
             const elements = document.querySelectorAll('.question-item, div[data-question-id], div[id^="question_"], div[class*="question"]');
             for (let i = 0; i < elements.length; i++) {
                 let el = elements[i];
@@ -742,7 +737,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                 } catch(e) {}
             }
 
-            // 3. Fallback: Cào thuộc tính DOM
             document.querySelectorAll('[data-content], [data-json], [data-react-props]').forEach(el => {
                 ['data-content', 'data-json', 'data-react-props'].forEach(attr => {
                     let jsonStr = el.getAttribute(attr);
@@ -755,7 +749,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                 });
             });
 
-            // 4. [NEW APEX LIMIT]: BRUTE-FORCE TOÀN BỘ BỘ NHỚ RAM WINDOW
             try {
                 let wKeys = Object.keys(unsafeWindow);
                 for (let i = 0; i < wKeys.length; i++) {
@@ -773,7 +766,6 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
                 }
             } catch(e) {}
             
-            // Lọc trùng lặp
             const uniqueQ = [];
             const seenQ = new Set();
             rawQuestions.forEach(q => {
@@ -1219,6 +1211,7 @@ def load_db():
                 data.setdefault("security_alerts", []) 
                 data.setdefault("settings", {})
                 data.setdefault("banned_olms", {})
+                data.setdefault("game_keys", {}) # <--- MỚI THÊM VÀO THEO YÊU CẦU
                 
                 if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "global_notice" not in data["settings"]: data["settings"]["global_notice"] = ""
@@ -1279,6 +1272,11 @@ def generate_secure_key(prefix="", is_vip=False):
     t_vip = "VIP" if is_vip else "NOR"
     if prefix: return f"{prefix}-{t_vip}-{rand_str}"
     return f"LVT-{t_vip}-{rand_str}"
+
+def generate_game_key_15():
+    # Ký tự an toàn chống đoán, 15 ký tự bảo mật cho game
+    charset = string.ascii_letters + string.digits + "!@#$%^&*"
+    return ''.join(secrets.choice(charset) for _ in range(15))
 
 def log_admin_action(db, action_text):
     db.setdefault("admin_logs", []).insert(0, {"time": int(time.time() * 1000), "action": action_text})
@@ -1685,7 +1683,6 @@ def serve_loader_script():
 
 # ========================================================
 # API & CHỨC NĂNG VÀO KHOANG LÁI (KIWI BROWSER)
-# [ĐÃ VÁ LỖI NOT FOUND - REDIRECT THẲNG SANG OLM.VN]
 # ========================================================
 @app.route('/api/verify_hack_key', methods=['POST'])
 def verify_hack_key():
@@ -1710,14 +1707,12 @@ def auto_login_hack():
         db = load_db()
         if key in db.get("keys", {}):
             session['active_key'] = key
-            # [VÁ LỖI]: Phóng thẳng trang vào OLM truyền luôn mã key
             return redirect(f'https://olm.vn/?lvt_key={key}')
     return swal_redirect("Lỗi Đăng Nhập", "Mã Key không hợp lệ hoặc đã bị xóa!", "error", "/")
 
 @app.route('/open_hack')
 def open_hack_route():
     key = request.args.get('key', '').strip()
-    # [VÁ LỖI]: Ép gọi ứng dụng Kiwi Browser từ Chrome ngoài
     intent_url = f"intent://{request.host}/auto_login_hack?key={key}#Intent;scheme=https;package=com.kiwibrowser.browser;end"
     
     html = f"""
@@ -2049,7 +2044,6 @@ def tg_admin_system_actions():
 
 # ========================================================
 # TRANG GIAO DIỆN TELEGRAM MINI APP (ALL IN ONE UI)
-# [VÁ LỖI ERR_UNKNOWN_URL_SCHEME - SỬ DỤNG API TELEGRAM ĐỂ MỞ LINK MỚI]
 # ========================================================
 @app.route('/telegram_mini_app')
 def telegram_mini_app():
@@ -2492,7 +2486,6 @@ def admin_login():
     try:
         ip = get_real_ip()
         
-        # [BẢO VỆ]: Chống dò mật khẩu (Brute-force)
         global admin_login_attempts
         now = time.time()
         admin_login_attempts = {k: v for k, v in admin_login_attempts.items() if now - v['time'] < 300} 
@@ -2578,7 +2571,10 @@ def admin_dashboard():
         <div class="container-fluid">
             <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
                 <h3 class="m-0 text-neon fw-bold"><i class="fas fa-shield-alt"></i> LVT SECURE ADMIN</h3>
-                <div><a href="/logout" class="btn btn-outline-danger btn-sm fw-bold rounded-pill px-3">Thoát</a></div>
+                <div>
+                    <a href="/admin/hack_game" class="btn btn-warning btn-sm fw-bold rounded-pill px-3 me-2">🎮 HACK GAME</a>
+                    <a href="/logout" class="btn btn-outline-danger btn-sm fw-bold rounded-pill px-3">Thoát</a>
+                </div>
             </div>
             <div class="row g-4">
                 <div class="col-lg-7">
@@ -2812,6 +2808,197 @@ def key_actions(action, key):
                 kd['known_ips'] = {}
             save_db(db)
     return redirect('/admin')
+
+# ========================================================
+# MODULE HACK GAME (QUẢN LÝ KEY 15 KÝ TỰ BẢO MẬT)
+# ========================================================
+@app.route('/admin/hack_game')
+def admin_hack_game():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    db = load_db()
+    with db_lock:
+        game_keys = list(db.get("game_keys", {}).items())
+
+    now_ms = int(time.time() * 1000)
+    keys_html = ''
+    
+    for k, data in sorted(game_keys, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
+        st = data.get('status', 'active')
+        is_banned = (st == 'banned')
+        status_badge = '<span class="badge bg-success">Hoạt động</span>' if not is_banned else '<span class="badge bg-danger text-light border border-light">BỊ KHÓA</span>'
+        
+        is_expired = False
+        if data.get('exp') == 'pending': 
+            exp_text = '<span class="text-info fw-bold">Chưa kích hoạt</span>'
+        elif data.get('exp') == 'permanent': 
+            exp_text = '<span class="text-success fw-bold">Vĩnh Viễn</span>'
+        else:
+            is_expired = now_ms > data.get('exp', 0)
+            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-light"}">{time.strftime("%d/%m/%Y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
+        
+        if is_expired and not is_banned: status_badge = '<span class="badge bg-secondary">HẾT HẠN</span>'
+        
+        safe_k = escape(str(k))
+        dev_count = len(data.get('devices', []))
+        max_dev = data.get('maxDevices', 1)
+        
+        keys_html += f'''
+        <tr class="align-middle text-nowrap">
+            <td>
+                <strong class="text-warning fs-6" style="cursor:pointer;" onclick="copyKey('{safe_k}')" title="Bấm để copy">{safe_k}</strong><br>
+                {status_badge}
+            </td>
+            <td>{exp_text}</td>
+            <td><span class="badge bg-info text-dark fs-6">{dev_count} / {max_dev}</span></td>
+            <td>
+                <div class="d-flex gap-1 justify-content-center">
+                    <button class="btn btn-sm btn-info fw-bold text-dark rounded-pill" onclick="openGameTimeModal('{safe_k}')">⏳ Thêm Giờ</button>
+                    <button class="btn btn-sm btn-warning fw-bold text-dark rounded-pill" onclick="openDeviceModal('{safe_k}')">💻 Thêm Máy</button>
+                    <a href="/admin/hack_game/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-sm btn-{"light" if is_banned else "danger"} fw-bold rounded-pill">{"Mở Khóa" if is_banned else "Band Key"}</a>
+                    <a href="/admin/hack_game/action/delete/{safe_k}" class="btn btn-sm btn-dark border-secondary rounded-pill" onclick="return confirm('Xóa vĩnh viễn Key Game này?')">🗑️</a>
+                </div>
+            </td>
+        </tr>'''
+
+    return f'''
+    <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QUẢN LÝ HACK GAME</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>{CSS_GLASS}</style></head><body class="p-4">
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h3 class="text-neon fw-bold">🎮 BẢNG ĐIỀU KHIỂN HACK GAME</h3>
+            <a href="/admin" class="btn btn-outline-light rounded-pill">⬅ Trở về Admin Lõi</a>
+        </div>
+        
+        <div class="card p-4 mb-4" style="border-color:#ffcc00; background:rgba(17,17,26,0.8);">
+            <h5 class="text-warning fw-bold mb-3">🚀 TẠO KEY HACK GAME (15 KÍ TỰ ĐẶC BIỆT)</h5>
+            <form action="/admin/hack_game/create" method="POST" class="row g-3">
+                <div class="col-md-3">
+                    <input type="number" name="quantity" class="form-control" value="1" placeholder="Số lượng key cần tạo" required>
+                </div>
+                <div class="col-md-3">
+                    <input type="number" name="time_val" class="form-control" placeholder="Nhập thời gian" required>
+                </div>
+                <div class="col-md-3">
+                    <select name="time_unit" class="form-select bg-dark text-light border-secondary">
+                        <option value="minutes">Phút</option>
+                        <option value="hours">Giờ</option>
+                        <option value="days" selected>Ngày</option>
+                        <option value="months">Tháng</option>
+                        <option value="years">Năm</option>
+                        <option value="permanent">Vĩnh Viễn</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn w-100 fw-bold" style="background:#ffcc00; color:#000;">TẠO KEY NGAY</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card p-4" style="border-color:#00ffcc; background:rgba(17,17,26,0.8);">
+            <h5 class="text-info fw-bold mb-3">🔑 DANH SÁCH KEY GAME HIỆN TẠI</h5>
+            <div class="table-responsive" style="max-height:500px; overflow-y:auto;">
+                <table class="table table-dark table-hover text-center">
+                    <thead class="table-active"><tr><th>Mã Key Hack</th><th>Hạn Sử Dụng</th><th>Thiết Bị (Mặc định 1)</th><th>Bảng Điều Khiển Key</th></tr></thead>
+                    <tbody>{keys_html}</tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="timeModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc;"><form action="/admin/hack_game/add_time" method="POST"><div class="modal-body text-center p-4"><input type="hidden" name="key" id="timeKeyInput"><p class="text-white mb-2">Thêm thời gian cho Key:</p><h6 id="timeKeyDisplay" class="text-warning mb-3"></h6><input type="number" name="t_val" class="form-control mb-2" placeholder="Giá trị" required><select name="t_unit" class="form-select"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option><option value="years">Năm</option></select></div><div class="modal-footer p-2"><button type="submit" class="btn btn-info w-100 fw-bold rounded-pill">CỘNG THÊM</button></div></form></div></div></div>
+
+    <div class="modal fade" id="deviceModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00;"><form action="/admin/hack_game/add_device" method="POST"><div class="modal-body text-center p-4"><input type="hidden" name="key" id="devKeyInput"><p class="text-white mb-2">Mở rộng giới hạn máy cho Key:</p><h6 id="devKeyDisplay" class="text-info mb-3"></h6><input type="number" name="dev_add" class="form-control" value="1" placeholder="Thêm bao nhiêu máy?" required></div><div class="modal-footer p-2"><button type="submit" class="btn btn-warning w-100 fw-bold rounded-pill">CẤP PHÉP</button></div></form></div></div></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function copyKey(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top',icon:'success',title:'Đã Copy!',showConfirmButton:false,timer:1000,background:'#111',color:'#00ffcc'}}); }}
+        function openGameTimeModal(key) {{ document.getElementById('timeKeyInput').value = key; document.getElementById('timeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('timeModal')).show(); }}
+        function openDeviceModal(key) {{ document.getElementById('devKeyInput').value = key; document.getElementById('devKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('deviceModal')).show(); }}
+    </script>
+    </body></html>'''
+
+@app.route('/admin/hack_game/create', methods=['POST'])
+def game_key_create():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    qty = safe_int(request.form.get('quantity'), 1)
+    t_val = safe_int(request.form.get('time_val'), 0)
+    t_unit = request.form.get('time_unit')
+    
+    multipliers = {"minutes": 60000, "hours": 3600000, "days": 86400000, "months": 2592000000, "years": 31536000000}
+    
+    db = load_db()
+    with db_lock:
+        for _ in range(qty):
+            new_key = generate_game_key_15()
+            key_data = {
+                "exp": "pending",
+                "maxDevices": 1, 
+                "devices": [],
+                "status": "active"
+            }
+            if t_unit == 'permanent': 
+                key_data["exp"] = "permanent"
+            else:
+                key_data["durationMs"] = t_val * multipliers.get(t_unit, 0)
+            
+            db.setdefault("game_keys", {})[new_key] = key_data
+        save_db(db)
+    return redirect('/admin/hack_game')
+
+@app.route('/admin/hack_game/add_time', methods=['POST'])
+def game_key_add_time():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    key = request.form.get('key', '')
+    t_val = safe_int(request.form.get('t_val'), 0)
+    t_unit = request.form.get('t_unit')
+    
+    multipliers = {"minutes": 60000, "hours": 3600000, "days": 86400000, "months": 2592000000, "years": 31536000000}
+    ms_to_add = t_val * multipliers.get(t_unit, 0)
+    
+    db = load_db()
+    with db_lock:
+        if key in db.get("game_keys", {}):
+            k_data = db["game_keys"][key]
+            if k_data.get("exp") != "permanent":
+                if k_data.get("exp") == "pending":
+                    k_data["durationMs"] = k_data.get("durationMs", 0) + ms_to_add
+                else:
+                    now = int(time.time() * 1000)
+                    curr_exp = max(k_data.get("exp", now), now)
+                    k_data["exp"] = curr_exp + ms_to_add
+            save_db(db)
+    return redirect('/admin/hack_game')
+
+@app.route('/admin/hack_game/add_device', methods=['POST'])
+def game_key_add_device():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    key = request.form.get('key', '')
+    dev_add = safe_int(request.form.get('dev_add'), 1)
+    
+    db = load_db()
+    with db_lock:
+        if key in db.get("game_keys", {}):
+            db["game_keys"][key]["maxDevices"] = db["game_keys"][key].get("maxDevices", 1) + dev_add
+            save_db(db)
+    return redirect('/admin/hack_game')
+
+@app.route('/admin/hack_game/action/<action>/<key>')
+def game_key_actions(action, key):
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    db = load_db()
+    with db_lock:
+        if key in db.get("game_keys", {}):
+            if action == 'ban': 
+                db["game_keys"][key]["status"] = "banned"
+            elif action == 'unban': 
+                db["game_keys"][key]["status"] = "active"
+            elif action == 'delete': 
+                del db["game_keys"][key]
+            save_db(db)
+    return redirect('/admin/hack_game')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
