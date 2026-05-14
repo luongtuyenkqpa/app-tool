@@ -4,6 +4,7 @@ from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session, abort
 from werkzeug.exceptions import HTTPException
 
+# [VÁ LỖI LỆCH MÚI GIỜ CLOUD]
 try:
     os.environ['TZ'] = 'Asia/Ho_Chi_Minh'
     time.tzset()
@@ -11,6 +12,7 @@ except: pass
 
 app = Flask(__name__)
 
+# [VÁ LỖI CSS_GLASS]
 CSS_GLASS = """
 .glass-panel { background: rgba(17, 17, 26, 0.7); backdrop-filter: blur(15px); border: 1px solid rgba(0, 255, 204, 0.3); border-radius: 15px; padding: 30px; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); max-width: 400px; margin: 50px auto; text-align: center; }
 .text-neon { color: #00ffcc; text-shadow: 0 0 10px rgba(0, 255, 204, 0.5); }
@@ -37,7 +39,7 @@ def send_telegram_backup():
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
         with open(DB_FILE, 'rb') as f:
-            requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"BACKUP\n{time.strftime('%d/%m/%Y %H:%M:%S')}"}, files={"document": f}, timeout=10)
+            requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📦 BACKUP DATABASE LVT TOOL\nThời gian: {time.strftime('%d/%m/%Y %H:%M:%S')}"}, files={"document": f}, timeout=10)
     except: pass
 
 def telegram_polling():
@@ -49,36 +51,22 @@ def telegram_polling():
             if res.get("ok"):
                 for update in res.get("result", []):
                     offset = update["update_id"] + 1
+                    
                     if "message" in update:
                         msg = update["message"]
                         chat_id = str(msg.get("chat", {}).get("id", ""))
                         text = msg.get("text", "").strip()
                         msg_id = msg.get("message_id")
-                        user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
+                        user_first_name = msg.get("from", {}).get("first_name", "Khách")
+                        
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG BÁN KEY TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Đăng ký/Đăng nhập mua Key và Cài đặt Hack:"
-                            keyboard = {"inline_keyboard": [[{"text": "🛒 MỞ ỨNG DỤNG (MUA KEY & HACK)", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]]}
+                            welcome = f"🌟 <b>HỆ THỐNG XÁC THỰC LVT</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Mở Menu Chức Năng:"
+                            keyboard = {"inline_keyboard": [
+                                [{"text": "🚀 MỞ MINI APP", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
+                            ]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
-                        elif text.startswith("/naptien") and chat_id == TELEGRAM_CHAT_ID:
-                            parts = text.split()
-                            if len(parts) >= 3:
-                                uname = parts[1].lower()
-                                try:
-                                    amt = int(parts[2])
-                                    db = load_db()
-                                    with db_lock:
-                                        if uname in db.get("users", {}):
-                                            db["users"][uname]["balance"] += amt
-                                            if db["users"][uname]["balance"] < 0: db["users"][uname]["balance"] = 0
-                                            action = "Cộng" if amt >= 0 else "Trừ"
-                                            db["users"][uname].setdefault("notices", []).append(f"Admin vừa {action} cho bạn {abs(amt):,}đ")
-                                            log_admin_action(db, f"TeleBot: {action} {abs(amt)}đ cho {uname}")
-                                            save_db(db)
-                                            send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>")
-                                        else:
-                                            send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
-                                except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
+                        
                         elif text.startswith("/check") and chat_id == TELEGRAM_CHAT_ID:
                             parts = text.split()
                             if len(parts) >= 2:
@@ -89,6 +77,7 @@ def telegram_polling():
                                     keys_info = "".join([f"- <code>{pk['key'][:10]}...</code>\n" for pk in u.get("purchased_keys", [])]) or "Không có key nào."
                                     send_telegram_alert(f"👤 <b>USER: {uname}</b>\n💰 Số dư: {u.get('balance', 0):,}đ\n🔑 <b>Key:</b>\n{keys_info}")
                                 else: send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
+                        
                         elif text.startswith("// ==UserScript==") and chat_id == TELEGRAM_CHAT_ID:
                             db = load_db()
                             with db_lock:
@@ -96,7 +85,7 @@ def telegram_polling():
                                 log_admin_action(db, "TeleBot: Cập nhật Script Gốc")
                                 save_db(db)
                             send_telegram_alert("✅ Đã cập nhật và xuất bản Code Violentmonkey mới!")
-        except Exception: pass
+        except Exception as e: print("LỖI BOT TELE:", str(e))
         time.sleep(2)
 
 threading.Thread(target=telegram_polling, daemon=True).start()
@@ -104,6 +93,8 @@ threading.Thread(target=telegram_polling, daemon=True).start()
 @app.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, HTTPException): return e
+    error_detail = traceback.format_exc()
+    send_telegram_alert(f"<b>CRITICAL CRASH NGĂN CHẶN THÀNH CÔNG:</b>\n<pre>{error_detail[-300:]}</pre>")
     return "Hệ thống đang bảo trì.", 500
 
 app.secret_key = os.environ.get('SECRET_KEY', hashlib.sha256(f"LVT_SECURE_KEY_2026_VIP".encode()).hexdigest())
@@ -118,6 +109,7 @@ DB_BACKUP = './database.backup.json'
 
 db_lock = threading.RLock()
 api_rate_lock = threading.Lock()
+
 active_sessions = {}
 api_rate_cache = {}
 used_signatures = {} 
@@ -127,17 +119,6 @@ GLOBAL_DB = {}
 _last_db_mtime = 0
 _last_mtime_check = 0 
 
-SHOP_PACKAGES = {
-    "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
-    "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
-    "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
-    "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
-    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
-}
-
 def safe_int(val, default=0):
     try: return int(val)
     except: return default
@@ -146,10 +127,18 @@ def hash_pwd(pwd):
     return hashlib.sha256(pwd.encode()).hexdigest()
 
 def swal_redirect(title, text, icon, url):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: `{title}`, html: `{text}`, icon: '{icon}', background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false, customClass: {{ popup: 'border border-info' }}}}).then(() => {{ window.location.href = '{url}'; }});</script></body></html>"""
+    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>
+        Swal.fire({{ title: `{title}`, html: `{text}`, icon: '{icon}', background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false, customClass: {{ popup: 'border border-info' }}
+        }}).then(() => {{ window.location.href = '{url}'; }});
+    </script></body></html>"""
 
 def swal_back(title, text, icon):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: `{title}`, html: `{text}`, icon: '{icon}', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false, customClass: {{ popup: 'border border-danger' }}}}).then(() => {{ window.history.back(); }});</script></body></html>"""
+    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>
+        Swal.fire({{ title: `{title}`, html: `{text}`, icon: '{icon}', background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false, customClass: {{ popup: 'border border-danger' }}
+        }}).then(() => {{ window.history.back(); }});
+    </script></body></html>"""
 
 def render_template_string_safe(content):
     resp = make_response(content)
@@ -157,7 +146,7 @@ def render_template_string_safe(content):
     return resp
 
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
-// @name         OLM GOD MODE VIP
+// @name         OLM GOD MODE VIP - DEV.TIỆP
 // @namespace    http://tampermonkey.net/
 // @version      18.1
 // @description  Hệ thống bảo vệ đa tầng
@@ -190,7 +179,7 @@ def load_db():
                 try:
                     with open(DB_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
                 except Exception: pass
-            if not data: data = {"users": {}, "keys": {}, "banned_ips": [], "admin_logs": [], "security_alerts": [], "settings": {}, "banned_olms": {}, "tg_auth_ids": {}}
+            if not data: data = {"users": {}, "keys": {}, "banned_ips": [], "admin_logs": [], "security_alerts": [], "settings": {}, "banned_olms": {}}
             try:
                 data.setdefault("users", {})
                 data.setdefault("keys", {})
@@ -204,9 +193,10 @@ def load_db():
                 if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "global_notice" not in data["settings"]: data["settings"]["global_notice"] = ""
                 if "violentmonkey_script" not in data["settings"]: data["settings"]["violentmonkey_script"] = DEFAULT_OLM_SCRIPT
+                if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 
                 if "admin" not in data["users"]:
-                    data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin", "balance": 0, "created_at": int(time.time() * 1000), "ips": [], "purchased_keys": [], "notices": [], "custom_script": 'console.log("SYSTEM ACTIVE!");', "banned_until": 0}
+                    data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin", "balance": 0, "created_at": int(time.time() * 1000), "ips": [], "purchased_keys": [], "notices": [], "custom_script": 'console.log("HACK OLM BY LVT ĐÃ KÍCH HOẠT!");', "banned_until": 0}
                 
                 for u in data["users"]:
                     data["users"][u].setdefault("notices", [])
@@ -224,6 +214,7 @@ def load_db():
                     data["keys"][k].setdefault("os", "android")
                     data["keys"][k].setdefault("vip", False)
                     data["keys"][k].setdefault("activated", False)
+                    data["keys"][k].setdefault("tg_owner", "")
                 GLOBAL_DB = data
                 _last_db_mtime = current_mtime
             except Exception: pass
@@ -236,7 +227,10 @@ def save_db(db=None):
         try: 
             safe_db = copy.deepcopy(db)
             db_str = json.dumps(safe_db, indent=2, ensure_ascii=False)
-        except Exception: return 
+        except Exception as e:
+            send_telegram_alert(f"Lỗi Serialize DB: {str(e)}")
+            return 
+            
         temp_file = DB_FILE + f'.{int(time.time() * 1000)}.tmp'
         try:
             with open(temp_file, 'w', encoding='utf-8') as f: 
@@ -246,7 +240,8 @@ def save_db(db=None):
             os.replace(temp_file, DB_FILE)
             shutil.copy2(DB_FILE, DB_BACKUP)
             _last_db_mtime = os.path.getmtime(DB_FILE)
-        except Exception:
+        except Exception as e: 
+            send_telegram_alert(f"LỖI GHI FILE DATABASE CHÍ MẠNG: {str(e)}")
             if os.path.exists(temp_file): os.remove(temp_file)
 
 def generate_secure_key(prefix="", is_vip=False):
@@ -274,6 +269,7 @@ def garbage_collector():
                 for s in to_del_sig: del used_signatures[s]
                 if len(used_signatures) > 10000: used_signatures.clear()
                 if len(api_rate_cache) > 10000: api_rate_cache.clear()
+            
             db = load_db()
             changed = False
             with db_lock:
@@ -283,18 +279,23 @@ def garbage_collector():
                         if isinstance(exp, int) and (now_ms - exp) > 604800000:
                             del db["keys"][k]
                             changed = True
+                
                 for olm_id in list(db.get("banned_olms", {}).keys()):
                     if db["banned_olms"][olm_id] != "permanent" and db["banned_olms"][olm_id] < now_ms:
                         del db["banned_olms"][olm_id]
                         changed = True
+                
                 if len(db.get("security_alerts", [])) > 100:
                     db["security_alerts"] = db["security_alerts"][:50]
                     changed = True
-                if changed: save_db(db)
+                    
+            if changed: save_db(db)
+            
             if backup_counter >= 12:
                 send_telegram_backup()
                 backup_counter = 0
-        except Exception: pass
+        except Exception as e: 
+            pass
 
 threading.Thread(target=garbage_collector, daemon=True).start()
 
@@ -303,7 +304,7 @@ def get_real_ip():
         if request.headers.get("CF-Connecting-IP"): return request.headers.get("CF-Connecting-IP")
         if request.headers.getlist("X-Forwarded-For"): return request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
         return request.remote_addr
-    except: return "Unknown"
+    except: return "Unknown_IP"
 
 @app.before_request
 def firewall_and_csrf():
@@ -311,12 +312,16 @@ def firewall_and_csrf():
         db = load_db()
         banned_ips = set(db.get("banned_ips", []))
         ip = get_real_ip()
-        if ip in banned_ips: return "Blocked", 403
+        if ip in banned_ips: return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL LVT.", 403
+
         ua = (request.headers.get('User-Agent') or '').lower()
         blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
-        if any(bot in ua for bot in blocked_bots): return "Blocked", 403
+        if any(bot in ua for bot in blocked_bots): 
+            return "Firewall Blocked Suspicious Bot/Scanner.", 403
+            
         if request.path.startswith("/admin") and request.path not in ["/admin_login", "/telegram_mini_app"]:
-            if session.get('role') != 'admin': return redirect('/admin_login')
+            if session.get('role') != 'admin':
+                return redirect('/admin_login')
     except: pass
 
 @app.after_request
@@ -363,35 +368,52 @@ def verify_request_signature(data):
 
 def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
     now = int(time.time() * 1000)
+    
     mnt = db.get("settings", {}).get("maintenance_until", 0)
-    if isinstance(mnt, int) and mnt > now: return False, "maintenance", mnt
+    if isinstance(mnt, int) and mnt > now:
+        return False, "maintenance", mnt
+    
     with db_lock:
         banned_olms = db.get("banned_olms", {})
         if req_olm_name != "N/A" and req_olm_name in banned_olms:
             ban_exp = banned_olms[req_olm_name]
-            if ban_exp == "permanent" or ban_exp > now: return False, "banned_olm", ban_exp
+            if ban_exp == "permanent" or ban_exp > now:
+                return False, "banned_olm", ban_exp
 
-        if key not in db["keys"]: return False, "error", "KEY_NOT_FOUND"
+        if key not in db["keys"]: return False, "error", "Mã Key không tồn tại!"
         kd = db["keys"][key]
-        if not kd.get("activated", False): return False, "error", "KEY_NOT_ACTIVATED"
-        if kd.get('status') == 'banned': return False, "error", "KEY_BANNED"
+        
+        if not kd.get("activated", False): return False, "error", "Key chưa được kích hoạt trên Mini App!"
+        if kd.get('status') == 'banned': return False, "error", "TÀI KHOẢN BỊ KHÓA: Key của bạn đã bị Admin ban vĩnh viễn!"
+        
         temp_ban = kd.get("temp_ban_until", 0)
-        if temp_ban > now: return False, "error", "TEMP_BANNED"
+        if temp_ban > now:
+            rem = (temp_ban - now) // 60000
+            return False, "error", f"PHẠT SHARE KEY: Key đang bị khóa tạm thời. Thử lại sau {rem} phút."
+
         db_changed = False
         if kd.get('exp') == 'pending': 
             kd['exp'] = now + kd.get('durationMs', 0)
             db_changed = True
-        if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): return False, "error", "KEY_EXPIRED"
+            
+        if kd.get('exp') != 'permanent' and now > kd.get('exp', 0): 
+            return False, "error", "KEY HẾT HẠN: Vui lòng liên hệ Admin mua Key mới!"
+        
         bound_olm = kd.get("bound_olm", "").strip()
         if bound_olm and req_olm_name != "N/A":
             if bound_olm.lower() != req_olm_name.lower():
-                return False, "error", "INVALID_OLM"
+                kd["status"] = "banned"
+                db.setdefault("security_alerts", []).insert(0, {"time": now, "id": ip, "user": req_olm_name, "reason": f"Sử dụng sai định danh"})
+                save_db(db)
+                return False, "error", f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Key đã bị Khóa Vĩnh Viễn!"
+
         if deviceId:
             devices = kd.setdefault("devices", [])
             if deviceId not in devices:
-                if len(devices) >= kd.get("maxDevices", 1): return False, "error", "DEVICE_LIMIT"
+                if len(devices) >= kd.get("maxDevices", 1): return False, "error", "VƯỢT THIẾT BỊ: Key đã đạt giới hạn thiết bị tối đa!"
                 devices.append(deviceId)
                 db_changed = True
+        
         if db_changed: save_db(db)
         return True, "success", "OK"
 
@@ -399,26 +421,51 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
 def check_api():
     try:
         ip = get_real_ip()
-        if not check_api_rate_limit(ip): return jsonify({"status": "error"}), 429
+        if not check_api_rate_limit(ip): return jsonify({"status": "error", "message": "Spam API!"}), 429
         if request.method == 'OPTIONS': return make_response("ok", 200)
+        
         data = request.json or {}
-        if not verify_request_signature(data): return jsonify({"status": "error"}), 403
+        if not verify_request_signature(data):
+            return jsonify({"status": "error", "message": "Chữ ký API không hợp lệ. Hãy làm lại theo hướng dẫn!"}), 403
+
         key = data.get('key', '')[:100]
         deviceId = data.get('deviceId', '')[:100]
         olm_name = data.get('olm_name', 'N/A')[:100]
+        
         db = load_db()
         valid, code, msg_or_time = _core_validate(db, key, deviceId, olm_name, ip)
+        
         if not valid:
-            if code == "maintenance": return jsonify({"status": "maintenance", "time": msg_or_time})
-            if code == "banned_olm": return jsonify({"status": "banned_olm", "time": msg_or_time})
-            return jsonify({"status": "error", "msg": msg_or_time}), 400
-        kd = db["keys"][key]
+            if code == "maintenance": return jsonify({"status": "maintenance", "maintenance_until": msg_or_time})
+            if code == "banned_olm": return jsonify({"status": "banned_olm", "ban_until": msg_or_time})
+            return jsonify({"status": "error", "message": msg_or_time}), 400
+
+        is_vip = db["keys"][key].get("vip", False)
+        key_type = "VIP" if is_vip else "NORMAL"
+        global_notice = db.get("settings", {}).get("global_notice", "")
+
         return jsonify({
             "status": "success", 
-            "vip": kd.get("vip", False),
-            "exp": kd.get("exp"),
-            "name": key
+            "loader_enabled": db["keys"][key].get("loader_enabled", True),
+            "assigned_user": db["keys"][key].get("bound_olm", ""),
+            "key_type": key_type,
+            "global_notice": global_notice,
+            "exp": db["keys"][key].get("exp")
         })
+    except Exception as e: return jsonify({"status": "error", "message": "Lỗi API Check"}), 500
+
+@app.route('/api/ban_key', methods=['POST', 'OPTIONS'])
+def api_ban_key():
+    try:
+        if request.method == 'OPTIONS': return make_response("ok", 200)
+        data = request.json or {}
+        key = data.get('key', '')
+        db = load_db()
+        with db_lock:
+            if key in db.get("keys", {}):
+                db["keys"][key]["status"] = "banned"
+                save_db(db)
+        return jsonify({"status": "success"})
     except: return jsonify({"status": "error"}), 500
 
 @app.route('/api/core', methods=['POST', 'OPTIONS'])
@@ -427,18 +474,52 @@ def serve_core_payload():
         ip = get_real_ip()
         if not check_api_rate_limit(ip): return jsonify({"status": "error"}), 429
         if request.method == 'OPTIONS': return make_response("ok", 200)
+
         data = request.json or {}
         if not verify_request_signature(data): return jsonify({"status": "error"}), 403
+        
         key = data.get('key', '')
         deviceId = data.get('deviceId', '')
         olm_name = data.get('olm_name', 'N/A')
+        
         db = load_db()
         valid, code, _ = _core_validate(db, key, deviceId, olm_name, ip)
         if not valid: return jsonify({"status": "error"}), 403
+
         custom_script = db.get("users", {}).get("admin", {}).get("custom_script", "")
-        enc = base64.b64encode(custom_script.encode('utf-8')).decode('utf-8')
-        return jsonify({"status": "success", "payload": enc[::-1]})
+        encoded_core = base64.b64encode(custom_script.encode('utf-8')).decode('utf-8')
+        reversed_core = encoded_core[::-1]
+        return jsonify({"status": "success", "payload": reversed_core})
     except: return jsonify({"status": "error"}), 500
+
+@app.route('/api/script_ping', methods=['POST', 'OPTIONS'])
+def script_ping():
+    try:
+        ip = get_real_ip()
+        if not check_api_rate_limit(ip): return "Too Many Requests", 429
+        if request.method == 'OPTIONS': return make_response("ok", 200)
+        data = request.json or {}
+        key = data.get("key")
+        db = load_db()
+        now = int(time.time() * 1000)
+        
+        with db_lock:
+            if key in db.get("keys", {}):
+                kd = db["keys"][key]
+                known_ips = kd.setdefault("known_ips", {})
+                to_del = [i for i, t in known_ips.items() if now - t > 120000]
+                for i in to_del: del known_ips[i]
+                
+                known_ips[ip] = now
+                if len(known_ips) > kd.get("maxDevices", 1):
+                    kd["violations"] = kd.get("violations", 0) + 1
+                    kd["known_ips"] = {}
+                    save_db(db)
+                    return "Banned for sharing", 403
+                active_sessions[key] = {"ip": ip, "key": key, "last_seen": time.time()}
+                return "ok", 200
+        return "invalid", 403
+    except: return "error", 500
 
 @app.route('/api/script/core_engine.js')
 def serve_core_engine():
@@ -452,6 +533,7 @@ def serve_core_engine():
         elif line.strip().startswith('// ==/UserScript=='): in_header = False
         elif not in_header: body.append(line)
     body_str = '\n'.join(body)
+    
     b64 = base64.b64encode(body_str.encode('utf-8')).decode('utf-8')
     rev_b64 = b64[::-1]
     hx = rev_b64.encode('utf-8').hex()
@@ -465,7 +547,7 @@ def serve_core_engine():
             var _0x3c = _0x2b.split('').reverse().join('');
             var _0x4d = decodeURIComponent(escape(atob(_0x3c)));
             new Function(_0x4d)(); 
-        }} catch(e) {{}}
+        }} catch(e) {{ console.error("[LVT] System Engine Error"); }}
     }})();
     """
     resp = make_response(secure_core)
@@ -477,6 +559,7 @@ def serve_loader_script():
     db = load_db()
     raw_script = db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT)
     host_url = WEB_URL if WEB_URL else request.url_root.rstrip('/')
+    
     lines = raw_script.split('\n')
     header = []
     in_header = False
@@ -486,8 +569,9 @@ def serve_loader_script():
         elif line.strip().startswith('// ==/UserScript=='):
             header.append(line); in_header = False; break
         elif in_header: header.append(line)
+            
     header_str = '\n'.join(header)
-    if '@grant        GM_xmlhttpRequest' not in header_str:
+    if '@grant        GM_xmlhttpRequest' not in header_str and '@grant GM_xmlhttpRequest' not in header_str:
         header_str = header_str.replace('// ==/UserScript==', '// @grant        GM_xmlhttpRequest\n// ==/UserScript==')
     
     loader_logic = f"""
@@ -560,7 +644,7 @@ def serve_loader_script():
         }}
         let r = await req(saved);
         if (r.status === 'success') {{
-            showP(`Kích hoạt thành công!<br>Key: ${{r.name}}<br>Loại: ${{r.vip?'VIP':'THƯỜNG'}}<br>Hạn dùng đang đếm ngược...`, "success");
+            showP(`Kích hoạt thành công!<br>Key: ${{r.name}}<br>Loại: ${{r.key_type}}<br>Hạn dùng đang đếm ngược...`, "success");
             let expTime = r.exp;
             if(expTime !== 'permanent') {{
                 setInterval(()=>{{
@@ -580,7 +664,7 @@ def serve_loader_script():
             GM_setValue('lvt_key', '');
             if(r.status==='maintenance') showP("Server bảo trì!");
             else if(r.status==='banned_olm') showP("OLM Banned!");
-            else showP(r.msg || "Key không hợp lệ hoặc chưa kích hoạt!");
+            else showP(r.message || "Key không hợp lệ hoặc chưa kích hoạt!");
         }}
     }}
     
@@ -675,7 +759,7 @@ def telegram_mini_app():
             
             .card {{ background: #1a1c26; border: 1px solid #2a2d3d; padding: 15px; border-radius: 12px; margin-bottom: 10px; }}
             .nav {{ display: flex; gap: 5px; margin-bottom: 20px; }}
-            .nav-btn {{ flex: 1; padding: 12px; background: #1a1c26; text-align: center; border-radius: 8px; color: #8892b0; border: 1px solid #2a2d3d; font-size: 14px; font-weight: 700; }}
+            .nav-btn {{ flex: 1; padding: 12px; background: #1a1c26; text-align: center; border-radius: 8px; color: #8892b0; border: 1px solid #2a2d3d; font-size: 14px; font-weight: 700; cursor: pointer; }}
             .nav-btn.act {{ background: #00bfff; color: #000; border-color: #00bfff; }}
             #welc {{ position:fixed; inset:0; background:rgba(18,20,29,0.95); z-index:99; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; }}
             #mnt-overlay {{ position:fixed; inset:0; background:rgba(18,20,29,0.98); z-index:999; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#ff3366; }}
@@ -811,10 +895,10 @@ def telegram_mini_app():
             function switchT(t) {{
                 ['act','mgr','scr'].forEach(x=>{{ 
                     document.getElementById('tab-'+x).style.display='none'; 
-                    document.querySelector('.nav-btn:nth-child('+({'act':1,'mgr':2,'scr':3}[x])+')').classList.remove('act');
+                    document.querySelector('.nav-btn:nth-child('+({{'act':1,'mgr':2,'scr':3}}[x])+')').classList.remove('act');
                 }});
                 document.getElementById('tab-'+t).style.display='block';
-                document.querySelector('.nav-btn:nth-child('+({'act':1,'mgr':2,'scr':3}[t])+')').classList.add('act');
+                document.querySelector('.nav-btn:nth-child('+({{'act':1,'mgr':2,'scr':3}}[t])+')').classList.add('act');
                 if(t==='mgr') loadK();
             }}
             
@@ -879,6 +963,7 @@ def admin_login():
         admin_login_attempts = {k: v for k, v in admin_login_attempts.items() if now - v['time'] < 300} 
         attempts = admin_login_attempts.get(ip, {'count': 0, 'time': now})
         if attempts['count'] >= 5: return swal_back("Khóa", "Thử lại sau 5 phút!", "error")
+        
         if request.method == 'POST':
             db = load_db()
             u = request.form.get('username', '').strip().lower()
@@ -891,10 +976,12 @@ def admin_login():
                 with db_lock: log_admin_action(db, f"Admin Login: {ip}")
                 save_db(db)
                 return redirect('/admin')
+                
             attempts['count'] += 1
             attempts['time'] = now
             admin_login_attempts[ip] = attempts
             return swal_back("Lỗi", f"Sai thông tin! Còn {5 - attempts['count']} lần.", "error")
+            
         return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control mt-2" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-3">VÀO HỆ THỐNG</button></form></div></body></html>'''
     except: return "LỖI", 200
 
