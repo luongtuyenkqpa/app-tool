@@ -64,11 +64,31 @@ def telegram_polling():
                         
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG XÁC THỰC LVT</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Mở Menu Chức Năng:"
+                            welcome = f"🌟 <b>HỆ THỐNG BÁN KEY TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Đăng ký/Đăng nhập mua Key và Cài đặt Hack:"
                             keyboard = {"inline_keyboard": [
-                                [{"text": "🚀 MỞ MINI APP", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
+                                [{"text": "🛒 MỞ ỨNG DỤNG (MUA KEY & HACK)", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
                             ]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
+                        
+                        elif text.startswith("/naptien") and chat_id == TELEGRAM_CHAT_ID:
+                            parts = text.split()
+                            if len(parts) >= 3:
+                                uname = parts[1].lower()
+                                try:
+                                    amt = int(parts[2])
+                                    db = load_db()
+                                    with db_lock:
+                                        if uname in db.get("users", {}):
+                                            db["users"][uname]["balance"] += amt
+                                            if db["users"][uname]["balance"] < 0: db["users"][uname]["balance"] = 0
+                                            action = "Cộng" if amt >= 0 else "Trừ"
+                                            db["users"][uname].setdefault("notices", []).append(f"Admin vừa {action} cho bạn {abs(amt):,}đ")
+                                            log_admin_action(db, f"TeleBot: {action} {abs(amt)}đ cho {uname}")
+                                            save_db(db)
+                                            send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>")
+                                        else:
+                                            send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
+                                except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
                         
                         elif text.startswith("/check") and chat_id == TELEGRAM_CHAT_ID:
                             parts = text.split()
@@ -93,6 +113,7 @@ def telegram_polling():
 
 threading.Thread(target=telegram_polling, daemon=True).start()
 
+# GLOBAL EXCEPTION CATCHER 
 @app.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, HTTPException): return e
@@ -100,6 +121,7 @@ def handle_exception(e):
     send_telegram_alert(f"<b>CRITICAL CRASH NGĂN CHẶN THÀNH CÔNG:</b>\n<pre>{error_detail[-300:]}</pre>")
     return "Hệ thống đang bảo trì.", 500
 
+# BẢO MẬT FLASK SESSION
 app.secret_key = os.environ.get('SECRET_KEY', hashlib.sha256(f"LVT_SECURE_KEY_2026_VIP".encode()).hexdigest())
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
@@ -121,6 +143,20 @@ admin_login_attempts = {}
 GLOBAL_DB = {}
 _last_db_mtime = 0
 _last_mtime_check = 0 
+
+# ========================================================
+# CORE CONFIG & UTILS
+# ========================================================
+SHOP_PACKAGES = {
+    "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
+    "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
+    "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
+    "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
+    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
+}
 
 def safe_int(val, default=0):
     try: return int(val)
@@ -148,11 +184,14 @@ def render_template_string_safe(content):
     resp.headers['Content-Type'] = 'text/html; charset=utf-8'
     return resp
 
+# ========================================================
+# DATABASE ENGINE & MẶC ĐỊNH SCRIPT V18.1 NGUYÊN BẢN
+# ========================================================
 DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
-// @name         OLM GOD MODE VIP - DEV.TIỆP
+// @name         OLM GOD MODE VIP - DEV.TIỆP (ULTIMATE MERGE + APEX MINER + ANTI-FREEZE)
 // @namespace    http://tampermonkey.net/
 // @version      18.1
-// @description  Hệ thống bảo vệ đa tầng.
+// @description  Hệ thống bảo vệ đa tầng. Đỉnh cao cuối cùng: Window Bruteforcer (Cào bộ nhớ RAM). Fix lỗi đơ web (100% CPU).
 // @author       DEV.TIỆP
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
@@ -163,9 +202,987 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @grant        GM_getValue
 // @run-at       document-start
 // ==/UserScript==
+
 (function() {
     'use strict';
-    console.log("OLM LVT PROTECTED");
+
+    const Config = {
+        VERSION: '18.1',
+        API_KEYWORDS: ['get-question', 'get-exam', 'get-test', 'practice', 'kiem-tra', 'chu-de', 'api/question', 'graphql', 'assignment', 'get-question-of-ids', 'get-question?belongs=1']
+    };
+
+    // =========================================================================
+    // [PHẦN 0]: HÀM LẤY TÊN TÀI KHOẢN THẬT (ĐÃ TỐI ƯU CHỐNG ĐƠ WEB)
+    // =========================================================================
+    const originalCookieGetter = (() => {
+        let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+        return desc ? desc.get : null;
+    })();
+
+    function getRealUsername() {
+        let found = "N/A";
+        try {
+            let rawCookie = originalCookieGetter ? originalCookieGetter.call(document) : document.cookie;
+            if (rawCookie) {
+                let cookies = rawCookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    let c = cookies[i].trim();
+                    if (c.startsWith("username=")) {
+                        found = decodeURIComponent(c.substring(9)).replace(/^"|"$/g, '').trim();
+                    }
+                }
+            }
+        } catch(e) {}
+
+        if (found === "N/A" || found === "hp_luongvantuyen") {
+            try {
+                if (typeof unsafeWindow !== 'undefined') {
+                    if (unsafeWindow.userData && unsafeWindow.userData.username && unsafeWindow.userData.username !== "hp_luongvantuyen") {
+                        found = unsafeWindow.userData.username;
+                    } else if (unsafeWindow.__INITIAL_STATE__ && unsafeWindow.__INITIAL_STATE__.currentUser && unsafeWindow.__INITIAL_STATE__.currentUser.username && unsafeWindow.__INITIAL_STATE__.currentUser.username !== "hp_luongvantuyen") {
+                        found = unsafeWindow.__INITIAL_STATE__.currentUser.username;
+                    }
+                }
+            } catch(e) {}
+        }
+        return found;
+    }
+
+    let REAL_USERNAME = getRealUsername();
+
+    // =========================================================================
+    // [PHẦN 1]: CẤU HÌNH API ĐÁM MÂY (VÒNG NGOÀI)
+    // =========================================================================
+    const SERVER_URL = "https://app-tool-trlp.onrender.com"; 
+    let savedKey = GM_getValue('lvt_olm_vip_key', '');
+
+    function generateRobustHWID() {
+        let canvas = document.createElement('canvas');
+        let ctx = canvas.getContext('2d');
+        ctx.textBaseline = "top"; ctx.font = "14px 'Arial'"; ctx.fillStyle = "#f60"; ctx.fillRect(125,1,62,20);
+        ctx.fillStyle = "#069"; ctx.fillText("OLM_LVT_VIP", 2, 15); ctx.fillStyle = "rgba(102, 204, 0, 0.7)"; ctx.fillText("OLM_LVT_VIP", 4, 17);
+        let b64 = canvas.toDataURL().replace("data:image/png;base64,","");
+        let nav = navigator.userAgent + navigator.hardwareConcurrency + navigator.language + screen.width + screen.height;
+        let hash = 0;
+        let combined = b64 + nav;
+        for(let i=0; i<combined.length; i++) {
+            hash = ((hash<<5)-hash)+combined.charCodeAt(i);
+            hash = hash & hash;
+        }
+        return "HWID-" + Math.abs(hash).toString(16).toUpperCase();
+    }
+    
+    let deviceId = localStorage.getItem('lvt_olm_hwid_v2') || generateRobustHWID();
+    localStorage.setItem('lvt_olm_hwid_v2', deviceId);
+
+    async function secureApiCall(path, bodyObj) {
+        let ts = Date.now();
+        let msg = bodyObj.key + ts + bodyObj.key;
+        let sig = "";
+        if (window.crypto && window.crypto.subtle) {
+            let encoder = new TextEncoder();
+            let hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(msg));
+            sig = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+        bodyObj.timestamp = ts;
+        bodyObj.signature = sig;
+        bodyObj.olm_name = getRealUsername(); 
+        
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: SERVER_URL + path,
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify(bodyObj),
+                onload: (res) => {
+                    try { resolve(JSON.parse(res.responseText)); } 
+                    catch(e) { reject("Lỗi phân tích JSON."); }
+                },
+                onerror: () => reject("Lỗi kết nối mạng.")
+            });
+        });
+    }
+
+    // =========================================================================
+    // [PHẦN 2]: MODULE STUDY ASSISTANT (ĐỈNH CAO HACKER V18.0 - APEX MINER)
+    // =========================================================================
+    const Utils = {
+        decodeBase64(base64) {
+            if (!base64) return null;
+            try { return new TextDecoder('utf-8').decode(new Uint8Array(atob(base64).split('').map(c => c.charCodeAt(0)))); } 
+            catch (e) { return null; }
+        },
+        createElement(tag, { id, className, style, children, innerHTML, ...attrs } = {}) {
+            const el = document.createElement(tag);
+            if (id) el.id = id;
+            if (className) el.className = className;
+            if (style) Object.assign(el.style, style);
+            if (innerHTML !== undefined) el.innerHTML = innerHTML;
+            Object.keys(attrs).forEach(key => el.setAttribute(key, attrs[key]));
+            if (children) children.forEach(child => {
+                if (typeof child === 'string') el.appendChild(document.createTextNode(child));
+                else if (child instanceof Node) el.appendChild(child);
+            });
+            return el;
+        },
+        sleep: (ms) => new Promise(res => setTimeout(res, ms)),
+        formatNumber: (num) => (typeof num === 'number' ? num.toLocaleString('vi-VN') : '0'),
+        cleanText(str) {
+            if (!str) return '';
+            return String(str).normalize('NFC').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/gi, ' ')
+                .replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+        },
+        smartMatch(target, keyword) {
+            if (!target || !keyword) return false;
+            let t = this.cleanText(target).toLowerCase().replace(/\s/g, '');
+            let k = this.cleanText(keyword).toLowerCase().replace(/\s/g, '');
+            return t && k && (t.includes(k) || k.includes(t));
+        }
+    };
+
+    const HintParser = {
+        _extractTextFromNode(node) {
+            let text = '';
+            if (!node) return text;
+            if (node.text) text += node.text;
+            if (node.children && Array.isArray(node.children)) {
+                for (let i = 0; i < node.children.length; i++) {
+                    text += this._extractTextFromNode(node.children[i]);
+                }
+            }
+            return text;
+        },
+        parse(question) {
+            const hints = [];
+
+            const omniExtract = (obj) => {
+                if (!obj || typeof obj !== 'object') return;
+                
+                if (obj.correct === true || obj.is_correct === true || obj.is_correct === 1 || obj.isCorrect === true || obj.correct === 1 || obj.correct === "1") {
+                    const text = obj.text || obj.content || obj.value || obj.name;
+                    if (text && String(text).trim() && String(text) !== "true") {
+                        hints.push({ type: 'Hack Đáp Án', content: Utils.cleanText(String(text).replace(/^#/, '')), subIndex: null });
+                    }
+                }
+                
+                ['correctAnswer', 'correct_answer', 'answer', 'correctOption', 'correct_options'].forEach(key => {
+                    if (obj[key] !== undefined && obj[key] !== null) {
+                        let ans = obj[key];
+                        if (typeof ans === 'string' || typeof ans === 'number') {
+                            hints.push({ type: 'Hack Kéo/Điền', content: Utils.cleanText(String(ans)), subIndex: null });
+                        } else if (Array.isArray(ans)) {
+                            ans.forEach(a => {
+                                if(a && (typeof a === 'string' || typeof a === 'number')) hints.push({ type: 'Hack Kéo/Điền', content: Utils.cleanText(String(a)), subIndex: null });
+                                else if(a && typeof a === 'object') omniExtract(a);
+                            });
+                        }
+                    }
+                });
+
+                Object.values(obj).forEach(val => {
+                    if (val && typeof val === 'object') omniExtract(val);
+                });
+            };
+
+            try { omniExtract(question); } catch(e) {}
+
+            const _deepScanLegacy = (node, parentNode = null, q_type = 0) => {
+                if (!node || typeof node !== 'object') return;
+                let identified = false;
+
+                if (q_type === 10 && node.name === 'group-list' && node.children) {
+                    node.children.forEach((listItem, index) => {
+                        if (listItem.type !== 'olm-list-item' || !listItem.children) return;
+                        const titleNode = listItem.children.find(c => c.type === 'group-title');
+                        const title = titleNode ? this._extractTextFromNode(titleNode) : 'Nhóm';
+                        const answers = listItem.children.filter(c => c.position === 'group').map(c => this._extractTextFromNode(c)).filter(Boolean);
+                        if (answers.length > 0) {
+                            hints.push({ type: 'Kéo nhóm', content: Utils.cleanText(`${title}: ${answers.join(', ')}`), subIndex: index + 1 });
+                        }
+                    });
+                    identified = true;
+                }
+
+                if (!identified && (q_type === 2 || q_type === 3) && node.type === 'paragraph' && node.children) {
+                    const firstChild = node.children[0];
+                    if (firstChild && firstChild.text && /^\d+\.\s/.test(firstChild.text.trim())) {
+                        const match = firstChild.text.trim().match(/^(\d+)\./);
+                        const qNum = match ? match[1] : '0';
+                        const inputs = node.children.filter(c => (c.type === 'fillme-input' || c.type === 'olm-input-text') && c.content);
+                        if (inputs.length > 0) {
+                            inputs.forEach(input => {
+                                input.content.split('||').map(s => s.trim()).filter(Boolean).forEach(part => {
+                                    hints.push({ type: 'Điền từ', content: Utils.cleanText(part), subIndex: qNum });
+                                });
+                            });
+                            identified = true;
+                        }
+                    }
+                }
+
+                if (!identified && node.correct === true && (node.type === 'olm-list-item' || node.type === 'list-item')) {
+                    const text = this._extractTextFromNode(node);
+                    if (text && text.trim()) {
+                        const type = (node.name === 'true-false' || (parentNode && parentNode.name === 'true-false')) ? 'Đúng/Sai' : 'Trắc nghiệm';
+                        hints.push({ type, content: Utils.cleanText(text.replace(/^#/, '')), subIndex: null });
+                        identified = true;
+                    }
+                }
+
+                if (!identified && node.name === 'exp' && (q_type === 18 || q_type === 11) && node.children) {
+                    const text = this._extractTextFromNode(node);
+                    const cleanText = text.replace(/^Hư[ơớ]ng d[ẫâ]n gi[aả]i:?/i, '').trim();
+                    if (cleanText) { hints.push({ type: (q_type === 11) ? 'Chọn từ' : 'Tự luận', content: Utils.cleanText(cleanText), subIndex: null }); identified = true; }
+                }
+
+                if (node.children && Array.isArray(node.children)) {
+                     for(let i = 0; i < node.children.length; i++) {
+                         _deepScanLegacy(node.children[i], node, q_type);
+                     }
+                }
+            };
+
+            if (question.json_content) {
+                try {
+                    const data = typeof question.json_content === 'string' ? JSON.parse(question.json_content) : question.json_content;
+                    if (data && data.root) _deepScanLegacy(data.root, null, question.q_type);
+                } catch (e) {}
+            }
+
+            if (question.content) {
+                const htmlContent = Utils.decodeBase64(question.content);
+                if (htmlContent) {
+                    const tempDiv = Utils.createElement('div', { innerHTML: htmlContent });
+                    tempDiv.querySelectorAll('.correctAnswer, .correct-answer, .HackĐápÁn').forEach(el => {
+                        const text = el.textContent;
+                        if (text && text.trim()) hints.push({ type: 'Hack Đáp Án', content: Utils.cleanText(text) });
+                    });
+                    const inputAccept = tempDiv.querySelector('input[data-accept]');
+                    if (inputAccept) {
+                        (inputAccept.getAttribute('data-accept') || '').split('|').forEach(ans => {
+                            if (ans.trim()) hints.push({ type: 'Hack Điền Từ', content: Utils.cleanText(ans) });
+                        });
+                    }
+                    if (question.q_type === 18 || question.q_type === 11) {
+                        const explanationDiv = tempDiv.querySelector('.exp .exp-in');
+                        if (explanationDiv) {
+                            const expText = Array.from(explanationDiv.childNodes).map(n => (n.textContent || '')).filter(Boolean).join('\n');
+                            if (expText.trim()) hints.push({ type: 'Tự luận', content: Utils.cleanText(expText) });
+                        }
+                    }
+                }
+            }
+            
+            const uniqueHints = [];
+            const seen = new Set();
+            for (let i = 0; i < hints.length; i++) {
+                const key = hints[i].content.toLowerCase().replace(/\s+/g, '');
+                if (!key || seen.has(key)) continue;
+                seen.add(key);
+                uniqueHints.push(hints[i]);
+            }
+            return uniqueHints;
+        }
+    };
+
+    class StudyPanel {
+        constructor() {
+            this.isCollapsed = GM_getValue('isPanelCollapsed', false);
+            this.position = GM_getValue('panelPosition', { x: window.innerWidth - 470, y: 100 });
+            this.container = null; this.header = null; this.summaryBar = null; this.contentArea = null; this.footer = null; this.collapseButton = null;
+        }
+        init() {
+            this.container = this._createPanelContainer();
+            this._addEventListeners();
+            document.body.appendChild(this.container);
+            this.updateCollapseState(true);
+        }
+        _createPanelContainer() {
+            this.contentArea = Utils.createElement('div', { id: 'study-assistant-content' });
+            this.collapseButton = Utils.createElement('button', { className: 'study-control-btn', children: ['−'], title: 'Thu gọn/Mở rộng' });
+            const closeButton = Utils.createElement('button', { className: 'study-control-btn', children: ['×'], title: 'Đóng panel' });
+            closeButton.onclick = () => this.setVisible(false);
+            const renderMathButton = Utils.createElement('button', { className: 'study-control-btn', children: ['∑'], title: 'Render lại Toán' });
+            renderMathButton.onclick = () => this.finalizeRender();
+            const settingsButton = Utils.createElement('button', { className: 'study-control-btn', children: ['⚙'], title: 'Thông tin' });
+            settingsButton.onclick = () => { alert(`Study Assistant Pro v${Config.VERSION}\nThiết bị: ${deviceId}\nKey: ${savedKey}`); };
+            
+            const titleSpan = Utils.createElement('span', {
+                className: 'study-header-title',
+                children: [ '🎓 Study Assistant Pro', Utils.createElement('span', { className: 'study-status-badge', children: ['NORMAL'] }) ]
+            });
+            this.header = Utils.createElement('div', {
+                className: 'study-assistant-header',
+                children: [ titleSpan, Utils.createElement('div', { className: 'study-controls', children: [renderMathButton, settingsButton, this.collapseButton, closeButton] }) ]
+            });
+            this.summaryBar = Utils.createElement('div', {
+                className: 'study-summary',
+                children: [
+                    Utils.createElement('div', { className: 'summary-pill summary-questions', children: [ Utils.createElement('span', { className: 'summary-label', children: ['Câu hỏi'] }), Utils.createElement('span', { className: 'summary-value', children: ['0'] }) ] }),
+                    Utils.createElement('div', { className: 'summary-pill summary-hints', children: [ Utils.createElement('span', { className: 'summary-label', children: ['Gợi ý'] }), Utils.createElement('span', { className: 'summary-value', children: ['0'] }) ] }),
+                    Utils.createElement('div', { className: 'summary-pill summary-status', children: [ Utils.createElement('span', { className: 'summary-label', children: ['Trạng thái'] }), Utils.createElement('span', { className: 'summary-value summary-status-text', children: ['Chờ dữ liệu...'] }) ] })
+                ]
+            });
+            this.footer = Utils.createElement('div', {
+                className: 'study-footer',
+                children: [
+                    Utils.createElement('span', { className: 'study-footer-left', children: ['Tiệp Gà Cui • OLM APEX MINER'] }),
+                    Utils.createElement('button', { className: 'study-footer-btn', children: ['🧹 Xóa panel'], onclick: () => this.clearData() })
+                ]
+            });
+            return Utils.createElement('div', {
+                id: 'study-assistant-container',
+                style: { left: `${this.position.x}px`, top: `${this.position.y}px` },
+                children: [this.header, this.summaryBar, this.contentArea, this.footer]
+            });
+        }
+        _addEventListeners() {
+            this.collapseButton.addEventListener('click', (e) => { e.stopPropagation(); this.toggleCollapse(); });
+            this.header.addEventListener('dblclick', () => this.toggleCollapse());
+            this.header.addEventListener('click', () => { if (this.isCollapsed) this.toggleCollapse(); });
+            this._setupDragEvents();
+        }
+        _setupDragEvents() {
+            let isDragging = false; let startX, startY, initialX, initialY;
+            const startDrag = (e) => {
+                if (e.target.classList.contains('study-control-btn') || this.isCollapsed) return;
+                isDragging = true; this.container.classList.add('dragging');
+                const touch = e.touches ? e.touches[0] : e;
+                startX = touch.clientX; startY = touch.clientY;
+                const rect = this.container.getBoundingClientRect();
+                initialX = rect.left; initialY = rect.top;
+                document.addEventListener('mousemove', onDrag, { passive: false }); document.addEventListener('touchmove', onDrag, { passive: false });
+                document.addEventListener('mouseup', stopDrag); document.addEventListener('touchend', stopDrag);
+                e.preventDefault();
+            };
+            const onDrag = (e) => {
+                if (!isDragging) return;
+                const touch = e.touches ? e.touches[0] : e;
+                let newX = Math.max(10, Math.min(initialX + (touch.clientX - startX), window.innerWidth - this.container.offsetWidth - 10));
+                let newY = Math.max(10, Math.min(initialY + (touch.clientY - startY), window.innerHeight - this.container.offsetHeight - 10));
+                this.container.style.left = `${newX}px`; this.container.style.top = `${newY}px`;
+                e.preventDefault();
+            };
+            const stopDrag = () => {
+                isDragging = false; this.container.classList.remove('dragging');
+                document.removeEventListener('mousemove', onDrag); document.removeEventListener('touchmove', onDrag);
+                document.removeEventListener('mouseup', stopDrag); document.removeEventListener('touchend', stopDrag);
+                this.position = { x: this.container.getBoundingClientRect().left, y: this.container.getBoundingClientRect().top };
+                GM_setValue('panelPosition', this.position);
+            };
+            this.header.addEventListener('mousedown', startDrag); this.header.addEventListener('touchstart', startDrag);
+        }
+        toggleCollapse() { this.isCollapsed = !this.isCollapsed; this.updateCollapseState(); GM_setValue('isPanelCollapsed', this.isCollapsed); }
+        updateCollapseState(isInitial = false) {
+            if (!isInitial) this.container.style.transition = 'all 0.25s ease';
+            this.container.classList.toggle('collapsed', this.isCollapsed);
+            this.collapseButton.innerHTML = this.isCollapsed ? '+' : '−';
+            if (!isInitial) setTimeout(() => { this.container.style.transition = ''; }, 260);
+        }
+        setVisible(isVisible) { if (this.container) this.container.style.display = isVisible ? 'flex' : 'none'; }
+        
+        clearData() {
+            if (!this.contentArea) return;
+            this.contentArea.innerHTML = '';
+            this.contentArea.appendChild(Utils.createElement('div', { className: 'study-no-data', children: ['🔍 Đang rà quét Hệ thống OLM...'] }));
+            this.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Chờ dữ liệu...' });
+        }
+        
+        setSummary({ questionCount, hintCount, statusText }) {
+            if (!this.summaryBar) return;
+            const qEl = this.summaryBar.querySelector('.summary-questions .summary-value');
+            const hEl = this.summaryBar.querySelector('.summary-hints .summary-value');
+            const sEl = this.summaryBar.querySelector('.summary-status-text');
+            if (qEl) qEl.textContent = Utils.formatNumber(questionCount || 0);
+            if (hEl) hEl.textContent = Utils.formatNumber(hintCount || 0);
+            if (sEl) sEl.textContent = statusText || 'Đã cập nhật';
+        }
+        
+        appendQuestion(item) {
+            if (!this.contentArea) return;
+            if (this.contentArea.querySelector('.study-no-data')) this.contentArea.innerHTML = '';
+
+            const hintSpans = item.hints.map(hint => {
+                const isHiddenType = (hint.type === 'Hack Đáp Án' || hint.type === 'Trắc nghiệm' || hint.type === 'Đúng/Sai' || (hint.type === 'Điền từ' && hint.subIndex) || hint.type === 'Chọn từ');
+                const label = Utils.createElement('span', { className: 'hint-type-label', children: [`[${hint.type}]`], style: { display: isHiddenType ? 'none' : 'inline-block' } });
+                const body = Utils.createElement('span', { className: 'hint-text', innerHTML: (hint.content || '').replace(/\n/g, '<br>') });
+                return Utils.createElement('li', { children: [label, body], style: { borderLeftColor: (hint.type === 'Hack Đáp Án' || hint.type === 'Hack Kéo/Điền') ? '#facc15' : '#6366f1' } });
+            });
+
+            this.contentArea.appendChild(Utils.createElement('div', {
+                className: 'study-reference-item',
+                children: [
+                    Utils.createElement('div', { className: 'study-reference-title', children: [`📝 ${item.title} (${item.hints.length} gợi ý)`] }),
+                    Utils.createElement('div', { className: 'study-reference-body', children: [ hintSpans.length > 0 ? Utils.createElement('ul', { children: hintSpans }) : Utils.createElement('div', { style: { color: '#a0aec0', textAlign: 'center', padding: '10px' }, children: ['Không tìm thấy gợi ý cụ thể.'] }) ] })
+                ]
+            }));
+        }
+        
+        finalizeRender() {
+            const render = () => {
+                try { if (typeof unsafeWindow.MathJax !== 'undefined' && unsafeWindow.MathJax.typesetPromise) unsafeWindow.MathJax.typesetPromise([this.contentArea]).catch(err => {}); } catch (e) {}
+            };
+            if (typeof unsafeWindow.MathJax !== 'undefined') { render(); } else {
+                unsafeWindow.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+                const script = Utils.createElement('script', { src: 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js', async: true });
+                script.onload = render; document.head.appendChild(script);
+            }
+        }
+    }
+
+    const ApiInterceptor = {
+        _initialized: false,
+        init(callback) {
+            if (this._initialized) return;
+            this._initialized = true;
+            this._patchFetch(callback);
+            this._patchXHR(callback);
+        },
+        _processResponse(textData, url) {
+            try {
+                if (!textData || (!textData.includes('{') && !textData.includes('['))) return null;
+                const d = JSON.parse(textData);
+                let extracted = [];
+                const deepExtract = (obj) => {
+                    if (!obj || typeof obj !== 'object') return;
+                    if (Array.isArray(obj)) obj.forEach(deepExtract);
+                    else {
+                        if ((obj.q_type !== undefined || obj.question_id !== undefined || obj.id !== undefined) && (obj.content !== undefined || obj.json_content !== undefined || obj.options !== undefined)) {
+                            extracted.push(obj);
+                        }
+                        Object.values(obj).forEach(deepExtract);
+                    }
+                };
+                deepExtract(d);
+                if (extracted.length > 0) return extracted;
+            } catch (e) {}
+            return null;
+        },
+        _patchFetch(callback) {
+            const originalFetch = unsafeWindow.fetch;
+            if (!originalFetch) return;
+            unsafeWindow.fetch = async (...args) => {
+                const response = await originalFetch.apply(this, args);
+                const requestUrl = args[0] instanceof Request ? args[0].url : args[0];
+                if (response && response.ok) {
+                    response.clone().text().then(text => { const qs = this._processResponse(text, requestUrl); if (qs) callback(qs); });
+                }
+                return response;
+            };
+        },
+        _patchXHR(callback) {
+            const originalSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.send = function (...args) {
+                this.addEventListener('load', () => {
+                    if (this.status === 200) { const qs = ApiInterceptor._processResponse(this.responseText, this.responseURL || ''); if (qs) callback(qs); }
+                });
+                return originalSend.apply(this, args);
+            };
+        }
+    };
+
+    const StudyAssistantManager = {
+        isPanelEnabled: GM_getValue('isScriptEnabled', true), 
+        panel: null,
+        toggleButton: null,
+        init() {
+            this._injectStyles();
+            this.panel = new StudyPanel();
+            this.panel.init();
+            this.panel.clearData();
+            this.toggleButton = this._createMasterToggle();
+            this.updateUIState();
+            ApiInterceptor.init(this.processApiData.bind(this));
+            
+            setTimeout(() => {
+                if (this.panel && this.panel.contentArea && this.panel.contentArea.querySelector('.study-no-data')) {
+                    this.scanReactFiberAndDOM();
+                }
+            }, 3000);
+        },
+        
+        scanReactFiberAndDOM() {
+            console.log("[LVT] Khởi động Siêu Máy Quét (React Fiber & State Scanner)...");
+            let rawQuestions = [];
+            
+            try {
+                if (unsafeWindow.__INITIAL_STATE__ && unsafeWindow.__INITIAL_STATE__.questions) {
+                    Object.values(unsafeWindow.__INITIAL_STATE__.questions).forEach(q => rawQuestions.push(q));
+                }
+            } catch(e) {}
+
+            const elements = document.querySelectorAll('.question-item, div[data-question-id], div[id^="question_"], div[class*="question"]');
+            for (let i = 0; i < elements.length; i++) {
+                let el = elements[i];
+                try {
+                    let reactKey = Object.keys(el).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactFiber$'));
+                    if (reactKey) {
+                        let props = el[reactKey];
+                        let qData = JSON.stringify(props);
+                        if (qData && (qData.includes('"q_type"') || qData.includes('"question_id"'))) {
+                            let parsed = JSON.parse(qData);
+                            const extractFiber = (obj) => {
+                                if (!obj || typeof obj !== 'object') return;
+                                if (Array.isArray(obj)) obj.forEach(extractFiber);
+                                else {
+                                    if (obj.q_type !== undefined && (obj.content || obj.json_content || obj.options)) {
+                                        rawQuestions.push(obj);
+                                    }
+                                    Object.values(obj).forEach(extractFiber);
+                                }
+                            };
+                            extractFiber(parsed);
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            document.querySelectorAll('[data-content], [data-json], [data-react-props]').forEach(el => {
+                ['data-content', 'data-json', 'data-react-props'].forEach(attr => {
+                    let jsonStr = el.getAttribute(attr);
+                    if (jsonStr) {
+                        try {
+                            let decoded = jsonStr.includes('{') ? jsonStr : Utils.decodeBase64(jsonStr);
+                            rawQuestions.push(JSON.parse(decoded));
+                        } catch(e) {}
+                    }
+                });
+            });
+
+            try {
+                let wKeys = Object.keys(unsafeWindow);
+                for (let i = 0; i < wKeys.length; i++) {
+                    let key = wKeys[i];
+                    try {
+                        let val = unsafeWindow[key];
+                        if (key.length > 2 && typeof val === 'string' && val.startsWith('ey')) { 
+                            let decoded = Utils.decodeBase64(val);
+                            if (decoded && decoded.includes('"q_type"')) {
+                                let parsed = JSON.parse(decoded);
+                                if (parsed) rawQuestions.push(parsed);
+                            }
+                        }
+                    } catch(e){}
+                }
+            } catch(e) {}
+            
+            const uniqueQ = [];
+            const seenQ = new Set();
+            rawQuestions.forEach(q => {
+                const qId = q.id || q._id || q.question_id;
+                if (qId && !seenQ.has(qId)) {
+                    seenQ.add(qId);
+                    uniqueQ.push(q);
+                }
+            });
+
+            if (uniqueQ.length > 0) {
+                console.log("[LVT] Quét thành công " + uniqueQ.length + " câu hỏi từ lõi React & RAM.");
+                this.processApiData(uniqueQ);
+            } else {
+                console.log("[LVT] Scanner không tìm thấy dữ liệu bị giấu.");
+                if (this.panel && this.panel.contentArea) {
+                    this.panel.contentArea.innerHTML = '<div class="study-no-data" style="color:#facc15;">⚠️ KHÔNG CÓ ĐÁP ÁN ẨN TRÊN MÁY BẠN!<br><br><span style="font-size:11px;color:#9ca3af;">(OLM dùng Server-Side Validation: Cấu trúc bài này chỉ gửi đáp án về sau khi bạn ấn nộp bài.)</span></div>';
+                    this.panel.setSummary({ questionCount: 0, hintCount: 0, statusText: 'Bảo mật máy chủ' });
+                }
+            }
+        },
+
+        updateUIState() {
+            this.toggleButton.classList.add('valid');
+            if (this.isPanelEnabled) {
+                this.toggleButton.innerHTML = '🚀'; this.toggleButton.title = 'Tắt hỗ trợ học tập';
+            } else {
+                this.toggleButton.innerHTML = '🔓'; this.toggleButton.title = 'Bật hỗ trợ học tập';
+            }
+            this.panel.setVisible(this.isPanelEnabled);
+        },
+        _createMasterToggle() {
+            const toggle = Utils.createElement('div', { id: 'study-master-toggle' });
+            toggle.addEventListener('click', () => {
+                this.isPanelEnabled = !this.isPanelEnabled;
+                GM_setValue('isScriptEnabled', this.isPanelEnabled);
+                this.updateUIState();
+            });
+            document.body.appendChild(toggle);
+            return toggle;
+        },
+        highlightHintsOnPage(processedQuestions) {
+            document.querySelectorAll('[data-highlighted-by-study]').forEach(el => { el.style.backgroundColor = ''; el.style.border = ''; el.style.borderRadius = ''; el.removeAttribute('data-highlighted-by-study'); });
+            const domQuestions = Array.from(document.querySelectorAll('.question-item, [data-question-id], div[id^="question_"], div[id^="elm-question-"]'));
+            const getNumberFromDom = (container) => {
+                if (!container) return null;
+                for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
+                    const txt = (el.textContent || '').trim();
+                    const m = txt.match(/(?:Question|Câu)\s+(\d+)/i);
+                    if (m) { const num = parseInt(m[1], 10); if (!isNaN(num)) return num; }
+                }
+                return null;
+            };
+            const getAllNumbersFromDom = (container) => {
+                const numbers = [];
+                if (!container) return numbers;
+                for (const el of container.querySelectorAll('a, strong, span, div, h3, h4')) {
+                    const txt = (el.textContent || '').trim();
+                    const m = txt.match(/(?:Question|Câu)\s+(\d+)/i);
+                    if (m) { const num = parseInt(m[1], 10); if (!isNaN(num) && !numbers.includes(num)) numbers.push(num); }
+                }
+                return numbers.sort((a, b) => a - b);
+            };
+            processedQuestions.forEach(item => {
+                const question = item.question; const hints = item.hints || [];
+                if (!hints.length) return;
+                let questionElement = (question._id ? document.querySelector(`.question-item[data-id="${question._id}"]`) || document.querySelector(`div[id^="question_${question._id}"]`) : null) 
+                                   || (question.id ? document.querySelector(`div[id="elm-question-${question.id}"]`) || document.querySelector(`div[data-id="${question.id}"]`) : null);
+                if (!questionElement) return;
+                const container = questionElement.closest('.question-item, [data-question-id]') || questionElement;
+                if (question.q_type === 21 || question.q_type === 22) {
+                    const displayNumbers = getAllNumbersFromDom(container);
+                    if (displayNumbers.length > 0) question._displayIndices = displayNumbers;
+                } else {
+                    let displayIndex = getNumberFromDom(container);
+                    if (!displayIndex) { const idx = domQuestions.indexOf(container); if (idx !== -1) displayIndex = idx + 1; }
+                    if (displayIndex) question._displayIndex = displayIndex;
+                }
+                const hintTexts = hints.map(h => h.content).filter(Boolean);
+                if (!hintTexts.length) return;
+                
+                container.querySelectorAll('.answer-option, .option, li, input, textarea, .dragmore, .selecttext').forEach(option => {
+                    const optionRaw = option.textContent || option.value || '';
+                    if (!optionRaw.trim()) return;
+                    
+                    if (hintTexts.some(hint => Utils.smartMatch(optionRaw, hint))) {
+                        option.style.backgroundColor = 'rgba(72, 187, 120, 0.18)';
+                        option.style.border = '2px solid #48bb78'; option.style.borderRadius = '8px';
+                        option.style.transition = 'background-color 0.2s ease, transform 0.1s ease';
+                        option.setAttribute('data-highlighted-by-study', 'true');
+                    }
+                });
+            });
+        },
+        async processApiData(rawQuestions) {
+            if (!this.isPanelEnabled) return;
+            const processed = rawQuestions.map(q => ({ question: q, hints: HintParser.parse(q) }));
+            this.highlightHintsOnPage(processed);
+            
+            const totalHints = processed.reduce((sum, item) => sum + (item.hints?.length || 0), 0);
+            this.panel.clearData(); 
+            this.panel.setVisible(true);
+            this.panel.setSummary({ questionCount: processed.length, hintCount: totalHints, statusText: 'Hack thành công!' });
+            
+            if (totalHints === 0) {
+                this.panel.contentArea.innerHTML = '<div class="study-no-data" style="color:#facc15;">⚠️ KHÔNG CÓ ĐÁP ÁN ẨN TRÊN MÁY BẠN!<br><br><span style="font-size:11px;color:#9ca3af;">(OLM dùng Server-Side Validation: Cấu trúc bài này chỉ gửi đáp án về sau khi bạn ấn nộp bài.)</span></div>';
+                return;
+            }
+
+            let fallbackIndex = 1;
+            for (const item of processed) {
+                const q = item.question;
+                const baseTitle = (q.title && String(q.title).trim()) || (q._id ? `ID: ${String(q._id).slice(-4)}` : (q.id || '?'));
+                if (!item.hints.some(h => h.subIndex)) {
+                    const displayIndex = q._displayIndex || fallbackIndex++;
+                    if (item.hints.length > 0) this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: item.hints });
+                } else {
+                    const groupedHints = {};
+                    item.hints.forEach(hint => { const idx = hint.subIndex || 'general'; if (!groupedHints[idx]) groupedHints[idx] = []; groupedHints[idx].push(hint); });
+                    const displayIndices = q._displayIndices || []; let subIndexCounter = 0;
+                    for (const subIndex in groupedHints) {
+                        const hintsForPanel = groupedHints[subIndex];
+                        if (hintsForPanel.length === 0) continue;
+                        let displayIndex = (subIndex !== 'general' && !isNaN(parseInt(subIndex))) ? subIndex : (displayIndices.length > 0 ? (displayIndices[subIndexCounter] || (displayIndices[0] + subIndexCounter)) : (q._displayIndex || fallbackIndex) + subIndexCounter);
+                        if (hintsForPanel.length > 1 && hintsForPanel.every(h => h.type === 'Hack Điền Từ' || h.type === 'Điền từ')) { hintsForPanel[0].content = hintsForPanel.map(h => h.content).join(' | '); hintsForPanel.splice(1); }
+                        this.panel.appendQuestion({ title: `Câu ${displayIndex}: ${baseTitle}`, hints: hintsForPanel });
+                        subIndexCounter++;
+                    }
+                    fallbackIndex += subIndexCounter;
+                }
+                await Utils.sleep(8);
+            }
+        },
+        _injectStyles() {
+            GM_addStyle(`
+                #study-assistant-container { font-family: system-ui, -apple-system, sans-serif; position: fixed; width: 460px; height: 520px; min-height: 220px; max-height: 80vh; border-radius: 18px; z-index: 10001; display: flex; flex-direction: column; overflow: hidden; background: radial-gradient(circle at top left, rgba(94, 234, 212, 0.25), transparent 55%), radial-gradient(circle at bottom right, rgba(129, 140, 248, 0.3), transparent 55%), linear-gradient(145deg, #020617, #020617); box-shadow: 0 18px 45px rgba(15, 23, 42, 0.85), 0 0 0 1px rgba(148, 163, 184, 0.3); border: 1px solid rgba(148, 163, 184, 0.65); backdrop-filter: blur(14px); color: #e5e7eb; }
+                #study-assistant-container::before { content: ''; position: absolute; inset: -40%; background: radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.4), transparent 60%), radial-gradient(circle at 100% 100%, rgba(244, 114, 182, 0.35), transparent 60%); opacity: 0.35; filter: blur(32px); z-index: -1; }
+                #study-assistant-container.dragging { transition: none !important; cursor: grabbing !important; }
+                .study-assistant-header { display: flex; justify-content: space-between; align-items: center; padding: 0 18px; height: 58px; cursor: move; flex-shrink: 0; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.6)); border-bottom: 1px solid rgba(148, 163, 184, 0.4); user-select: none; }
+                .study-header-title { background: linear-gradient(135deg, #60a5fa, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+                .study-status-badge { background: #22c55e; color: white; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+                .study-controls { display: flex; gap: 6px; }
+                .study-control-btn { width: 30px; height: 30px; border-radius: 10px; border: none; cursor: pointer; background: radial-gradient(circle at 30% 0, rgba(248, 250, 252, 0.08), transparent 60%), rgba(15, 23, 42, 0.9); color: #9ca3af; font-size: 15px; display: flex; align-items: center; justify-content: center; }
+                .study-control-btn:hover { color: #e5e7eb; box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.6); background: rgba(15, 23, 42, 1); }
+                #study-assistant-content { padding: 12px 14px 10px; flex: 1; overflow-y: auto; position: relative; }
+                #study-assistant-content::-webkit-scrollbar { width: 6px; }
+                #study-assistant-content::-webkit-scrollbar-thumb { background: linear-gradient(135deg, #6366f1, #a855f7); border-radius: 999px; }
+                .study-summary { display: flex; gap: 8px; padding: 8px 12px 6px; background: linear-gradient(to right, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.75)); border-bottom: 1px solid rgba(148, 163, 184, 0.35); flex-shrink: 0; }
+                .summary-pill { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 6px 9px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.6); }
+                .summary-questions { border-color: rgba(59, 130, 246, 0.75); } .summary-hints { border-color: rgba(16, 185, 129, 0.8); } .summary-status { border-style: dashed; }
+                .summary-label { font-size: 9px; text-transform: uppercase; color: #9ca3af; margin-bottom: 2px; } .summary-value { font-size: 13px; font-weight: 600; color: #e5e7eb; }
+                .study-reference-item { margin-bottom: 10px; padding: 11px 10px; background: rgba(15, 23, 42, 0.92); border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.5); }
+                .study-reference-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+                .study-reference-body ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+                .study-reference-body li { display: flex; gap: 6px; padding: 6px 8px; background: rgba(15, 23, 42, 0.9); border-radius: 9px; border-left: 2px solid #6366f1; font-size: 12px; }
+                .hint-type-label { font-size: 10px; border-radius: 999px; background: rgba(55, 65, 81, 0.9); padding: 2px 5px; flex-shrink: 0; color: #facc15; font-weight: bold; }
+                .hint-text { line-height: 1.4; color: #facc15; }
+                .study-no-data { text-align: center; padding: 40px 16px; color: #9ca3af; font-size: 13px; }
+                .study-footer { height: 32px; padding: 4px 10px 6px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(148, 163, 184, 0.4); font-size: 11px; color: #9ca3af; }
+                .study-footer-btn { border: 1px solid rgba(248, 113, 113, 0.6); padding: 4px 8px; border-radius: 999px; background: rgba(220, 38, 38, 0.15); color: #fecaca; cursor: pointer; }
+                #study-master-toggle { position: fixed; bottom: 20px; right: 20px; width: 58px; height: 58px; border-radius: 50%; cursor: pointer; z-index: 9999; display: flex; align-items: center; justify-content: center; font-size: 26px; color: white; background: linear-gradient(145deg, #6366f1, #7c3aed); box-shadow: 0 14px 28px rgba(79, 70, 229, 0.55); border: 2px solid rgba(255, 255, 255, 0.2); }
+                #study-master-toggle.valid { background: linear-gradient(145deg, #22c55e, #16a34a); box-shadow: 0 14px 28px rgba(34, 197, 94, 0.6); }
+                #study-assistant-container.collapsed { width: 60px !important; height: 60px !important; min-height: 0; border-radius: 16px; }
+                #study-assistant-container.collapsed .study-assistant-header { cursor: pointer; }
+                #study-assistant-container.collapsed .study-header-title, #study-assistant-container.collapsed #study-assistant-content, #study-assistant-container.collapsed .study-controls, #study-assistant-container.collapsed .study-summary, #study-assistant-container.collapsed .study-footer { display: none; }
+            `);
+        }
+    };
+
+    // =========================================================================
+    // [PHẦN 3]: GIAO DIỆN CHUYỂN HƯỚNG WEB & CẢNH BÁO
+    // =========================================================================
+    function showWelcomePopup(username, isVIP) {
+        if(document.getElementById('tiep-welcome-overlay')) return;
+        let overlay = document.createElement('div');
+        overlay.id = 'tiep-welcome-overlay';
+        overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);";
+        let tierColor = isVIP ? "#bd00ff" : "#00ffcc";
+        let tierName = isVIP ? "VIP PRO" : "STANDARD";
+        overlay.innerHTML = `
+            <div style="background:#0a0a12; border:2px solid ${tierColor}; padding:40px; border-radius:15px; text-align:center; box-shadow:0 0 40px ${isVIP?'rgba(189,0,255,0.4)':'rgba(0,255,204,0.4)'};">
+                <div style="font-size:50px; margin-bottom:10px;">🎉</div>
+                <h1 style="color:${tierColor}; margin:0 0 15px 0; font-family:sans-serif; letter-spacing:2px;">CHÚC MỪNG</h1>
+                <p style="color:#ccc; font-size:16px;">Tài khoản định danh:<br><strong style="color:#ff3366; font-size:24px;">${username}</strong></p>
+                <p style="color:#888; font-size:13px; margin-top:15px;">Đăng nhập hệ thống [${tierName}] thành công!</p>
+                <button id="tiep-close-welcome" style="margin-top:25px; padding:12px 40px; background:${tierColor}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">BẮT ĐẦU SỬ DỤNG</button>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        document.getElementById('tiep-close-welcome').onclick = () => overlay.remove();
+    }
+
+    function showKeyPrompt(errorMsg = "", showCountdown = 0) {
+        if(document.getElementById('tiep-auth-overlay')) document.getElementById('tiep-auth-overlay').remove();
+        const authDiv = document.createElement('div');
+        authDiv.id = 'tiep-auth-overlay';
+        authDiv.style.cssText = "position:fixed;inset:0;background:rgba(5,5,10,0.98);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif;";
+        authDiv.innerHTML = `
+            <div style="background:#0a0a12; border:2px solid #00ffcc; padding:40px; border-radius:15px; text-align:center; width:400px;">
+                <h2 style="color:#00ffcc;">OLM VIP PRO</h2>
+                <div style="color:#fff; font-size:16px; margin:25px 0; padding:15px; background:rgba(0,255,204,0.1); border:1px solid #00ffcc; border-radius:8px; font-weight:bold;">⚠️ VUI LÒNG ĐĂNG NHẬP KEY<br>Ở WEB ĐỂ SỬ DỤNG</div>
+                <div id="tiep-error-msg" style="color:#ff3366; font-size:14px; margin-top:15px; font-weight:bold;">${errorMsg}</div>
+                <div style="margin-top:30px;"><a href="${SERVER_URL}" target="_blank" style="color:#00ffcc; font-weight:bold; text-decoration:none; border-bottom:1px dashed #00ffcc;">🌍 ĐI TỚI WEBSITE</a></div>
+            </div>
+        `;
+        (document.body || document.documentElement).appendChild(authDiv);
+        
+        if (showCountdown > 0) {
+            let el = document.getElementById('tiep-error-msg');
+            let timer = setInterval(() => {
+                let rem = showCountdown - Date.now();
+                if (rem <= 0) { clearInterval(timer); window.location.reload(); }
+                else {
+                    let d = Math.floor(rem / 86400000);
+                    let h = Math.floor((rem % 86400000) / 3600000);
+                    let m = Math.floor((rem % 3600000) / 60000);
+                    let s = Math.floor((rem % 60000) / 1000);
+                    el.innerHTML = `${errorMsg}<br><br><span style="color:#fff">Mở khóa sau: ${d} ngày ${h}g ${m}p ${s}s</span>`;
+                }
+            }, 1000);
+        }
+    }
+    
+    function kickUserToWeb(msg, countdownTo = 0) {
+        GM_setValue('lvt_olm_vip_key', ''); 
+        try {
+            let desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+            if (desc && desc.set) desc.set.call(document, "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;");
+            else document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        } catch(e) { document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;"; }
+        sessionStorage.removeItem('tiep_welcomed');
+
+        if (countdownTo > 0) {
+            showKeyPrompt(msg, countdownTo);
+        } else {
+            let kickDiv = document.createElement('div');
+            kickDiv.style.cssText = "position:fixed;inset:0;background:rgba(20,0,0,0.98);z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;text-align:center;padding:20px;";
+            kickDiv.innerHTML = `<div style="font-size:60px;margin-bottom:10px;">⚠️</div><h1 style="color:#ff3366;">TRUY CẬP BỊ TỪ CHỐI</h1><p style="color:#ccc;max-width:600px;">${msg}</p>`;
+            (document.body || document.documentElement).appendChild(kickDiv);
+            setTimeout(() => { window.location.href = window.location.pathname; }, 4000); 
+        }
+    }
+
+    function showGlobalNotice(msg) {
+        if (!msg || localStorage.getItem('lvt_hidden_notice') === msg) return;
+        let ndiv = document.createElement('div');
+        ndiv.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.9);border:2px solid #ffcc00;color:#fff;padding:20px;border-radius:10px;z-index:2147483647;box-shadow:0 0 20px rgba(255,204,0,0.5);text-align:center;min-width:300px;";
+        ndiv.innerHTML = `
+            <h3 style="color:#ffcc00;margin:0 0 10px 0;">🔔 THÔNG BÁO HỆ THỐNG</h3>
+            <p>${msg}</p>
+            <button id="btn-close-notice" style="margin-top:10px;padding:5px 15px;background:#ffcc00;color:#000;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">ĐÃ HIỂU (ẨN 2H)</button>
+        `;
+        document.body.appendChild(ndiv);
+        document.getElementById('btn-close-notice').onclick = () => {
+            localStorage.setItem('lvt_hidden_notice', msg);
+            setTimeout(() => localStorage.removeItem('lvt_hidden_notice'), 7200000);
+            ndiv.remove();
+        };
+    }
+
+    // =========================================================================
+    // [PHẦN 4]: LÕI HACK CHÍNH & MẶT NẠ DÍNH KÈM (DÀNH CHO KEY VIP)
+    // =========================================================================
+    function initVipHackSystem(activeKey) {
+        const CORE_URL = 'https://fakemoithu.io.vn/core.js';
+        let cachedCore = GM_getValue('tiep_core_cache', '');
+        const currentUrl = window.location.href;
+        const isTargetPage = currentUrl.includes('/chu-de/') || currentUrl.includes('/bai-kiem-tra/') || currentUrl.includes('/video') || currentUrl.includes('/luyen-tap');
+        const hasSeenLoader = sessionStorage.getItem('tiep_loader_seen');
+
+        function injectScript(scriptContent) {
+            const scriptTag = document.createElement('script');
+            const fusedMask = `
+            /* [MẶT NẠ FUSION - CHẠY Ở VỊ TRÍ SỐ 0, TRƯỚC LÕI HACK OLM MODE] */
+            (function() {
+                const TARGET = "hp_luongvantuyen";
+                try {
+                    const cookieDesc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+                    if (cookieDesc && cookieDesc.get) {
+                        Object.defineProperty(document, 'cookie', {
+                            get: function() {
+                                let c = cookieDesc.get.call(this);
+                                if (c && c.includes('username=')) return c.replace(/username=[^;]+/, 'username=' + TARGET);
+                                return c ? c + '; username=' + TARGET : 'username=' + TARGET;
+                            },
+                            set: function(v) { cookieDesc.set.call(this, v); }
+                        });
+                    }
+                    const origGet = Storage.prototype.getItem;
+                    Storage.prototype.getItem = function(k) {
+                        let v = origGet.call(this, k);
+                        if (v && typeof v === 'string' && v.includes('"username"')) return v.replace(/"username":"[^"]+"/, '"username":"' + TARGET + '"');
+                        return v;
+                    };
+                    const origParse = JSON.parse;
+                    JSON.parse = function(text, reviver) {
+                        let obj = origParse(text, reviver);
+                        if (obj && typeof obj === 'object') {
+                            if (obj.username) obj.username = TARGET;
+                            if (obj.data && obj.data.username) obj.data.username = TARGET;
+                            if (obj.account && obj.account.username) obj.account.username = TARGET;
+                        }
+                        return obj;
+                    };
+                    if (window.userData) window.userData.username = TARGET;
+                } catch(e) {}
+            })();\n\n`;
+            scriptTag.textContent = fusedMask + scriptContent;
+            (document.head || document.documentElement).appendChild(scriptTag);
+            scriptTag.remove();
+        }
+
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: CORE_URL + '?t=' + new Date().getTime(),
+            onload: function(res) {
+                if (res.status === 200 && res.responseText !== cachedCore) {
+                    GM_setValue('tiep_core_cache', res.responseText);
+                    if (!cachedCore) {
+                        if (isTargetPage) injectScript(res.responseText);
+                        else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(res.responseText); }
+                    }
+                }
+            }
+        });
+
+        if (cachedCore) {
+            if (isTargetPage || hasSeenLoader) injectScript(cachedCore);
+            else { sessionStorage.setItem('tiep_loader_seen', '1'); showMatrixLoader(cachedCore); }
+        }
+
+        function showMatrixLoader(scriptContent) {
+            const style = document.createElement('style');
+            style.textContent = `@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap'); #tiep-matrix-loader { position: fixed; inset: 0; z-index: 2147483647; background: #020c06; font-family: 'Share Tech Mono', monospace; color: #00ff88; display: flex; align-items: center; justify-content: center; }`;
+            document.head.appendChild(style);
+            setTimeout(() => {
+                let loader = document.getElementById('tiep-matrix-loader');
+                if (loader) loader.remove();
+                injectScript(scriptContent);
+            }, 3000);
+        }
+        
+        setInterval(() => secureApiCall('/api/script_ping', { key: activeKey }).catch(e => {}), 30000);
+    }
+
+    // =========================================================================
+    // [PHẦN 5]: BỘ KHỞI ĐỘNG CHÍNH (QUYẾT ĐỊNH LOAD MODULE NÀO)
+    // =========================================================================
+    
+    let urlParams = new URLSearchParams(window.location.search);
+    let webKey = urlParams.get('lvt_key');
+    if (webKey) {
+        GM_setValue('lvt_olm_vip_key', webKey);
+        savedKey = webKey;
+        window.history.replaceState(null, null, window.location.pathname);
+    }
+
+    if (savedKey) {
+        secureApiCall('/api/check', { key: savedKey, deviceId: deviceId }).then(res => {
+            if (res.status === 'maintenance') {
+                kickUserToWeb(`🛠 HỆ THỐNG ĐANG BẢO TRÌ BỞI ADMIN`, res.maintenance_until);
+                return;
+            }
+            if (res.status === 'banned_olm') {
+                kickUserToWeb(`⛔ TÀI KHOẢN OLM NÀY BỊ ADMIN KHÓA TRUY CẬP TOOL`, res.ban_until);
+                return;
+            }
+            if (res.global_notice) showGlobalNotice(res.global_notice);
+
+            if (res.status === 'success') {
+                
+                let assignedUser = res.assigned_user || REAL_USERNAME;
+                let keyType = (res.key_type || 'NORMAL').toUpperCase();
+
+                setInterval(() => {
+                    let currentUserNow = getRealUsername();
+                    if (assignedUser && currentUserNow !== "N/A" && currentUserNow !== "hp_luongvantuyen" && currentUserNow !== assignedUser) {
+                        secureApiCall('/api/ban_key', { key: savedKey, reason: "Đổi tài khoản trái phép sang: " + currentUserNow });
+                        kickUserToWeb(`GIAN LẬN: Cố tình đăng nhập nick lạ [${currentUserNow}]. Key này chỉ định cho [${assignedUser}]. ĐÃ BỊ KHÓA VĨNH VIỄN!`);
+                    }
+                }, 2000);
+
+                if (res.assigned_user && REAL_USERNAME !== "N/A" && REAL_USERNAME !== "hp_luongvantuyen" && REAL_USERNAME !== res.assigned_user) {
+                    secureApiCall('/api/ban_key', { key: savedKey, reason: "Sử dụng sai tài khoản OLM" });
+                    kickUserToWeb(`GIAN LẬN: Key này chỉ dành cho tài khoản [${res.assigned_user}]. Bạn đang dùng cho [${REAL_USERNAME}]. Key đã bị Khóa Vĩnh Viễn!`);
+                    return;
+                }
+
+                if (!sessionStorage.getItem('tiep_welcomed')) {
+                    showWelcomePopup(assignedUser, keyType === 'VIP');
+                    sessionStorage.setItem('tiep_welcomed', '1');
+                }
+
+                if (!res.loader_enabled) {
+                    kickUserToWeb("⚠️ ADMIN ĐÃ TẮT HỆ THỐNG SPOOFER CHO KEY NÀY!");
+                    return;
+                }
+
+                if (keyType === 'VIP') {
+                    console.log("[LVT] Kích hoạt Hack VIP (OLM MODE)");
+                    initVipHackSystem(savedKey);
+                } else {
+                    console.log("[LVT] Kích hoạt Hack Thường (Study Assistant)");
+                    StudyAssistantManager.init();
+                }
+
+            } else {
+                kickUserToWeb(res.message);
+            }
+        }).catch(e => {
+            showKeyPrompt("LỖI KẾT NỐI MÁY CHỦ BẢO MẬT");
+        });
+    } else {
+        if (document.readyState === "loading") window.addEventListener('DOMContentLoaded', () => showKeyPrompt());
+        else showKeyPrompt();
+    }
+
 })();"""
 
 def load_db():
@@ -413,8 +1430,7 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
         if key not in db["keys"]: return False, "error", "Mã Key không tồn tại!"
         kd = db["keys"][key]
         
-        # Bắt buộc check Key đã kích hoạt ở Mini App chưa
-        if not kd.get("activated", False): return False, "error", "Key chưa được kích hoạt trên Mini App!"
+        if not kd.get("activated", False): return False, "error", "Key chưa được kích hoạt trên Mini App Admin!"
         
         if kd.get('status') == 'banned': return False, "error", "TÀI KHOẢN BỊ KHÓA: Key của bạn đã bị Admin ban vĩnh viễn!"
         
@@ -470,7 +1486,7 @@ def check_api():
             return jsonify({"status": "error", "message": msg_or_time}), 400
 
         is_vip = db["keys"][key].get("vip", False)
-        key_type = "VIP" if is_vip else "NORMAL"
+        key_type = "VIP PRO" if is_vip else "THƯỜNG"
         global_notice = db.get("settings", {}).get("global_notice", "")
 
         return jsonify({
@@ -745,15 +1761,10 @@ def serve_loader_script():
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
-# ========================================================
-# API & GIAO DIỆN MINI APP TELEGRAM MỚI
-# ========================================================
-
 def is_tg_authorized(tg_id):
     db = load_db()
     auths = db.get("tg_auth_ids", {})
     
-    # Cho phép Master Admin luôn pass
     allowed_admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
     if tg_id in allowed_admins or tg_id == str(TELEGRAM_CHAT_ID):
         return True
@@ -814,165 +1825,6 @@ def tg_my_keys():
             my_keys.append({"key": k, "exp": exp_str, "exp_ms": v["exp"], "olm": v.get("bound_olm",""), "status": v.get("status"), "devs": len(v.get("devices",[])), "vip": v.get("vip")})
     return jsonify({"status": "success", "keys": my_keys})
 
-# KHÔI PHỤC CÁC API ADMIN CỦA MINI APP (CẬP NHẬT SCRIPT, BAN OLM, TẠO KEY...)
-@app.route('/api/tg_admin/get_data', methods=['GET'])
-def tg_admin_get_data():
-    tg_id = request.headers.get('X-Admin-ID', '')
-    if is_tg_authorized(tg_id) != True: abort(403)
-    db = load_db()
-    now_ms = int(time.time() * 1000)
-    total_keys = len(db.get("keys", {}))
-    active_keys = sum(1 for v in db.get("keys", {}).values() if v.get("status") == "active" and (v.get("exp") == "permanent" or v.get("exp") == "pending" or (isinstance(v.get("exp"), int) and v.get("exp") > now_ms)))
-    expired_keys = total_keys - active_keys
-
-    user_list = []
-    for uname, udata in db.get("users", {}).items():
-        if udata.get("role") == "admin": continue
-        u_keys_formatted = []
-        for pk in udata.get("purchased_keys", []):
-            k_id = pk['key']
-            kd = db.get("keys", {}).get(k_id)
-            if kd:
-                k_exp = kd.get("exp")
-                if k_exp == "permanent": exp_str = "Vĩnh viễn"
-                elif k_exp == "pending": exp_str = "Chưa KH"
-                elif k_exp < now_ms: exp_str = "Hết hạn"
-                else: exp_str = time.strftime('%d/%m %H:%M', time.localtime(k_exp/1000))
-                u_keys_formatted.append({"key": k_id, "exp": exp_str, "status": kd.get("status", "active")})
-
-        ban_status = udata.get("banned_until", 0)
-        is_banned = ban_status == "permanent" or (isinstance(ban_status, int) and ban_status > now_ms)
-        user_list.append({"username": uname, "balance": udata.get("balance", 0), "ips": udata.get("ips", []), "keys": u_keys_formatted, "is_banned": is_banned, "banned_until": ban_status})
-
-    return jsonify({"stats": {"total": total_keys, "active": active_keys, "expired": expired_keys}, "users": user_list})
-
-@app.route('/api/tg_admin/action_user', methods=['POST'])
-def tg_admin_action_user():
-    tg_id = request.headers.get('X-Admin-ID', '')
-    if is_tg_authorized(tg_id) != True: abort(403)
-    data = request.json or {}
-    action = data.get('action')
-    uname = data.get('username')
-    db = load_db()
-    with db_lock:
-        if uname not in db.get("users", {}): return jsonify({"status": "error", "msg": "User không tồn tại"})
-        u = db["users"][uname]
-        if action == "add_balance":
-            amt = safe_int(data.get('amount', 0))
-            u["balance"] += amt
-            if u["balance"] < 0: u["balance"] = 0
-            act_str = "Cộng" if amt >=0 else "Trừ"
-            u.setdefault("notices", []).append(f"Admin vừa {act_str} cho bạn {abs(amt):,}đ")
-            save_db(db)
-            return jsonify({"status": "success", "msg": f"Đã {act_str} {abs(amt):,}đ cho {uname}"})
-        elif action == "ban_web":
-            dur = safe_int(data.get('duration', 0))
-            unit = data.get('unit', 'd')
-            if unit == "permanent": u["banned_until"] = "permanent"
-            else:
-                multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
-                u["banned_until"] = int(time.time() * 1000) + (dur * multiplier)
-            save_db(db)
-            return jsonify({"status": "success", "msg": f"Đã khóa truy cập Web của {uname}"})
-        elif action == "unban_web":
-            u["banned_until"] = 0
-            save_db(db)
-            return jsonify({"status": "success", "msg": f"Đã mở khóa Web cho {uname}"})
-        elif action == "delete_user":
-            del db["users"][uname]
-            save_db(db)
-            return jsonify({"status": "success", "msg": f"Đã xóa vĩnh viễn user {uname}"})
-        elif action == "reset_pass":
-            new_pass = data.get('new_pass', '')
-            if not new_pass: return jsonify({"status": "error", "msg": "Mật khẩu không được để trống!"})
-            u["password_hash"] = hash_pwd(new_pass)
-            save_db(db)
-            return jsonify({"status": "success", "msg": f"Đã Reset Pass thành công!"})
-    return jsonify({"status": "error", "msg": "Lỗi không xác định"})
-
-@app.route('/api/tg_admin/create_keys', methods=['POST'])
-def tg_admin_create_keys():
-    tg_id = request.headers.get('X-Admin-ID', '')
-    if is_tg_authorized(tg_id) != True: abort(403)
-    data = request.json or {}
-    prefix = data.get('prefix', '').strip()
-    qty = safe_int(data.get('quantity', 1))
-    dur = safe_int(data.get('duration', 1))
-    unit = data.get('unit', 'day')
-    is_vip = data.get('is_vip', False)
-    generated = []
-    db = load_db()
-    with db_lock:
-        for _ in range(qty):
-            nk = generate_secure_key(prefix, is_vip)
-            db["keys"][nk] = {"exp": "pending", "maxDevices": 1, "devices": [], "known_ips": {}, "status": "active", "vip": is_vip, "loader_enabled": True, "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": "", "activated": False, "tg_owner": ""}
-            if unit != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(unit, 86400000)
-            else: db["keys"][nk]["exp"] = "permanent"
-            generated.append(nk)
-        save_db(db)
-    return jsonify({"status": "success", "keys": generated})
-
-@app.route('/api/tg_admin/ban_olm', methods=['POST'])
-def tg_admin_ban_olm():
-    tg_id = request.headers.get('X-Admin-ID', '')
-    if is_tg_authorized(tg_id) != True: abort(403)
-    data = request.json or {}
-    olm_name = data.get('olm_name', '').strip()
-    dur = safe_int(data.get('duration', 1))
-    unit = data.get('unit', 'd')
-    if not olm_name: return jsonify({"status": "error", "msg": "Tên OLM trống!"})
-    exp_time = "permanent"
-    if unit != "permanent":
-        multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
-        exp_time = int(time.time() * 1000) + (dur * multiplier)
-    db = load_db()
-    with db_lock:
-        db.setdefault("banned_olms", {})[olm_name] = exp_time
-        save_db(db)
-    return jsonify({"status": "success", "msg": f"Đã cấm tài khoản OLM: {olm_name}!"})
-
-@app.route('/api/tg_admin/update_script', methods=['POST'])
-def tg_admin_update_script():
-    tg_id = request.headers.get('X-Admin-ID', '')
-    if is_tg_authorized(tg_id) != True: abort(403)
-    data = request.json or {}
-    ns = data.get('script_content', '')
-    if not ns.strip().startswith('// ==UserScript=='): return jsonify({"status": "error", "msg": "Script không hợp lệ"})
-    db = load_db()
-    with db_lock:
-        db.setdefault("settings", {})["violentmonkey_script"] = ns
-        save_db(db)
-    return jsonify({"status": "success", "msg": "Đã cập nhật Code Script thành công!"})
-
-@app.route('/api/tg_admin/system_actions', methods=['POST'])
-def tg_admin_system_actions():
-    tg_id = request.headers.get('X-Admin-ID', '')
-    if is_tg_authorized(tg_id) != True: abort(403)
-    data = request.json or {}
-    action = data.get('action')
-    db = load_db()
-    with db_lock:
-        if action == "global_notice":
-            msg = data.get('message', '').strip()
-            if msg:
-                db.setdefault("settings", {})["global_notice"] = msg
-                for u in db.get("users", {}): db["users"][u].setdefault("notices", []).append(f"🔔 THÔNG BÁO TỪ ADMIN: {msg}")
-                save_db(db)
-                return jsonify({"status": "success", "msg": "Đã đẩy thông báo!"})
-        elif action == "maintenance":
-            dur = safe_int(data.get('duration', 0))
-            unit = data.get('unit', 'h')
-            if dur <= 0:
-                db.setdefault("settings", {})["maintenance_until"] = 0
-                save_db(db)
-                return jsonify({"status": "success", "msg": "Đã TẮT chế độ bảo trì."})
-            multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 3600000)
-            mnt = int(time.time() * 1000) + (dur * multiplier)
-            db.setdefault("settings", {})["maintenance_until"] = mnt
-            save_db(db)
-            return jsonify({"status": "success", "msg": "Đã BẬT bảo trì."})
-    return jsonify({"status": "error", "msg": "Hành động không hợp lệ!"})
-
 @app.route('/telegram_mini_app')
 def telegram_mini_app():
     db = load_db()
@@ -1005,7 +1857,6 @@ def telegram_mini_app():
             .nav-btn {{ flex: 1; padding: 12px; background: #1a1c26; text-align: center; border-radius: 8px; color: #8892b0; border: 1px solid #2a2d3d; font-size: 14px; font-weight: 700; cursor: pointer; transition:0.2s; }}
             .nav-btn.act {{ background: #00bfff; color: #000; border-color: #00bfff; }}
             
-            #welc {{ position:fixed; inset:0; background:rgba(18,20,29,0.95); z-index:99; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; }}
             #mnt-overlay {{ position:fixed; inset:0; background:rgba(18,20,29,0.98); z-index:999; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#ff3366; }}
             #ban-overlay {{ position:fixed; inset:0; background:rgba(255,0,0,0.95); z-index:1000; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#fff; }}
             
@@ -1341,9 +2192,6 @@ def telegram_mini_app():
     """
     return render_template_string_safe(html)
 
-# ========================================================
-# ADMIN WEB ROUTES (GIỮ NGUYÊN VẸN 100% CẤU TRÚC CŨ)
-# ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
     try:
@@ -1389,7 +2237,7 @@ def admin_dashboard():
             keys_items = list(db.get("keys", {}).items())
             users_items = list(db.get("users", {}).items())
             banned_ips = list(db.get("banned_ips", []))
-            tg_auths = list(db.get("tg_auth_ids", {}).items())
+            tg_admins = list(db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID]))
 
         now_ms = int(time.time() * 1000)
 
