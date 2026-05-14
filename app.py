@@ -64,31 +64,11 @@ def telegram_polling():
                         
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG XÁC THỰC LVT</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Xác Thực và Cài đặt Hack:"
+                            welcome = f"🌟 <b>HỆ THỐNG QUẢN LÝ LVT</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nNhấn vào nút bên dưới để Xác Thực Mini App:"
                             keyboard = {"inline_keyboard": [
                                 [{"text": "🚀 MỞ MINI APP", "web_app": {"url": f"{WEB_URL}/telegram_mini_app"}}]
                             ]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
-                        
-                        elif text.startswith("/naptien") and chat_id == TELEGRAM_CHAT_ID:
-                            parts = text.split()
-                            if len(parts) >= 3:
-                                uname = parts[1].lower()
-                                try:
-                                    amt = int(parts[2])
-                                    db = load_db()
-                                    with db_lock:
-                                        if uname in db.get("users", {}):
-                                            db["users"][uname]["balance"] += amt
-                                            if db["users"][uname]["balance"] < 0: db["users"][uname]["balance"] = 0
-                                            action = "Cộng" if amt >= 0 else "Trừ"
-                                            db["users"][uname].setdefault("notices", []).append(f"Admin vừa {action} cho bạn {abs(amt):,}đ")
-                                            log_admin_action(db, f"TeleBot: {action} {abs(amt)}đ cho {uname}")
-                                            save_db(db)
-                                            send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>")
-                                        else:
-                                            send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
-                                except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
                         
                         elif text.startswith("/check") and chat_id == TELEGRAM_CHAT_ID:
                             parts = text.split()
@@ -147,17 +127,6 @@ _last_mtime_check = 0
 # ========================================================
 # CORE CONFIG & UTILS
 # ========================================================
-SHOP_PACKAGES = {
-    "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
-    "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
-    "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
-    "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
-    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
-}
-
 def safe_int(val, default=0):
     try: return int(val)
     except: return default
@@ -202,7 +171,12 @@ DEFAULT_OLM_SCRIPT = r"""// ==UserScript==
 // @grant        GM_getValue
 // @run-at       document-start
 // ==/UserScript==
-"""
+
+(function() {
+    'use strict';
+    // [KHỐI MÃ SCRIPT CŨ ĐƯỢC BẢO LƯU TRÊN DATABASE HOẶC CLIENT]
+    console.log("OLM LVT PROTECTED");
+})();"""
 
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
@@ -230,12 +204,11 @@ def load_db():
                 data.setdefault("security_alerts", []) 
                 data.setdefault("settings", {})
                 data.setdefault("banned_olms", {})
-                data.setdefault("game_keys", {}) # <--- KHOẢN HACK GAME THEO YÊU CẦU CŨ
+                data.setdefault("tg_auth_ids", {str(TELEGRAM_CHAT_ID): {"exp": "permanent", "banned_until": 0}}) 
                 
                 if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "global_notice" not in data["settings"]: data["settings"]["global_notice"] = ""
                 if "violentmonkey_script" not in data["settings"]: data["settings"]["violentmonkey_script"] = DEFAULT_OLM_SCRIPT
-                if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 
                 if "admin" not in data["users"]:
                     data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin", "balance": 0, "created_at": int(time.time() * 1000), "ips": [], "purchased_keys": [], "notices": [], "custom_script": 'console.log("HACK OLM BY LVT ĐÃ KÍCH HOẠT!");', "banned_until": 0}
@@ -255,8 +228,8 @@ def load_db():
                     data["keys"][k].setdefault("bound_olm", "") 
                     data["keys"][k].setdefault("os", "android")
                     data["keys"][k].setdefault("vip", False)
-                    data["keys"][k].setdefault("activated", False) # Flag Mini App
-                    data["keys"][k].setdefault("tg_owner", "") # ID Mini App
+                    data["keys"][k].setdefault("activated", False)
+                    data["keys"][k].setdefault("tg_owner", "")
                 GLOBAL_DB = data
                 _last_db_mtime = current_mtime
             except Exception: pass
@@ -293,10 +266,6 @@ def generate_secure_key(prefix="", is_vip=False):
     t_vip = "VIP" if is_vip else "NOR"
     if prefix: return f"{prefix}-{t_vip}-{rand_str}"
     return f"LVT-{t_vip}-{rand_str}"
-
-def generate_game_key_15():
-    charset = string.ascii_letters + string.digits + "!@#$%^&*"
-    return ''.join(secrets.choice(charset) for _ in range(15))
 
 def log_admin_action(db, action_text):
     db.setdefault("admin_logs", []).insert(0, {"time": int(time.time() * 1000), "action": action_text})
@@ -341,7 +310,7 @@ def garbage_collector():
                 send_telegram_backup()
                 backup_counter = 0
         except Exception as e: 
-            send_telegram_alert(f"Lỗi Garbage Collector: {str(e)}")
+            pass
 
 threading.Thread(target=garbage_collector, daemon=True).start()
 
@@ -363,7 +332,6 @@ def firewall_and_csrf():
         ua = (request.headers.get('User-Agent') or '').lower()
         blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
         if any(bot in ua for bot in blocked_bots): 
-            send_telegram_alert(f"Phát hiện Bot/Scanner truy cập trái phép.\nIP: {ip}\nUser-Agent: {ua}")
             return "Firewall Blocked Suspicious Bot/Scanner.", 403
             
         if request.path.startswith("/admin") and request.path not in ["/admin_login", "/telegram_mini_app"]:
@@ -449,7 +417,7 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
         if key not in db["keys"]: return False, "error", "Mã Key không tồn tại!"
         kd = db["keys"][key]
         
-        # Bắt buộc check Key đã kích hoạt ở Mini App chưa
+        # Check kích hoạt qua Mini App
         if not kd.get("activated", False): return False, "error", "Key chưa được kích hoạt trên Mini App!"
         
         if kd.get('status') == 'banned': return False, "error", "TÀI KHOẢN BỊ KHÓA: Key của bạn đã bị Admin ban vĩnh viễn!"
@@ -470,10 +438,7 @@ def _core_validate(db, key, deviceId=None, req_olm_name="N/A", ip=""):
         bound_olm = kd.get("bound_olm", "").strip()
         if bound_olm and req_olm_name != "N/A":
             if bound_olm.lower() != req_olm_name.lower():
-                kd["status"] = "banned"
-                db.setdefault("security_alerts", []).insert(0, {"time": now, "id": ip, "user": req_olm_name, "reason": f"Sử dụng sai định danh"})
-                save_db(db)
-                return False, "error", f"GIAN LẬN: Key này chỉ dành cho tài khoản [{bound_olm}]. Key đã bị Khóa Vĩnh Viễn!"
+                return False, "error", f"LỖI ĐỊNH DANH: Key này chỉ được phép dùng cho tài khoản OLM: {bound_olm}"
 
         if deviceId:
             devices = kd.setdefault("devices", [])
@@ -623,14 +588,145 @@ def serve_core_engine():
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
+# NÂNG CẤP LÕI LOADER THEO YÊU CẦU: SIÊU MÃ HÓA, NO COMMENT, AUTO PULL, HIỂN THỊ THÔNG BÁO.
 @app.route('/api/script/olm_vip.user.js')
 def serve_loader_script():
     host_url = WEB_URL if WEB_URL else request.url_root.rstrip('/')
-    loader_logic = f"""// ==UserScript==
+    
+    raw_logic = f"""
+    if (window.top !== window.self) return;
+    const A = '{host_url}';
+    const ls = localStorage;
+    const gm_g = GM_getValue;
+    const gm_s = GM_setValue;
+    
+    function gH() {{
+        let c=document.createElement('canvas'), x=c.getContext('2d');
+        x.fillText("LVT",2,15);
+        let h=0, s=c.toDataURL()+navigator.userAgent;
+        for(let i=0;i<s.length;i++) h=((h<<5)-h)+s.charCodeAt(i);
+        return "HW-"+Math.abs(h).toString(16);
+    }}
+    let dev = ls.getItem('l_h') || gH();
+    ls.setItem('l_h', dev);
+    
+    function gU() {{
+        let f="N/A";
+        try{{
+            let c=document.cookie.split(';');
+            for(let i=0;i<c.length;i++){{
+                if(c[i].trim().startsWith("username=")) f=decodeURIComponent(c[i].trim().substring(9)).replace(/^"|"$/g,'');
+            }}
+        }}catch(e){{}}
+        return f;
+    }}
+
+    function sP(m, t="e", e=0) {{
+        let el = document.getElementById('lvt_pnl');
+        if(el) el.remove();
+        let d=document.createElement('div');
+        d.id = 'lvt_pnl';
+        d.style.cssText="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(10,10,15,0.95);border:2px solid "+(t==="s"?"#00ffcc":(t==="m"?"#ffcc00":"#ff3366"))+";color:#fff;padding:25px;border-radius:12px;z-index:999999;text-align:center;min-width:320px;box-shadow:0 0 20px "+(t==="s"?"rgba(0,255,204,0.4)":(t==="m"?"rgba(255,204,0,0.4)":"rgba(255,51,102,0.4)"));
+        d.innerHTML=`<h3 style="margin-top:0;color:${{t==="s"?"#00ffcc":(t==="m"?"#ffcc00":"#ff3366")}}">${{m}}</h3>`+(e?`<div id="l_cd" style="color:#ffcc00;margin:15px 0;font-weight:bold;font-size:16px;background:#222;padding:10px;border-radius:6px;"></div>`:"")+`<button id="l_c" style="margin-top:15px;width:100%;padding:10px;background:${{t==="s"?"#00ffcc":"#ff3366"}};color:#000;border:none;border-radius:6px;font-weight:bold;cursor:pointer;">Đóng Thông Báo</button>`;
+        document.body.appendChild(d);
+        document.getElementById('l_c').onclick=()=>{{ d.remove(); if(t==="e") ask(); }};
+        if(e && e!=='permanent'){{
+            let timer = setInterval(()=>{{
+                let r=e-Date.now();
+                let cdEl = document.getElementById('l_cd');
+                if(!cdEl) {{ clearInterval(timer); return; }}
+                if(r<=0){{ cdEl.innerHTML="ĐÃ HẾT HẠN"; gm_s('l_k',''); clearInterval(timer); setTimeout(()=>location.reload(),2000); }}
+                else{{
+                    let ds=Math.floor(r/86400000), hs=Math.floor((r%86400000)/3600000), ms=Math.floor((r%3600000)/60000), ss=Math.floor((r%60000)/1000);
+                    cdEl.innerHTML=`⏳ Còn lại: ${{ds}} ngày ${{hs}}h ${{ms}}p ${{ss}}s`;
+                }}
+            }},1000);
+        }}
+    }}
+
+    function sW() {{
+        let hw = ls.getItem('h_w');
+        if(hw==='f') return;
+        if(hw && Date.now()<parseInt(hw)) return;
+        let d=document.createElement('div');
+        d.style.cssText="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(10,10,15,0.98);border:1px solid #00ffcc;color:#fff;padding:30px;border-radius:15px;z-index:999998;text-align:center;width:320px;box-shadow:0 0 20px rgba(0,255,204,0.3);";
+        d.innerHTML=`<h3 style="color:#00ffcc;margin-top:0;">CHÀO MỪNG</h3><p style="font-size:15px;line-height:1.6;color:#ccc;">Chào mừng quý khách trải nghiệm dịch vụ của tôi. Chúc bạn sử dụng vui vẻ nhé! Có thắc mắc gì bạn hãy liên hệ Admin Tele:<br><strong style="color:#ffcc00;font-size:18px;">@luongtuyen20</strong></p><div style="display:flex;gap:10px;margin-top:25px;"><button id="w_2" style="flex:1;padding:12px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-weight:bold;cursor:pointer;">Ẩn 2 Giờ</button><button id="w_f" style="flex:1;padding:12px;background:#ef4444;color:#fff;border:none;border-radius:8px;font-weight:bold;cursor:pointer;">Đóng</button></div>`;
+        document.body.appendChild(d);
+        document.getElementById('w_2').onclick=()=>{{ls.setItem('h_w',Date.now()+7200000);d.remove();}};
+        document.getElementById('w_f').onclick=()=>{{ls.setItem('h_w','f');d.remove();}};
+    }}
+
+    async function rQ(k) {{
+        let t=Date.now(), m=k+t+k, s="";
+        if(window.crypto&&crypto.subtle){{
+            let h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(m));
+            s=Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');
+        }}
+        return new Promise(rs=>{{
+            GM_xmlhttpRequest({{
+                method:'POST',url:A+'/api/check',headers:{{'Content-Type':'application/json'}},
+                data:JSON.stringify({{key:k,deviceId:dev,olm_name:gU(),timestamp:t,signature:s}}),
+                onload:x=>{{try{{rs(JSON.parse(x.responseText))}}catch(e){{rs({{status:'e',message:'Lỗi kết nối'}}) }}}},
+                onerror:()=>rs({{status:'e',message:'Lỗi mạng'}})
+            }});
+        }});
+    }}
+
+    function lC() {{
+        GM_xmlhttpRequest({{
+            method:'GET',url:A+'/api/script/core_engine.js?t='+Date.now(),
+            onload:x=>{{try{{eval(x.responseText)}}catch(e){{}}}}
+        }});
+    }}
+
+    async function run(k) {{
+        let r=await rQ(k);
+        if(r.status==='success'){{
+            gm_s('l_k',k);
+            if(r.global_notice) sP("THÔNG BÁO TỪ ADMIN<br><span style='font-size:14px;color:#ccc;'>"+r.global_notice+"</span>", "m");
+            sP(`XÁC THỰC THÀNH CÔNG!<br><br><span style='font-size:14px;color:#ccc;'>Tên Key: <b style='color:#00ffcc'>${{r.name}}</b><br>Gói: <b style='color:#ffcc00'>${{r.key_type}}</b></span>`, "s", r.exp||'permanent');
+            lC();
+        }}else if(r.status==='maintenance'){{
+            gm_s('l_k','');
+            sP("HỆ THỐNG ĐANG BẢO TRÌ BỞI ADMIN", "m", r.maintenance_until);
+        }}else if(r.status==='banned_olm'){{
+            gm_s('l_k','');
+            sP("TÀI KHOẢN OLM BỊ CẤM TRUY CẬP", "e", r.ban_until);
+        }}else{{
+            gm_s('l_k','');
+            sP(r.message||"Lỗi xác thực. Vui lòng kiểm tra lại!", "e");
+        }}
+    }}
+
+    function ask() {{
+        let k = gm_g('l_k','');
+        if(!k){{
+            let p = document.createElement('div');
+            p.style.cssText="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:9999999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);";
+            p.innerHTML=`<div style="background:#1a1c26;padding:35px;border-radius:15px;border:2px solid #00ffcc;text-align:center;width:340px;box-shadow:0 0 30px rgba(0,255,204,0.3);"><h3 style="color:#00ffcc;margin-top:0;font-size:22px;letter-spacing:1px;">NHẬP KEY BẢO MẬT</h3><p style="font-size:14px;color:#8892b0;margin-bottom:25px;">Vui lòng nhập Key đã được kích hoạt trên Mini App Admin để sử dụng.</p><input id="k_i" type="text" style="width:100%;padding:15px;box-sizing:border-box;background:#12141d;border:1px solid #333;color:#00ffcc;border-radius:8px;margin-bottom:20px;outline:none;text-align:center;font-weight:bold;font-size:15px;" placeholder="Dán mã Key vào đây..."><button id="k_b" style="width:100%;padding:15px;background:linear-gradient(90deg, #00ffcc, #0099ff);color:#000;font-weight:900;font-size:15px;border:none;border-radius:8px;cursor:pointer;text-transform:uppercase;">KÍCH HOẠT NGAY</button></div>`;
+            document.body.appendChild(p);
+            document.getElementById('k_b').onclick=()=>{{
+                let v = document.getElementById('k_i').value.trim();
+                if(v){{ p.remove(); run(v); }}
+            }};
+        }}else{{
+            run(k);
+        }}
+    }}
+
+    if(document.readyState==="loading") document.addEventListener('DOMContentLoaded', ()=>{{ sW(); ask(); }});
+    else {{ sW(); ask(); }}
+    """
+    
+    b64 = base64.b64encode(raw_logic.encode('utf-8')).decode('utf-8')
+    rev_b64 = b64[::-1]
+    hx = rev_b64.encode('utf-8').hex()
+    
+    loader_script = f"""// ==UserScript==
 // @name         LVT LOADER OLM
 // @namespace    http://tampermonkey.net/
-// @version      18.2
-// @description  Hệ thống bảo vệ đa tầng
+// @version      18.3
+// @description  Hệ thống Loader bảo mật đa tầng.
 // @author       DEV.TIỆP
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
@@ -640,108 +736,55 @@ def serve_loader_script():
 // @grant        GM_getValue
 // @run-at       document-start
 // ==/UserScript==
-
-(function() {{
-    'use strict';
-    if (window.top !== window.self) return;
-    const API = '{host_url}';
+(function(){{
+    try{{
+        var _0x1="{hx}";
+        var _0x2='';
+        for(var i=0;i<_0x1.length;i+=2)_0x2+=String.fromCharCode(parseInt(_0x1.substr(i,2),16));
+        var _0x3=decodeURIComponent(escape(atob(_0x2.split('').reverse().join(''))));
+        new Function(_0x3)();
+    }}catch(e){{}}
+}})();"""
     
-    function genHW() {{
-        let c = document.createElement('canvas'); let ctx = c.getContext('2d');
-        ctx.fillText("LVT_SEC", 2, 15);
-        let hash = 0, str = c.toDataURL() + navigator.userAgent;
-        for(let i=0; i<str.length; i++) hash = ((hash<<5)-hash)+str.charCodeAt(i);
-        return "HW-" + Math.abs(hash).toString(16);
-    }}
-    let dev = localStorage.getItem('lvt_hw') || genHW();
-    localStorage.setItem('lvt_hw', dev);
-    
-    function getU() {{
-        let f = "N/A";
-        try {{
-            let c = document.cookie.split(';');
-            for(let i=0;i<c.length;i++) {{
-                if(c[i].trim().startsWith("username=")) f=decodeURIComponent(c[i].trim().substring(9)).replace(/^"|"$/g,'');
-            }}
-        }} catch(e) {{}}
-        return f;
-    }}
-    
-    function showP(msg, ok=false, exp=0) {{
-        let d = document.createElement('div');
-        d.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#111;border:2px solid "+(ok?"#00ffcc":"#ff3366")+";color:#fff;padding:20px;border-radius:10px;z-index:999999;text-align:center;min-width:300px;box-shadow:0 0 20px "+(ok?"rgba(0,255,204,0.4)":"rgba(255,51,102,0.4)");
-        d.innerHTML = `<h3>${{msg}}</h3>` + (ok ? `<div id="lvt_cd" style="color:#ffcc00;margin:10px 0;font-weight:bold;font-size:18px;"></div>` : '') + `<button id="lvt_cls" style="margin-top:10px;padding:8px 20px;background:#fff;color:#000;border:none;cursor:pointer;border-radius:5px;font-weight:bold;">Đóng thông báo</button>`;
-        document.body.appendChild(d);
-        document.getElementById('lvt_cls').onclick = () => d.remove();
-        if(ok && exp !== 'permanent') {{
-            setInterval(()=>{{
-                let rem = exp - Date.now();
-                if(rem<=0){{ document.getElementById('lvt_cd').innerHTML="HẾT HẠN"; GM_setValue('lvt_key',''); location.reload(); }}
-                else {{
-                    let ds=Math.floor(rem/86400000), h=Math.floor((rem%86400000)/3600000), m=Math.floor((rem%3600000)/60000), s=Math.floor((rem%60000)/1000);
-                    document.getElementById('lvt_cd').innerHTML = `Đếm ngược hết hạn: ${{ds}}d ${{h}}h ${{m}}m ${{s}}s`;
-                }}
-            }}, 1000);
-        }}
-    }}
-
-    async function req(k) {{
-        let ts = Date.now(), msg = k+ts+k, sig = "";
-        if (window.crypto && window.crypto.subtle) {{
-            let h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
-            sig = Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');
-        }}
-        return new Promise((r) => {{
-            GM_xmlhttpRequest({{
-                method:'POST', url: API+'/api/check', headers:{{'Content-Type':'application/json'}},
-                data: JSON.stringify({{key:k, deviceId:dev, olm_name:getU(), timestamp:ts, signature:sig}}),
-                onload: (res) => r(JSON.parse(res.responseText)), onerror: () => r({{status:'net_err'}})
-            }});
-        }});
-    }}
-
-    async function init() {{
-        let saved = GM_getValue('lvt_key', '');
-        if (!saved) {{
-            saved = prompt("HỆ THỐNG LVT: Nhập Key đã được Admin kích hoạt trên Mini App:");
-            if(saved) GM_setValue('lvt_key', saved);
-            else return;
-        }}
-        let r = await req(saved);
-        if (r.status === 'success') {{
-            showP(`Xác thực Key thành công!<br>Tên Key: ${{r.name}}<br>Loại: ${{r.key_type}}`, true, r.exp || 'permanent');
-            GM_xmlhttpRequest({{
-                method:'GET', url: API+'/api/script/core_engine.js?t='+Date.now(),
-                onload: (res2) => {{ try{{ eval(res2.responseText); }}catch(e){{}} }}
-            }});
-        }} else {{
-            GM_setValue('lvt_key', '');
-            if(r.status==='maintenance') showP("Server đang bảo trì!");
-            else if(r.status==='banned_olm') showP("Tài khoản OLM Banned!");
-            else showP(r.message || "Key không hợp lệ hoặc chưa được Admin kích hoạt ở Mini App!");
-        }}
-    }}
-    
-    if(document.readyState==="loading") document.addEventListener('DOMContentLoaded', init);
-    else init();
-}})();
-"""
-    resp = make_response(loader_logic)
+    resp = make_response(loader_script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
 # ========================================================
-# API & GIAO DIỆN MINI APP TELEGRAM
+# API & GIAO DIỆN MINI APP TELEGRAM MỚI
 # ========================================================
+
+def is_tg_authorized(tg_id):
+    db = load_db()
+    auths = db.get("tg_auth_ids", {})
+    
+    # Cho phép Master Admin luôn pass
+    allowed_admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
+    if tg_id in allowed_admins or tg_id == str(TELEGRAM_CHAT_ID):
+        return True
+        
+    if tg_id not in auths: return False
+    now = int(time.time()*1000)
+    data = auths[tg_id]
+    ban = data.get("banned_until", 0)
+    if ban == "permanent" or (isinstance(ban, int) and ban > now): return "BANNED"
+    if data.get("exp") != "permanent" and data.get("exp", 0) < now: return "EXPIRED"
+    return True
 
 @app.route('/api/tg/auth_check', methods=['POST'])
 def tg_auth_check():
     data = request.json or {}
     tg_id = data.get("tg_id", "").strip()
-    db = load_db()
-    allowed_admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
-    if tg_id in allowed_admins or tg_id == str(TELEGRAM_CHAT_ID):
-        return jsonify({"status": "ok"})
+    status = is_tg_authorized(tg_id)
+    if status == True:
+        db = load_db()
+        allowed_admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
+        is_admin = tg_id in allowed_admins or tg_id == str(TELEGRAM_CHAT_ID)
+        exp = db["tg_auth_ids"][tg_id]["exp"] if tg_id in db.get("tg_auth_ids", {}) else "permanent"
+        return jsonify({"status": "ok", "exp": exp, "banned": 0, "is_admin": is_admin})
+    if status == "BANNED":
+        db = load_db()
+        return jsonify({"status": "banned", "banned_until": db["tg_auth_ids"][tg_id]["banned_until"]})
     return jsonify({"status": "error"})
 
 @app.route('/api/tg/activate_key', methods=['POST'])
@@ -750,11 +793,8 @@ def tg_activate_key():
     tg_id = data.get("tg_id", "")
     key = data.get("key", "").strip()
     olm = data.get("olm", "").strip()
+    if is_tg_authorized(tg_id) != True: return jsonify({"status": "error", "msg": "ID Tele không hợp lệ hoặc hết hạn!"})
     db = load_db()
-    allowed_admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
-    if tg_id not in allowed_admins and tg_id != str(TELEGRAM_CHAT_ID): 
-        return jsonify({"status": "error", "msg": "ID Tele không hợp lệ!"})
-    
     with db_lock:
         if key not in db["keys"]: return jsonify({"status": "error", "msg": "Key không tồn tại!"})
         kd = db["keys"][key]
@@ -769,11 +809,8 @@ def tg_activate_key():
 def tg_my_keys():
     data = request.json or {}
     tg_id = data.get("tg_id", "")
+    if is_tg_authorized(tg_id) != True: return jsonify({"status": "error"})
     db = load_db()
-    allowed_admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
-    if tg_id not in allowed_admins and tg_id != str(TELEGRAM_CHAT_ID): 
-        return jsonify({"status": "error"})
-    
     my_keys = []
     now = int(time.time()*1000)
     for k, v in db.get("keys", {}).items():
@@ -781,6 +818,165 @@ def tg_my_keys():
             exp_str = "Vĩnh viễn" if v["exp"]=="permanent" else ("Chưa KH" if v["exp"]=="pending" else ("Hết hạn" if v["exp"]<now else time.strftime("%d/%m %H:%M", time.localtime(v["exp"]/1000))))
             my_keys.append({"key": k, "exp": exp_str, "exp_ms": v["exp"], "olm": v.get("bound_olm",""), "status": v.get("status"), "devs": len(v.get("devices",[])), "vip": v.get("vip")})
     return jsonify({"status": "success", "keys": my_keys})
+
+# KHÔI PHỤC CÁC API ADMIN CỦA MINI APP (CẬP NHẬT SCRIPT, BAN OLM, TẠO KEY...)
+@app.route('/api/tg_admin/get_data', methods=['GET'])
+def tg_admin_get_data():
+    tg_id = request.headers.get('X-Admin-ID', '')
+    if is_tg_authorized(tg_id) != True: abort(403)
+    db = load_db()
+    now_ms = int(time.time() * 1000)
+    total_keys = len(db.get("keys", {}))
+    active_keys = sum(1 for v in db.get("keys", {}).values() if v.get("status") == "active" and (v.get("exp") == "permanent" or v.get("exp") == "pending" or (isinstance(v.get("exp"), int) and v.get("exp") > now_ms)))
+    expired_keys = total_keys - active_keys
+
+    user_list = []
+    for uname, udata in db.get("users", {}).items():
+        if udata.get("role") == "admin": continue
+        u_keys_formatted = []
+        for pk in udata.get("purchased_keys", []):
+            k_id = pk['key']
+            kd = db.get("keys", {}).get(k_id)
+            if kd:
+                k_exp = kd.get("exp")
+                if k_exp == "permanent": exp_str = "Vĩnh viễn"
+                elif k_exp == "pending": exp_str = "Chưa KH"
+                elif k_exp < now_ms: exp_str = "Hết hạn"
+                else: exp_str = time.strftime('%d/%m %H:%M', time.localtime(k_exp/1000))
+                u_keys_formatted.append({"key": k_id, "exp": exp_str, "status": kd.get("status", "active")})
+
+        ban_status = udata.get("banned_until", 0)
+        is_banned = ban_status == "permanent" or (isinstance(ban_status, int) and ban_status > now_ms)
+        user_list.append({"username": uname, "balance": udata.get("balance", 0), "ips": udata.get("ips", []), "keys": u_keys_formatted, "is_banned": is_banned, "banned_until": ban_status})
+
+    return jsonify({"stats": {"total": total_keys, "active": active_keys, "expired": expired_keys}, "users": user_list})
+
+@app.route('/api/tg_admin/action_user', methods=['POST'])
+def tg_admin_action_user():
+    tg_id = request.headers.get('X-Admin-ID', '')
+    if is_tg_authorized(tg_id) != True: abort(403)
+    data = request.json or {}
+    action = data.get('action')
+    uname = data.get('username')
+    db = load_db()
+    with db_lock:
+        if uname not in db.get("users", {}): return jsonify({"status": "error", "msg": "User không tồn tại"})
+        u = db["users"][uname]
+        if action == "add_balance":
+            amt = safe_int(data.get('amount', 0))
+            u["balance"] += amt
+            if u["balance"] < 0: u["balance"] = 0
+            act_str = "Cộng" if amt >=0 else "Trừ"
+            u.setdefault("notices", []).append(f"Admin vừa {act_str} cho bạn {abs(amt):,}đ")
+            save_db(db)
+            return jsonify({"status": "success", "msg": f"Đã {act_str} {abs(amt):,}đ cho {uname}"})
+        elif action == "ban_web":
+            dur = safe_int(data.get('duration', 0))
+            unit = data.get('unit', 'd')
+            if unit == "permanent": u["banned_until"] = "permanent"
+            else:
+                multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
+                u["banned_until"] = int(time.time() * 1000) + (dur * multiplier)
+            save_db(db)
+            return jsonify({"status": "success", "msg": f"Đã khóa truy cập Web của {uname}"})
+        elif action == "unban_web":
+            u["banned_until"] = 0
+            save_db(db)
+            return jsonify({"status": "success", "msg": f"Đã mở khóa Web cho {uname}"})
+        elif action == "delete_user":
+            del db["users"][uname]
+            save_db(db)
+            return jsonify({"status": "success", "msg": f"Đã xóa vĩnh viễn user {uname}"})
+        elif action == "reset_pass":
+            new_pass = data.get('new_pass', '')
+            if not new_pass: return jsonify({"status": "error", "msg": "Mật khẩu không được để trống!"})
+            u["password_hash"] = hash_pwd(new_pass)
+            save_db(db)
+            return jsonify({"status": "success", "msg": f"Đã Reset Pass thành công!"})
+    return jsonify({"status": "error", "msg": "Lỗi không xác định"})
+
+@app.route('/api/tg_admin/create_keys', methods=['POST'])
+def tg_admin_create_keys():
+    tg_id = request.headers.get('X-Admin-ID', '')
+    if is_tg_authorized(tg_id) != True: abort(403)
+    data = request.json or {}
+    prefix = data.get('prefix', '').strip()
+    qty = safe_int(data.get('quantity', 1))
+    dur = safe_int(data.get('duration', 1))
+    unit = data.get('unit', 'day')
+    is_vip = data.get('is_vip', False)
+    generated = []
+    db = load_db()
+    with db_lock:
+        for _ in range(qty):
+            nk = generate_secure_key(prefix, is_vip)
+            db["keys"][nk] = {"exp": "pending", "maxDevices": 1, "devices": [], "known_ips": {}, "status": "active", "vip": is_vip, "loader_enabled": True, "violations": 0, "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": "", "activated": False, "tg_owner": ""}
+            if unit != 'permanent': db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(unit, 86400000)
+            else: db["keys"][nk]["exp"] = "permanent"
+            generated.append(nk)
+        save_db(db)
+    return jsonify({"status": "success", "keys": generated})
+
+@app.route('/api/tg_admin/ban_olm', methods=['POST'])
+def tg_admin_ban_olm():
+    tg_id = request.headers.get('X-Admin-ID', '')
+    if is_tg_authorized(tg_id) != True: abort(403)
+    data = request.json or {}
+    olm_name = data.get('olm_name', '').strip()
+    dur = safe_int(data.get('duration', 1))
+    unit = data.get('unit', 'd')
+    if not olm_name: return jsonify({"status": "error", "msg": "Tên OLM trống!"})
+    exp_time = "permanent"
+    if unit != "permanent":
+        multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
+        exp_time = int(time.time() * 1000) + (dur * multiplier)
+    db = load_db()
+    with db_lock:
+        db.setdefault("banned_olms", {})[olm_name] = exp_time
+        save_db(db)
+    return jsonify({"status": "success", "msg": f"Đã cấm tài khoản OLM: {olm_name}!"})
+
+@app.route('/api/tg_admin/update_script', methods=['POST'])
+def tg_admin_update_script():
+    tg_id = request.headers.get('X-Admin-ID', '')
+    if is_tg_authorized(tg_id) != True: abort(403)
+    data = request.json or {}
+    ns = data.get('script_content', '')
+    if not ns.strip().startswith('// ==UserScript=='): return jsonify({"status": "error", "msg": "Script không hợp lệ"})
+    db = load_db()
+    with db_lock:
+        db.setdefault("settings", {})["violentmonkey_script"] = ns
+        save_db(db)
+    return jsonify({"status": "success", "msg": "Đã cập nhật Code Script thành công!"})
+
+@app.route('/api/tg_admin/system_actions', methods=['POST'])
+def tg_admin_system_actions():
+    tg_id = request.headers.get('X-Admin-ID', '')
+    if is_tg_authorized(tg_id) != True: abort(403)
+    data = request.json or {}
+    action = data.get('action')
+    db = load_db()
+    with db_lock:
+        if action == "global_notice":
+            msg = data.get('message', '').strip()
+            if msg:
+                db.setdefault("settings", {})["global_notice"] = msg
+                for u in db.get("users", {}): db["users"][u].setdefault("notices", []).append(f"🔔 THÔNG BÁO TỪ ADMIN: {msg}")
+                save_db(db)
+                return jsonify({"status": "success", "msg": "Đã đẩy thông báo!"})
+        elif action == "maintenance":
+            dur = safe_int(data.get('duration', 0))
+            unit = data.get('unit', 'h')
+            if dur <= 0:
+                db.setdefault("settings", {})["maintenance_until"] = 0
+                save_db(db)
+                return jsonify({"status": "success", "msg": "Đã TẮT chế độ bảo trì."})
+            multiplier = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 3600000)
+            mnt = int(time.time() * 1000) + (dur * multiplier)
+            db.setdefault("settings", {})["maintenance_until"] = mnt
+            save_db(db)
+            return jsonify({"status": "success", "msg": "Đã BẬT bảo trì."})
+    return jsonify({"status": "error", "msg": "Hành động không hợp lệ!"})
 
 @app.route('/telegram_mini_app')
 def telegram_mini_app():
@@ -798,22 +994,35 @@ def telegram_mini_app():
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Xác Thực LVT</title>
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@500;700;900&display=swap');
-            body {{ background: #12141d; color: #fff; font-family: 'Roboto', sans-serif; margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; }}
-            .screen {{ display: none; width: 100%; height: 100%; padding: 20px; box-sizing: border-box; }} .screen.active {{ display: block; }}
-            .title-top {{ text-align: center; color: #00e5ff; font-size: 16px; font-weight: 900; margin-top: 30px; margin-bottom: 20px; letter-spacing: 1px; }}
+            body {{ background: #12141d; color: #fff; font-family: 'Roboto', sans-serif; margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }}
+            .screen {{ display: none; width: 100%; height: 100%; padding: 20px; box-sizing: border-box; overflow-y: auto; }} .screen.active {{ display: block; }}
+            .title-top {{ text-align: center; color: #00e5ff; font-size: 16px; font-weight: 900; margin-top: 30px; margin-bottom: 20px; letter-spacing: 1px; text-transform: uppercase; }}
             .inp {{ width: 100%; box-sizing: border-box; background: #1a1c26; border: 1px solid #2a2d3d; color: #8892b0; padding: 16px; border-radius: 6px; font-size: 14px; margin-bottom: 15px; outline: none; }}
             .inp::placeholder {{ color: #4a4d5d; }}
-            .btn-blue {{ background: #00bfff; border: none; width: 100%; padding: 16px; border-radius: 6px; color: #000; font-weight: 900; font-size: 14px; cursor: pointer; }}
+            .btn-blue {{ background: #00bfff; border: none; width: 100%; padding: 16px; border-radius: 6px; color: #000; font-weight: 900; font-size: 14px; cursor: pointer; transition:0.2s; }}
+            .btn-blue:active {{ transform: scale(0.98); }}
             
             .card {{ background: #1a1c26; border: 1px solid #2a2d3d; padding: 15px; border-radius: 12px; margin-bottom: 10px; }}
             .nav {{ display: flex; gap: 5px; margin-bottom: 20px; }}
-            .nav-btn {{ flex: 1; padding: 12px; background: #1a1c26; text-align: center; border-radius: 8px; color: #8892b0; border: 1px solid #2a2d3d; font-size: 14px; font-weight: 700; cursor: pointer; }}
+            .nav-btn {{ flex: 1; padding: 12px; background: #1a1c26; text-align: center; border-radius: 8px; color: #8892b0; border: 1px solid #2a2d3d; font-size: 14px; font-weight: 700; cursor: pointer; transition:0.2s; }}
             .nav-btn.act {{ background: #00bfff; color: #000; border-color: #00bfff; }}
+            
             #welc {{ position:fixed; inset:0; background:rgba(18,20,29,0.95); z-index:99; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; }}
             #mnt-overlay {{ position:fixed; inset:0; background:rgba(18,20,29,0.98); z-index:999; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#ff3366; }}
             #ban-overlay {{ position:fixed; inset:0; background:rgba(255,0,0,0.95); z-index:1000; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#fff; }}
+            
+            /* Admin Styles matching screenshot */
+            .header-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }}
+            .btn-back {{ background: rgba(255,255,255,0.1); border: none; padding: 10px 15px; border-radius: 10px; color: white; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }}
+            .section-title {{ font-size: 15px; font-weight: 800; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; color: #8892b0; text-transform: uppercase; margin-top:20px; }}
+            .select-btn {{ background: #1a1d29; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; cursor: pointer; transition: 0.2s; }}
+            .select-btn-left {{ display: flex; align-items: center; gap: 15px; }}
+            .icon-box {{ width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }}
+            .form-control {{ width: 100%; box-sizing: border-box; background: #1a1d29; border: 1px solid rgba(255,255,255,0.1); color: white; padding: 14px; border-radius: 10px; margin-bottom: 15px; font-family: inherit; }}
+            .btn-primary {{ background: linear-gradient(90deg, #00ffcc, #0099ff); border: none; width: 100%; padding: 14px; border-radius: 10px; color: #000; font-size: 15px; font-weight: 800; cursor: pointer; }}
         </style>
     </head>
     <body>
@@ -821,6 +1030,11 @@ def telegram_mini_app():
             <h1 style="margin:0;font-size:40px;">⚠️</h1>
             <h2>HỆ THỐNG BẢO TRÌ</h2>
             <p id="mnt-cd" style="font-size:20px; font-weight:bold; color:#00e5ff;"></p>
+        </div>
+        <div id="ban-overlay">
+            <h1 style="margin:0;font-size:50px;">⛔</h1>
+            <h2>TÀI KHOẢN BỊ KHÓA</h2>
+            <p id="ban-cd" style="font-size:18px; font-weight:bold;"></p>
         </div>
         <div id="welc">
             <h2 style="color:#00e5ff;">CHÀO MỪNG QUÝ KHÁCH</h2>
@@ -837,6 +1051,10 @@ def telegram_mini_app():
         </div>
         
         <div id="scr-dash" class="screen">
+            <div class="header-bar">
+                <div style="font-weight:bold; color:#00ffcc;">ID: <span id="display-id">...</span></div>
+                <button id="btn-admin-panel" style="display:none; background:#ffcc00; color:#000; border:none; padding:8px 12px; border-radius:8px; font-weight:bold;" onclick="navTo('screen-admin-main')"><i class="fas fa-crown"></i> ADMIN</button>
+            </div>
             <div class="nav">
                 <div class="nav-btn act" onclick="switchT('act')">KÍCH HOẠT</div>
                 <div class="nav-btn" onclick="switchT('mgr')">QUẢN LÝ</div>
@@ -855,7 +1073,7 @@ def telegram_mini_app():
                 <div class="card">
                     <h4 style="color:#00e5ff;margin-top:0;font-size:14px;">VIOLENTMONKEY LOADER</h4>
                     <p style="font-size:12px;color:#8892b0;">Auto kết nối. Copy đoạn code dưới dán vào Violentmonkey.</p>
-                    <textarea class="inp" rows="8" readonly style="font-family:monospace;font-size:11px;color:#00ffcc;background:#0d0e14;">// ==UserScript==
+                    <textarea class="inp" rows="8" readonly style="font-family:monospace;font-size:11px;color:#00ffcc;background:#0d0e14;" onclick="this.select()">// ==UserScript==
 // @name LVT LOADER
 // @match *://olm.vn/*
 // @match *://*.olm.vn/*
@@ -867,9 +1085,126 @@ def telegram_mini_app():
                 </div>
             </div>
         </div>
+
+        <!-- ================= ADMIN SCREENS ================= -->
+        <div id="screen-admin-main" class="screen">
+            <div class="header-bar">
+                <button class="btn-back" style="margin:0;" onclick="navTo('scr-dash')"><i class="fas fa-arrow-left"></i> Về User</button>
+                <div style="background:#ffcc00; color:#000; padding:5px 10px; border-radius:8px; font-weight:bold;"><i class="fas fa-crown"></i> ADMIN PANEL</div>
+            </div>
+            
+            <div class="section-title">HỆ THỐNG GLOBAL</div>
+            <div class="select-btn" onclick="navTo('screen-admin-system')">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(255,204,0,0.1); color:#ffcc00;"><i class="fas fa-bullhorn"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Thông Báo & Bảo Trì</div><div style="font-size: 12px; color: #8892b0;">Gửi thông báo, Đóng server</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+            
+            <div class="section-title">CHỨC NĂNG QUẢN TRỊ</div>
+            <div class="select-btn" onclick="navTo('screen-admin-keys')">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(34, 197, 94, 0.1); color:#22c55e;"><i class="fas fa-key"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Tạo & Quản Lý Key</div><div style="font-size: 12px; color: #8892b0;">Tạo Auto/Thủ công</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+            
+            <div class="select-btn" onclick="navTo('screen-admin-users')">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(59, 130, 246, 0.1); color:#3b82f6;"><i class="fas fa-users"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Quản Lý Người Dùng</div><div style="font-size: 12px; color: #8892b0;">Nạp tiền, Khóa, Xóa Web</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+
+            <div class="select-btn" onclick="navTo('screen-admin-olm')">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(239, 68, 68, 0.1); color:#ef4444;"><i class="fas fa-shield-alt"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Cấm Truy Cập OLM</div><div style="font-size: 12px; color: #8892b0;">Chặn Tool định danh OLM</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+
+            <div class="select-btn" onclick="navTo('screen-admin-script')">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(168, 85, 247, 0.1); color:#a855f7;"><i class="fas fa-code"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Cập Nhật Script Lõi</div><div style="font-size: 12px; color: #8892b0;">Thay code Violentmonkey</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+        </div>
+
+        <!-- Admin Sub-screens -->
+        <div id="screen-admin-system" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:0; color:#ffcc00;">🔔 HỆ THỐNG GLOBAL</h3>
+            <div style="background:#1a1d29; padding:20px; border-radius:15px; margin-bottom: 20px;">
+                <h5 style="color:#fff; margin-top:0;">Gửi Thông Báo Tất Cả User</h5>
+                <textarea id="sys-msg" class="form-control" rows="3" placeholder="Nhập nội dung..."></textarea>
+                <button class="btn-primary" style="background:linear-gradient(90deg, #ffcc00, #f97316);" onclick="sendGlobalNotice()">GỬI THÔNG BÁO</button>
+            </div>
+            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
+                <h5 style="color:#ef4444; margin-top:0;">Bật Chế Độ Bảo Trì Tool</h5>
+                <div style="display:flex; gap:10px;">
+                    <input type="number" id="mnt-dur" class="form-control" value="0" placeholder="Thời gian (0 để Tắt)">
+                    <select id="mnt-unit" class="form-control" style="background:#1a1d29; color:#fff;"><option value="m">Phút</option><option value="h" selected>Giờ</option><option value="d">Ngày</option></select>
+                </div>
+                <button class="btn-primary" style="background:linear-gradient(90deg, #ef4444, #b91c1c);" onclick="setMaintenance()">CẬP NHẬT BẢO TRÌ</button>
+            </div>
+        </div>
+
+        <div id="screen-admin-keys" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:0; color:#00ffcc;">🔑 TẠO KEY MỚI</h3>
+            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
+                <input type="text" id="k-prefix" class="form-control" placeholder="Tiền tố (VD: TEST)">
+                <div style="display:flex; gap:10px;">
+                    <input type="number" id="k-qty" class="form-control" value="1" placeholder="Số lượng">
+                    <input type="number" id="k-dur" class="form-control" value="1" placeholder="Độ dài">
+                </div>
+                <select id="k-unit" class="form-control" style="background:#1a1d29; color:#fff;">
+                    <option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh Viễn</option>
+                </select>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:15px;">
+                    <input type="checkbox" id="k-vip" style="width:20px; height:20px;">
+                    <label for="k-vip" style="color:#ffcc00; font-weight:bold;">Tạo dưới dạng Key VIP PRO</label>
+                </div>
+                <button class="btn-primary" onclick="createKeys()">🚀 TẠO NGAY</button>
+            </div>
+        </div>
+
+        <div id="screen-admin-users" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:0; color:#3b82f6;">👥 DANH SÁCH USER WEB</h3>
+            <input type="text" id="u-search" class="form-control" placeholder="🔍 Tìm user..." onkeyup="filterUsers()">
+            <div id="user-list-container"><div style="text-align:center; padding:20px; color:#8892b0;">Đang tải dữ liệu...</div></div>
+        </div>
+
+        <div id="screen-admin-olm" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:0; color:#ef4444;">🚫 CHẶN OLM DÙNG TOOL</h3>
+            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
+                <input type="text" id="o-name" class="form-control" placeholder="Nhập tên định danh OLM">
+                <div style="display:flex; gap:10px;">
+                    <input type="number" id="o-dur" class="form-control" value="1" placeholder="Thời gian">
+                    <select id="o-unit" class="form-control" style="background:#1a1d29; color:#fff;">
+                        <option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Khóa Vĩnh Viễn</option>
+                    </select>
+                </div>
+                <button class="btn-primary" style="background:linear-gradient(90deg, #ef4444, #f97316);" onclick="banOlm()">CHẶN NGAY</button>
+            </div>
+        </div>
+
+        <div id="screen-admin-script" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:0; color:#a855f7;">📜 CẬP NHẬT LÕI SCRIPT</h3>
+            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
+                <textarea id="s-code" class="form-control" rows="8" placeholder="// ==UserScript==\n..."></textarea>
+                <button class="btn-primary" style="background:linear-gradient(90deg, #a855f7, #6366f1);" onclick="updateScript()">LƯU VÀ XUẤT BẢN NHANH</button>
+            </div>
+        </div>
+
         <script>
             let tgId = localStorage.getItem('lvt_tg_id');
             let isMnt = {is_mnt}; let mntTime = {mnt_time}; let notice = "{admin_notice}";
+            let checkBanInterval; let allUsersData = [];
             
             if(isMnt) {{
                 document.getElementById('mnt-overlay').style.display='flex';
@@ -896,7 +1231,32 @@ def telegram_mini_app():
             }}
             
             function api(path, body, cb) {{
-                fetch(path, {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(body)}}).then(r=>r.json()).then(cb);
+                let headers = {{'Content-Type':'application/json'}};
+                if (tgId) headers['X-Admin-ID'] = tgId;
+                fetch(path, {{method:'POST', headers:headers, body:JSON.stringify(body)}}).then(r=>r.json()).then(cb);
+            }}
+            
+            function startBanCheck() {{
+                if(checkBanInterval) clearInterval(checkBanInterval);
+                checkBanInterval = setInterval(()=>{{
+                    api('/api/tg/auth_check', {{tg_id: tgId}}, r => {{
+                        if(r.status==='banned') {{
+                            document.getElementById('ban-overlay').style.display='flex';
+                            let b_cd = document.getElementById('ban-cd');
+                            if(r.banned_until === 'permanent') b_cd.innerHTML = 'VĨNH VIỄN';
+                            else {{
+                                let rem = r.banned_until - Date.now();
+                                if(rem<=0) location.reload();
+                                else {{
+                                    let d=Math.floor(rem/86400000), h=Math.floor((rem%86400000)/3600000), m=Math.floor((rem%3600000)/60000), s=Math.floor((rem%60000)/1000);
+                                    b_cd.innerHTML = `Còn: ${{d}}d ${{h}}h ${{m}}m ${{s}}s`;
+                                }}
+                            }}
+                        }} else if(r.status==='error') {{
+                            localStorage.removeItem('lvt_tg_id'); location.reload();
+                        }} else {{ document.getElementById('ban-overlay').style.display='none'; }}
+                    }});
+                }}, 3000);
             }}
 
             function auth() {{
@@ -905,10 +1265,13 @@ def telegram_mini_app():
                 api('/api/tg/auth_check', {{tg_id: id}}, r => {{
                     if(r.status==='ok') {{
                         tgId = id; localStorage.setItem('lvt_tg_id', id);
-                        document.getElementById('scr-auth').classList.remove('active');
-                        document.getElementById('scr-dash').classList.add('active');
-                        chkW(); loadK();
-                    }} else Swal.fire('Lỗi', 'ID không được cấp phép!', 'error');
+                        document.getElementById('display-id').innerText = id;
+                        if(r.is_admin) document.getElementById('btn-admin-panel').style.display = 'block';
+                        navTo('scr-dash');
+                        chkW(); loadK(); startBanCheck();
+                    }} else if(r.status==='banned') {{
+                        Swal.fire('Lỗi', 'ID BỊ CẤM', 'error');
+                    }} else Swal.fire('Lỗi', 'ID không được cấp phép hoặc đã hết hạn!', 'error');
                 }});
             }}
             if(tgId && !isMnt) auth();
@@ -969,13 +1332,106 @@ def telegram_mini_app():
                     }}
                 }});
             }}
+
+            // ADMIN FUNCTIONS
+            function navTo(screenId) {
+                document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+                document.getElementById(screenId).classList.add('active');
+                if(screenId === 'screen-admin-users') loadAdminUsers();
+            }
+
+            function copyT(t) {
+                navigator.clipboard.writeText(t);
+                Swal.fire({toast:true, position:'top', icon:'success', title:'Đã copy!', showConfirmButton:false, timer:1500, background:'#1a1d29', color:'#fff'});
+            }
+
+            function loadAdminUsers() {
+                fetch('/api/tg_admin/get_data', { headers: { 'X-Admin-ID': tgId } }).then(r => r.json()).then(data => {
+                    allUsersData = data.users; renderUsers(allUsersData);
+                });
+            }
+
+            function renderUsers(users) {
+                let container = document.getElementById('user-list-container'); container.innerHTML = '';
+                if(users.length === 0) { container.innerHTML = '<div style="color:#8892b0; padding:20px;">Trống</div>'; return; }
+                users.forEach(u => {
+                    let kHtml = u.keys.map(k => `<div>🔑 <code style="color:#00ffcc;" onclick="copyT('${k.key}')">${k.key.substring(0,8)}...</code> <span style="color:${k.status==='active'?'#22c55e':'#ef4444'}">[${k.exp}]</span></div>`).join('');
+                    let banBadge = u.is_banned ? `<span style="background:rgba(239,68,68,0.2); color:#ef4444; padding:2px 6px; border-radius:4px; font-size:10px; border:1px solid #ef4444;">BỊ KHÓA</span>` : '';
+                    let card = `
+                    <div style="background:#1a1d29; border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:15px; margin-bottom:15px;">
+                        <div style="display:flex; justify-content:space-between; border-bottom:1px dashed rgba(255,255,255,0.1); padding-bottom:10px; margin-bottom:10px;">
+                            <b style="color:#fff;" onclick="copyT('${u.username}')">${u.username} <i class="fas fa-copy"></i></b> ${banBadge}
+                        </div>
+                        <div style="font-size:13px; color:#8892b0;">
+                            <div>Dư: <b style="color:#ffcc00;">${u.balance.toLocaleString()}đ</b></div>
+                            <div style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;">${kHtml || 'Chưa mua key'}</div>
+                        </div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px;">
+                            <button style="background:rgba(34,197,94,0.1); color:#22c55e; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="actionUser('${u.username}', 'add_balance')"><i class="fas fa-plus"></i> Tiền</button>
+                            <button style="background:rgba(59,130,246,0.1); color:#3b82f6; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="actionUser('${u.username}', 'reset_pass')"><i class="fas fa-key"></i> Đổi Pass</button>
+                            ${u.is_banned ? `<button style="background:rgba(249,115,22,0.1); color:#f97316; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="api('/api/tg_admin/action_user', {action:'unban_web', username:'${u.username}'}, ()=>{loadAdminUsers();})"><i class="fas fa-unlock"></i> Mở Khóa</button>` : `<button style="background:rgba(249,115,22,0.1); color:#f97316; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="actionUser('${u.username}', 'ban_web')"><i class="fas fa-ban"></i> Khóa Web</button>`}
+                            <button style="background:rgba(239,68,68,0.1); color:#ef4444; border:none; padding:8px; border-radius:6px; font-weight:bold;" onclick="actionUser('${u.username}', 'delete_user')"><i class="fas fa-trash"></i> Xóa</button>
+                        </div>
+                    </div>`;
+                    container.innerHTML += card;
+                });
+            }
+            function filterUsers() { let s = document.getElementById('u-search').value.toLowerCase(); renderUsers(allUsersData.filter(u => u.username.toLowerCase().includes(s))); }
+
+            function actionUser(uname, action) {
+                if(action === 'add_balance') {
+                    Swal.fire({ title: `Nạp Tiền: ${uname}`, input: 'number', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#22c55e'
+                    }).then(r => { if(r.isConfirmed) api('/api/tg_admin/action_user', {action:'add_balance', username:uname, amount:r.value}, ()=>{loadAdminUsers();}); });
+                } else if(action === 'ban_web') {
+                    Swal.fire({ title: `Khóa Web: ${uname}`, html: `<input type="number" id="b-dur" class="swal2-input" value="1"><select id="b-unit" class="swal2-select"><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select>`, showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#f97316', preConfirm: () => { return { dur: document.getElementById('b-dur').value, unit: document.getElementById('b-unit').value }; }
+                    }).then(r => { if(r.isConfirmed) api('/api/tg_admin/action_user', {action:'ban_web', username:uname, duration:r.value.dur, unit:r.value.unit}, ()=>{loadAdminUsers();}); });
+                } else if(action === 'reset_pass') {
+                    Swal.fire({ title: `Đổi Pass: ${uname}`, input: 'text', inputPlaceholder: 'Nhập Pass mới', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#3b82f6', preConfirm: (v)=>{if(!v)Swal.showValidationMessage('Trống!'); return v;}
+                    }).then(r => { if(r.isConfirmed) api('/api/tg_admin/action_user', {action:'reset_pass', username:uname, new_pass:r.value}, ()=>{loadAdminUsers();}); });
+                } else if(action === 'delete_user') {
+                    Swal.fire({ title: 'Xóa vĩnh viễn?', icon: 'error', showCancelButton: true, background:'#1a1d29', color:'#fff', confirmButtonColor:'#ef4444' }).then(r => { if(r.isConfirmed) api('/api/tg_admin/action_user', {action:'delete_user', username:uname}, ()=>{loadAdminUsers();}); });
+                }
+            }
+
+            function createKeys() {
+                let p = document.getElementById('k-prefix').value; let q = document.getElementById('k-qty').value; let d = document.getElementById('k-dur').value; let u = document.getElementById('k-unit').value; let v = document.getElementById('k-vip').checked;
+                api('/api/tg_admin/create_keys', {prefix: p, quantity: q, duration: d, unit: u, is_vip: v}, (res) => {
+                    let kHtml = res.keys.map(k => `<div style="background:#000; color:#00ffcc; padding:8px; margin:5px 0; border-radius:5px; font-family:monospace; font-size:12px; cursor:pointer;" onclick="copyT('${k}')">${k}</div>`).join('');
+                    Swal.fire({title: 'ĐÃ TẠO XONG', html: `<div style="text-align:left; max-height:200px; overflow-y:auto;">${kHtml}</div>`, background:'#1a1d29', color:'#fff', confirmButtonColor:'#00ffcc'});
+                });
+            }
+
+            function banOlm() {
+                let n = document.getElementById('o-name').value; let d = document.getElementById('o-dur').value; let u = document.getElementById('o-unit').value;
+                if(!n) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập', background:'#1a1d29', color:'#fff'});
+                api('/api/tg_admin/ban_olm', {olm_name: n, duration: d, unit: u}, () => { Swal.fire('Thành công', 'Đã cấm tài khoản OLM', 'success'); });
+            }
+
+            function updateScript() {
+                let code = document.getElementById('s-code').value;
+                if(!code) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa dán code', background:'#1a1d29', color:'#fff'});
+                api('/api/tg_admin/update_script', {script_content: code}, () => { Swal.fire('Thành công', 'Cập nhật mã Script thành công', 'success'); });
+            }
+            
+            function sendGlobalNotice() {
+                let msg = document.getElementById('sys-msg').value;
+                if(!msg) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập', background:'#1a1d29', color:'#fff'});
+                api('/api/tg_admin/system_actions', {action: 'global_notice', message: msg}, () => { Swal.fire('Thành công', 'Đã gửi thông báo', 'success'); });
+            }
+
+            function setMaintenance() {
+                let d = document.getElementById('mnt-dur').value; let u = document.getElementById('mnt-unit').value;
+                api('/api/tg_admin/system_actions', {action: 'maintenance', duration: d, unit: u}, () => { Swal.fire('Thành công', 'Đã cập nhật trạng thái bảo trì', 'success'); });
+            }
         </script>
     </body>
     </html>
     """
     return render_template_string_safe(html)
 
-# ADMIN WEB ROUTES
+# ========================================================
+# ADMIN WEB ROUTES (GIỮ NGUYÊN VẸN 100% CẤU TRÚC CŨ)
+# ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
     try:
@@ -1009,7 +1465,7 @@ def admin_login():
             
             return swal_back("Từ Chối Truy Cập", f"Thông tin sai! Bạn còn {5 - attempts['count']} lần thử.", "error")
             
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS}</style></head><body><div class="glass-panel"><h2 class="text-neon mb-4">🔐 QUẢN TRỊ VIÊN</h2><form method="POST"><input type="text" name="username" class="form-control" placeholder="Tên Admin" required><input type="password" name="password" class="form-control mt-2" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2">VÀO PHÒNG ĐIỀU KHIỂN</button></form></div></body></html>'''
     except Exception as e: return f"LỖI HỆ THỐNG: {str(e)}", 200
 
 @app.route('/admin')
@@ -1142,6 +1598,8 @@ def admin_dashboard():
           </div>
         </div>
         
+        <div class="modal fade" id="sysModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95); border:1px solid #ffcc00; backdrop-filter: blur(15px);"><div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ffcc00;font-weight:bold;">HỆ THỐNG GLOBAL</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4"><form action="/admin/system" method="POST" class="mb-4"><h6>🔔 Thông báo toàn bộ User</h6><textarea name="global_notice" class="form-control mb-2" rows="2" placeholder="Nhập nội dung..."></textarea><button class="btn btn-warning btn-sm w-100 fw-bold">GỬI THÔNG BÁO</button></form><hr class="border-secondary"><form action="/admin/maintenance" method="POST"><h6>⚠️ Bảo trì hệ thống</h6><div class="d-flex gap-2 mb-2"><input type="number" name="duration" class="form-control" placeholder="Thời gian (0 = Tắt)"><select name="unit" class="form-select"><option value="m">Phút</option><option value="h" selected>Giờ</option><option value="d">Ngày</option></select></div><button class="btn btn-danger btn-sm w-100 fw-bold">CẬP NHẬT BẢO TRÌ</button></form></div></div></div></div>
+
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script>
             function copyKey(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top-end',icon:'success',title:'Đã Copy!',showConfirmButton:false,timer:1000,background:'#111',color:'#00ffcc'}}); }}
@@ -1257,6 +1715,30 @@ def admin_update_vm_script():
         db.setdefault("settings", {})["violentmonkey_script"] = ns
         save_db(db)
     return swal_redirect("Thành công", "Đã cập nhật Code mới", "success", "/admin")
+
+@app.route('/admin/system', methods=['POST'])
+def admin_system():
+    if session.get('role') != 'admin': return redirect('/login')
+    msg = request.form.get('global_notice', '').strip()
+    db = load_db()
+    with db_lock:
+        db.setdefault("settings", {})["global_notice"] = msg
+        save_db(db)
+    return redirect('/admin')
+
+@app.route('/admin/maintenance', methods=['POST'])
+def admin_maintenance():
+    if session.get('role') != 'admin': return redirect('/login')
+    dur = safe_int(request.form.get('duration', 0))
+    unit = request.form.get('unit', 'h')
+    db = load_db()
+    with db_lock:
+        if dur <= 0: db.setdefault("settings", {})["maintenance_until"] = 0
+        else:
+            mult = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 3600000)
+            db.setdefault("settings", {})["maintenance_until"] = int(time.time() * 1000) + (dur * mult)
+        save_db(db)
+    return redirect('/admin')
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
