@@ -1859,7 +1859,7 @@ def tg_admin_create_keys():
             db.setdefault("keys", {})[nk] = {
                 "exp": "pending", "maxDevices": 1, "devices": [], "known_ips": {},
                 "status": "active", "vip": vip, "loader_enabled": True, "violations": 0,
-                "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": "", "activated": False
+                "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": "", "activated": False, "tg_owner": ""
             }
             if unit != 'permanent': 
                 db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(unit, 60000)
