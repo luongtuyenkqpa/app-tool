@@ -1276,6 +1276,13 @@ def generate_secure_key(prefix="", is_vip=False):
     if prefix: return f"{prefix}-{t_vip}-{rand_str}"
     return f"LVT-{t_vip}-{rand_str}"
 
+def generate_secure_key_15(prefix="", is_vip=False):
+    charset = string.ascii_letters + string.digits + "!@#$%^&*"
+    rand_str = ''.join(secrets.choice(charset) for _ in range(15))
+    t_vip = "VIP" if is_vip else "NOR"
+    if prefix: return f"{prefix}-{t_vip}-{rand_str}"
+    return f"LVT-{t_vip}-{rand_str}"
+
 def generate_game_key_15():
     charset = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(charset) for _ in range(15))
@@ -1825,6 +1832,162 @@ def tg_my_keys():
             my_keys.append({"key": k, "exp": exp_str, "exp_ms": v["exp"], "olm": v.get("bound_olm",""), "status": v.get("status"), "devs": len(v.get("devices",[])), "vip": v.get("vip")})
     return jsonify({"status": "success", "keys": my_keys})
 
+# ========================================================
+# API TELEGRAM MINI APP ADMIN 
+# ========================================================
+def check_tg_admin_auth(req):
+    tg_id = req.headers.get('X-Admin-ID', '')
+    db = load_db()
+    allowed = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
+    return tg_id in allowed or tg_id == str(TELEGRAM_CHAT_ID)
+
+@app.route('/api/tg_admin/create_keys', methods=['POST'])
+def tg_admin_create_keys():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error", "msg": "Unauthorized"}), 403
+    data = request.json or {}
+    pfx = data.get('prefix', '').strip()
+    qty = safe_int(data.get('quantity'), 1)
+    dur = safe_int(data.get('duration'), 1)
+    unit = data.get('unit', 'day')
+    vip = data.get('is_vip', False)
+    
+    db = load_db()
+    created = []
+    with db_lock:
+        for _ in range(qty):
+            nk = generate_secure_key_15(pfx, vip)
+            db.setdefault("keys", {})[nk] = {
+                "exp": "pending", "maxDevices": 1, "devices": [], "known_ips": {},
+                "status": "active", "vip": vip, "loader_enabled": True, "violations": 0,
+                "temp_ban_until": 0, "owner": "admin", "reset_count": 0, "bound_olm": "", "activated": False
+            }
+            if unit != 'permanent': 
+                db["keys"][nk]["durationMs"] = dur * {"hour":3600000, "day":86400000, "month":2592000000}.get(unit, 60000)
+            else: 
+                db["keys"][nk]["exp"] = "permanent"
+            created.append(nk)
+        save_db(db)
+    return jsonify({"status": "success", "keys": created})
+
+@app.route('/api/tg_admin/get_all_keys', methods=['POST'])
+def tg_admin_get_keys():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    db = load_db()
+    now = int(time.time()*1000)
+    keys_list = []
+    for k, v in db.get("keys", {}).items():
+        exp_str = "Vĩnh viễn" if v["exp"]=="permanent" else ("Chưa KH" if v["exp"]=="pending" else ("Hết hạn" if v["exp"]<now else time.strftime("%d/%m %H:%M", time.localtime(v["exp"]/1000))))
+        keys_list.append({
+            "key": k, "vip": v.get("vip", False), "status": v.get("status", "active"),
+            "exp": exp_str, "exp_ms": v["exp"], "devs": len(v.get("devices", [])),
+            "max_dev": v.get("maxDevices", 1), "olm": v.get("bound_olm", "")
+        })
+    keys_list.sort(key=lambda x: x["exp_ms"] if isinstance(x["exp_ms"], int) else 9999999999999, reverse=True)
+    return jsonify({"status": "success", "keys": keys_list})
+
+@app.route('/api/tg_admin/action_key', methods=['POST'])
+def tg_admin_action_key():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    data = request.json or {}
+    key = data.get("key", "")
+    action = data.get("action", "")
+    db = load_db()
+    with db_lock:
+        if key in db.get("keys", {}):
+            kd = db["keys"][key]
+            if action == 'ban': kd['status'] = 'banned'
+            elif action == 'unban': 
+                kd['status'] = 'active'
+                kd['temp_ban_until'] = 0
+            elif action == 'delete': del db["keys"][key]
+            elif action == 'reset':
+                kd['devices'] = []
+                kd['known_ips'] = {}
+                kd['activated'] = False
+            save_db(db)
+    return jsonify({"status": "success"})
+
+@app.route('/api/tg_admin/add_time', methods=['POST'])
+def tg_admin_add_time():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    data = request.json or {}
+    key = data.get("key", "")
+    t_val = safe_int(data.get("val"), 0)
+    t_unit = data.get("unit", "days")
+    ms_to_add = t_val * {"minutes": 60000, "hours": 3600000, "days": 86400000, "months": 2592000000}.get(t_unit, 0)
+    db = load_db()
+    with db_lock:
+        if key in db.get("keys", {}):
+            kd = db["keys"][key]
+            if kd.get("exp") != "permanent":
+                if kd.get("exp") == "pending": kd["durationMs"] = kd.get("durationMs", 0) + ms_to_add
+                else:
+                    now = int(time.time() * 1000)
+                    curr = max(kd.get("exp", now), now)
+                    kd["exp"] = curr + ms_to_add
+            save_db(db)
+    return jsonify({"status": "success"})
+
+@app.route('/api/tg_admin/bind_olm', methods=['POST'])
+def tg_admin_bind_olm():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    data = request.json or {}
+    key = data.get("key", "")
+    olm = data.get("olm_name", "")
+    db = load_db()
+    with db_lock:
+        if key in db.get("keys", {}):
+            db["keys"][key]["bound_olm"] = olm
+            save_db(db)
+    return jsonify({"status": "success"})
+
+@app.route('/api/tg_admin/update_script', methods=['POST'])
+def tg_admin_update_script():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    data = request.json or {}
+    script_content = data.get("script_content", "")
+    db = load_db()
+    with db_lock:
+        db.setdefault("settings", {})["violentmonkey_script"] = script_content
+        save_db(db)
+    return jsonify({"status": "success"})
+
+@app.route('/api/tg_admin/ban_olm', methods=['POST'])
+def tg_admin_ban_olm():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    data = request.json or {}
+    name = data.get("olm_name", "")
+    dur = safe_int(data.get("duration"), 1)
+    unit = data.get("unit", "d")
+    db = load_db()
+    with db_lock:
+        if name:
+            if unit == 'permanent': db.setdefault("banned_olms", {})[name] = "permanent"
+            else:
+                mult = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 86400000)
+                db.setdefault("banned_olms", {})[name] = int(time.time() * 1000) + (dur * mult)
+            save_db(db)
+    return jsonify({"status": "success"})
+
+@app.route('/api/tg_admin/system_actions', methods=['POST'])
+def tg_admin_system_actions():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    data = request.json or {}
+    act = data.get("action")
+    db = load_db()
+    with db_lock:
+        if act == 'global_notice':
+            db.setdefault("settings", {})["global_notice"] = data.get("message", "")
+        elif act == 'maintenance':
+            dur = safe_int(data.get("duration", 0))
+            unit = data.get("unit", "h")
+            if dur <= 0: db.setdefault("settings", {})["maintenance_until"] = 0
+            else:
+                mult = {"m": 60000, "h": 3600000, "d": 86400000}.get(unit, 3600000)
+                db.setdefault("settings", {})["maintenance_until"] = int(time.time() * 1000) + (dur * mult)
+        save_db(db)
+    return jsonify({"status": "success"})
+
 @app.route('/telegram_mini_app')
 def telegram_mini_app():
     db = load_db()
@@ -1832,87 +1995,85 @@ def telegram_mini_app():
     now = int(time.time()*1000)
     is_mnt = "true" if (isinstance(mnt, int) and mnt > now) else "false"
     mnt_time = mnt if is_mnt == "true" else 0
-    admin_notice = escape(db.get("settings", {}).get("global_notice", ""))
+    safe_vm_script = escape(db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT))
     
     html = f"""
     <!DOCTYPE html>
     <html lang="vi">
     <head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>Xác Thực LVT</title>
+        <title>Hệ Thống LVT Mini App</title>
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@500;700;900&display=swap');
-            body {{ background: #12141d; color: #fff; font-family: 'Roboto', sans-serif; margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }}
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
+            body {{ background: #0b0d14; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }}
             .screen {{ display: none; width: 100%; height: 100%; padding: 20px; box-sizing: border-box; overflow-y: auto; }} .screen.active {{ display: block; }}
-            .title-top {{ text-align: center; color: #00e5ff; font-size: 16px; font-weight: 900; margin-top: 30px; margin-bottom: 20px; letter-spacing: 1px; text-transform: uppercase; }}
-            .inp {{ width: 100%; box-sizing: border-box; background: #1a1c26; border: 1px solid #2a2d3d; color: #8892b0; padding: 16px; border-radius: 6px; font-size: 14px; margin-bottom: 15px; outline: none; }}
-            .inp::placeholder {{ color: #4a4d5d; }}
-            .btn-blue {{ background: #00bfff; border: none; width: 100%; padding: 16px; border-radius: 6px; color: #000; font-weight: 900; font-size: 14px; cursor: pointer; transition:0.2s; }}
-            .btn-blue:active {{ transform: scale(0.98); }}
+            .title-top {{ text-align: center; color: #00ffcc; font-size: 18px; font-weight: 900; margin-top: 20px; margin-bottom: 25px; letter-spacing: 2px; text-transform: uppercase; text-shadow: 0 0 10px rgba(0,255,204,0.3); }}
             
-            .card {{ background: #1a1c26; border: 1px solid #2a2d3d; padding: 15px; border-radius: 12px; margin-bottom: 10px; }}
-            .nav {{ display: flex; gap: 5px; margin-bottom: 20px; }}
-            .nav-btn {{ flex: 1; padding: 12px; background: #1a1c26; text-align: center; border-radius: 8px; color: #8892b0; border: 1px solid #2a2d3d; font-size: 14px; font-weight: 700; cursor: pointer; transition:0.2s; }}
-            .nav-btn.act {{ background: #00bfff; color: #000; border-color: #00bfff; }}
+            .inp {{ width: 100%; box-sizing: border-box; background: rgba(26,28,38,0.8); border: 1px solid rgba(0,255,204,0.2); color: #00ffcc; padding: 15px; border-radius: 10px; font-size: 14px; margin-bottom: 15px; outline: none; font-weight:600; transition: 0.3s; }}
+            .inp:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.1); }}
+            .inp::placeholder {{ color: #4a4d5d; font-weight:400; }}
             
-            #mnt-overlay {{ position:fixed; inset:0; background:rgba(18,20,29,0.98); z-index:999; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#ff3366; }}
-            #ban-overlay {{ position:fixed; inset:0; background:rgba(255,0,0,0.95); z-index:1000; display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#fff; }}
+            .btn-neon {{ background: linear-gradient(90deg, #00ffcc, #0099ff); border: none; width: 100%; padding: 15px; border-radius: 10px; color: #000; font-weight: 900; font-size: 14px; cursor: pointer; transition:0.2s; text-transform: uppercase; box-shadow: 0 5px 15px rgba(0,255,204,0.2); }}
+            .btn-neon:active {{ transform: scale(0.97); }}
             
-            /* Admin Styles matching screenshot */
-            .header-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }}
-            .btn-back {{ background: rgba(255,255,255,0.1); border: none; padding: 10px 15px; border-radius: 10px; color: white; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }}
-            .section-title {{ font-size: 15px; font-weight: 800; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; color: #8892b0; text-transform: uppercase; margin-top:20px; }}
-            .select-btn {{ background: #1a1d29; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; cursor: pointer; transition: 0.2s; }}
-            .select-btn-left {{ display: flex; align-items: center; gap: 15px; }}
-            .icon-box {{ width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }}
-            .form-control {{ width: 100%; box-sizing: border-box; background: #1a1d29; border: 1px solid rgba(255,255,255,0.1); color: white; padding: 14px; border-radius: 10px; margin-bottom: 15px; font-family: inherit; }}
-            .btn-primary {{ background: linear-gradient(90deg, #00ffcc, #0099ff); border: none; width: 100%; padding: 14px; border-radius: 10px; color: #000; font-size: 15px; font-weight: 800; cursor: pointer; }}
+            .card {{ background: rgba(26,28,38,0.6); border: 1px solid rgba(255,255,255,0.05); padding: 16px; border-radius: 15px; margin-bottom: 15px; backdrop-filter: blur(10px); }}
+            .nav {{ display: flex; gap: 8px; margin-bottom: 20px; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 12px; }}
+            .nav-btn {{ flex: 1; padding: 12px; text-align: center; border-radius: 10px; color: #8892b0; font-size: 13px; font-weight: 800; cursor: pointer; transition:0.3s; }}
+            .nav-btn.act {{ background: #00ffcc; color: #000; box-shadow: 0 0 15px rgba(0,255,204,0.3); }}
+            
+            .header-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }}
+            .btn-back {{ background: rgba(255,255,255,0.08); border: none; padding: 10px 18px; border-radius: 10px; color: #fff; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; transition: 0.2s; }}
+            .section-title {{ font-size: 14px; font-weight: 900; margin-bottom: 12px; color: #8892b0; text-transform: uppercase; margin-top:25px; letter-spacing:1px; }}
+            .select-btn {{ background: rgba(26,28,38,0.9); border: 1px solid rgba(255,255,255,0.05); border-radius: 14px; padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; cursor: pointer; transition: 0.2s; }}
+            .select-btn:active {{ transform: scale(0.98); border-color: rgba(0,255,204,0.5); }}
+            .icon-box {{ width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }}
+            
+            .swal2-popup {{ background: #1a1c26 !important; color: #fff !important; border: 1px solid #00ffcc !important; border-radius: 15px !important; }}
+            .swal2-input, .swal2-select {{ background: #0b0d14 !important; border: 1px solid #333 !important; color: #00ffcc !important; border-radius: 8px !important; }}
+            .action-btn {{ font-size:11px; font-weight:bold; padding:8px 12px; border-radius:6px; border:none; cursor:pointer; text-transform:uppercase; transition:0.2s; }}
+            .action-btn:active {{ transform: scale(0.95); }}
         </style>
     </head>
     <body>
-        <div id="mnt-overlay">
+        <div id="mnt-overlay" style="display:none; position:fixed; inset:0; background:rgba(18,20,29,0.98); z-index:999; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#ff3366;">
             <h1 style="margin:0;font-size:40px;">⚠️</h1>
             <h2>HỆ THỐNG BẢO TRÌ</h2>
             <p id="mnt-cd" style="font-size:20px; font-weight:bold; color:#00e5ff;"></p>
         </div>
-        <div id="ban-overlay">
+        <div id="ban-overlay" style="display:none; position:fixed; inset:0; background:rgba(255,0,0,0.95); z-index:1000; align-items:center; justify-content:center; flex-direction:column; padding:20px; text-align:center; color:#fff;">
             <h1 style="margin:0;font-size:50px;">⛔</h1>
             <h2>TÀI KHOẢN BỊ KHÓA</h2>
             <p id="ban-cd" style="font-size:18px; font-weight:bold;"></p>
         </div>
         
         <div id="scr-auth" class="screen active">
-            <div class="title-top">XÁC THỰC ID TELEGRAM</div>
-            <input type="text" id="tg_id_inp" class="inp" placeholder="Nhập ID Telegram được cấp phép...">
-            <button class="btn-blue" onclick="auth()">XÁC NHẬN</button>
+            <div class="title-top"><i class="fas fa-fingerprint"></i> XÁC THỰC LVT</div>
+            <input type="text" id="tg_id_inp" class="inp" placeholder="Nhập ID Telegram của bạn...">
+            <button class="btn-neon" onclick="auth()"><i class="fas fa-sign-in-alt"></i> ĐĂNG NHẬP HỆ THỐNG</button>
         </div>
         
         <div id="scr-dash" class="screen">
             <div class="header-bar">
-                <div style="font-weight:bold; color:#00ffcc;">ID: <span id="display-id">...</span></div>
-                <button id="btn-admin-panel" style="display:none; background:#ffcc00; color:#000; border:none; padding:8px 12px; border-radius:8px; font-weight:bold;" onclick="navTo('screen-admin-main')"><i class="fas fa-crown"></i> ADMIN</button>
+                <div style="font-weight:900; color:#00ffcc; background:rgba(0,255,204,0.1); padding:8px 15px; border-radius:20px; font-size:13px;"><i class="fas fa-user-astronaut"></i> ID: <span id="display-id">...</span></div>
+                <button id="btn-admin-panel" style="display:none; background:linear-gradient(90deg, #ffcc00, #ff6600); color:#000; border:none; padding:8px 18px; border-radius:20px; font-weight:900; box-shadow: 0 0 15px rgba(255,204,0,0.3);" onclick="navTo('screen-admin-main')"><i class="fas fa-crown"></i> C-PANEL</button>
             </div>
             <div class="nav">
                 <div class="nav-btn act" onclick="switchT('act')">KÍCH HOẠT</div>
-                <div class="nav-btn" onclick="switchT('mgr')">QUẢN LÝ</div>
-                <div class="nav-btn" onclick="switchT('scr')">SCRIPT</div>
+                <div class="nav-btn" onclick="switchT('mgr')">CHÌA KHÓA</div>
             </div>
+            
             <div id="tab-act" style="display:block;">
-                <input type="text" id="k_inp" class="inp" placeholder="Nhập Key...">
-                <input type="text" id="o_inp" class="inp" placeholder="Nhập Tài Khoản OLM Chỉ Định...">
-                <button class="btn-blue" onclick="actKey()">KÍCH HOẠT KEY</button>
-            </div>
-            <div id="tab-mgr" style="display:none;">
-                <h4 style="color:#00e5ff; margin-top:0; margin-bottom:15px; font-size:14px;">DANH SÁCH KEY CỦA TÔI</h4>
-                <div id="k_list"></div>
-            </div>
-            <div id="tab-scr" style="display:none;">
+                <div class="card border-0" style="background:rgba(0,255,204,0.03);">
+                    <input type="text" id="k_inp" class="inp" placeholder="Dán mã Key bảo mật...">
+                    <input type="text" id="o_inp" class="inp" placeholder="Định danh OLM (Ghim tài khoản)...">
+                    <button class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> KÍCH HOẠT TOOL</button>
+                </div>
                 <div class="card">
-                    <h4 style="color:#00e5ff;margin-top:0;font-size:14px;">VIOLENTMONKEY LOADER</h4>
-                    <p style="font-size:12px;color:#8892b0;">Auto kết nối. Copy đoạn code dưới dán vào Violentmonkey.</p>
-                    <textarea class="inp" rows="8" readonly style="font-family:monospace;font-size:11px;color:#00ffcc;background:#0d0e14;" onclick="this.select()">// ==UserScript==
+                    <h4 style="color:#00ffcc;margin-top:0;font-size:14px;"><i class="fas fa-code"></i> SCRIPT VÀO TOOL</h4>
+                    <p style="font-size:12px;color:#8892b0;">Copy tay toàn bộ code bên dưới và thay vào Violentmonkey gốc.</p>
+                    <textarea class="inp" rows="6" readonly style="font-family:monospace;font-size:11px;color:#00ffcc;background:#0d0e14;" onclick="this.select()">// ==UserScript==
 // @name LVT LOADER
 // @match *://olm.vn/*
 // @match *://*.olm.vn/*
@@ -1923,125 +2084,131 @@ def telegram_mini_app():
 (function(){{GM_xmlhttpRequest({{method:'GET',url:'{WEB_URL}/api/script/olm_vip.user.js?t='+Date.now(),onload:r=>{{try{{eval(r.responseText)}}catch(e){{}}}}}})}})();</textarea>
                 </div>
             </div>
+            
+            <div id="tab-mgr" style="display:none;">
+                <h4 style="color:#00ffcc; margin-top:0; margin-bottom:15px; font-size:14px; font-weight:900;"><i class="fas fa-wallet"></i> KHO KEY CỦA TÔI</h4>
+                <div id="k_list"></div>
+            </div>
         </div>
 
         <!-- ================= ADMIN SCREENS ================= -->
         <div id="screen-admin-main" class="screen">
             <div class="header-bar">
-                <button class="btn-back" style="margin:0;" onclick="navTo('scr-dash')"><i class="fas fa-arrow-left"></i> Về Menu</button>
-                <div style="background:#ffcc00; color:#000; padding:5px 10px; border-radius:8px; font-weight:bold;"><i class="fas fa-crown"></i> ADMIN PANEL</div>
+                <button class="btn-back" onclick="navTo('scr-dash')"><i class="fas fa-arrow-left"></i> Menu</button>
+                <div style="background:#ffcc00; color:#000; padding:6px 12px; border-radius:10px; font-weight:900; font-size:12px;"><i class="fas fa-shield-alt"></i> QUẢN TRỊ VIÊN</div>
             </div>
             
-            <div class="section-title">HỆ THỐNG GLOBAL</div>
-            <div class="select-btn" onclick="navTo('screen-admin-system')">
-                <div class="select-btn-left">
-                    <div class="icon-box" style="background:rgba(255,204,0,0.1); color:#ffcc00;"><i class="fas fa-bullhorn"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Thông Báo & Bảo Trì</div><div style="font-size: 12px; color: #8892b0;">Gửi thông báo, Đóng server</div></div>
-                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
-            </div>
-            
-            <div class="section-title">CHỨC NĂNG QUẢN TRỊ</div>
+            <div class="section-title">CHỨC NĂNG CỐT LÕI</div>
             <div class="select-btn" onclick="navTo('screen-admin-keys')">
                 <div class="select-btn-left">
-                    <div class="icon-box" style="background:rgba(34, 197, 94, 0.1); color:#22c55e;"><i class="fas fa-key"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Tạo Key Mới</div><div style="font-size: 12px; color: #8892b0;">Tạo Auto/Thủ công</div></div>
+                    <div class="icon-box" style="background:rgba(34, 197, 94, 0.15); color:#22c55e;"><i class="fas fa-magic"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Tạo Key Mới</div><div style="font-size: 12px; color: #8892b0;">Thuật toán 15 ký tự VIP</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
-
-            <div class="select-btn" onclick="navTo('screen-admin-olm')">
+            
+            <div class="select-btn" onclick="navTo('screen-admin-manage-keys'); loadAdminKeys();">
                 <div class="select-btn-left">
-                    <div class="icon-box" style="background:rgba(239, 68, 68, 0.1); color:#ef4444;"><i class="fas fa-shield-alt"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Cấm Truy Cập OLM</div><div style="font-size: 12px; color: #8892b0;">Chặn định danh OLM</div></div>
+                    <div class="icon-box" style="background:rgba(0, 153, 255, 0.15); color:#0099ff;"><i class="fas fa-tasks"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Quản Lý Kho Key</div><div style="font-size: 12px; color: #8892b0;">Kiểm soát, Thêm giờ, Trảm</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
 
+            <div class="section-title">BẢO MẬT & HỆ THỐNG</div>
             <div class="select-btn" onclick="navTo('screen-admin-script')">
                 <div class="select-btn-left">
-                    <div class="icon-box" style="background:rgba(168, 85, 247, 0.1); color:#a855f7;"><i class="fas fa-code"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Cập Nhật Script Lõi</div><div style="font-size: 12px; color: #8892b0;">Thay code Violentmonkey</div></div>
+                    <div class="icon-box" style="background:rgba(168, 85, 247, 0.15); color:#a855f7;"><i class="fas fa-laptop-code"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Nạp Code Violentmonkey</div><div style="font-size: 12px; color: #8892b0;">Cập nhật Script Gốc Auto Load</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
-        </div>
-
-        <!-- Admin Sub-screens -->
-        <div id="screen-admin-system" class="screen">
-            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
-            <h3 style="margin-top:0; color:#ffcc00;">🔔 HỆ THỐNG GLOBAL</h3>
-            <div style="background:#1a1d29; padding:20px; border-radius:15px; margin-bottom: 20px;">
-                <h5 style="color:#fff; margin-top:0;">Gửi Thông Báo</h5>
-                <textarea id="sys-msg" class="form-control" rows="3" placeholder="Nhập nội dung..."></textarea>
-                <button class="btn-primary" style="background:linear-gradient(90deg, #ffcc00, #f97316);" onclick="sendGlobalNotice()">GỬI THÔNG BÁO</button>
+            
+            <div class="select-btn" onclick="navTo('screen-admin-olm')">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(239, 68, 68, 0.15); color:#ef4444;"><i class="fas fa-ban"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Trảm Định Danh OLM</div><div style="font-size: 12px; color: #8892b0;">Khóa truy cập theo tên nick</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
-            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
-                <h5 style="color:#ef4444; margin-top:0;">Bật Chế Độ Bảo Trì Tool</h5>
-                <div style="display:flex; gap:10px;">
-                    <input type="number" id="mnt-dur" class="form-control" value="0" placeholder="Thời gian (0 để Tắt)">
-                    <select id="mnt-unit" class="form-control" style="background:#1a1d29; color:#fff;"><option value="m">Phút</option><option value="h" selected>Giờ</option><option value="d">Ngày</option></select>
-                </div>
-                <button class="btn-primary" style="background:linear-gradient(90deg, #ef4444, #b91c1c);" onclick="setMaintenance()">CẬP NHẬT BẢO TRÌ</button>
+            
+            <div class="select-btn" onclick="navTo('screen-admin-system')">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(255, 204, 0, 0.15); color:#ffcc00;"><i class="fas fa-bullhorn"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Thông Báo & Server</div><div style="font-size: 12px; color: #8892b0;">Bảo trì hệ thống, Gửi thông báo</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
         </div>
 
         <div id="screen-admin-keys" class="screen">
             <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
-            <h3 style="margin-top:0; color:#00ffcc;">🔑 TẠO KEY MỚI</h3>
-            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
-                <input type="text" id="k-prefix" class="form-control" placeholder="Tiền tố (VD: TEST)">
+            <h3 style="margin-top:20px; color:#22c55e; font-weight:900;"><i class="fas fa-key"></i> TẠO KEY BẢO MẬT</h3>
+            <div class="card">
+                <input type="text" id="k-prefix" class="inp" placeholder="Mã Prefix (VD: EVENT)">
                 <div style="display:flex; gap:10px;">
-                    <input type="number" id="k-qty" class="form-control" value="1" placeholder="Số lượng">
-                    <input type="number" id="k-dur" class="form-control" value="1" placeholder="Độ dài">
+                    <input type="number" id="k-qty" class="inp" value="1" placeholder="Số lượng">
+                    <input type="number" id="k-dur" class="inp" value="1" placeholder="Độ dài">
                 </div>
-                <select id="k-unit" class="form-control" style="background:#1a1d29; color:#fff;">
+                <select id="k-unit" class="inp" style="background:#0b0d14;">
                     <option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh Viễn</option>
                 </select>
-                <div style="display:flex; align-items:center; gap:10px; margin-bottom:15px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px; background:rgba(255,204,0,0.1); padding:10px; border-radius:10px; border:1px solid rgba(255,204,0,0.3);">
                     <input type="checkbox" id="k-vip" style="width:20px; height:20px;">
-                    <label for="k-vip" style="color:#ffcc00; font-weight:bold;">Tạo dưới dạng Key VIP PRO</label>
+                    <label for="k-vip" style="color:#ffcc00; font-weight:800; font-size:14px;">Gắn thẻ KEY VIP PRO</label>
                 </div>
-                <button class="btn-primary" onclick="createKeys()">🚀 TẠO NGAY</button>
+                <button class="btn-neon" style="background:linear-gradient(90deg, #22c55e, #10b981);" onclick="createKeys()"><i class="fas fa-cogs"></i> SẢN XUẤT KEY</button>
+            </div>
+        </div>
+
+        <div id="screen-admin-manage-keys" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:20px; color:#0099ff; font-weight:900;"><i class="fas fa-server"></i> KHO LƯU TRỮ KEY</h3>
+            <input type="text" id="search-key-inp" class="inp" style="margin-bottom:10px; border-radius:20px; padding:10px 15px;" placeholder="🔍 Nhập key để tìm nhanh..." onkeyup="filterAdminKeys()">
+            <div id="admin-key-list" style="margin-top:10px; padding-bottom:50px;"></div>
+        </div>
+
+        <div id="screen-admin-script" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:20px; color:#a855f7; font-weight:900;"><i class="fas fa-code"></i> VIOLENTMONKEY GỐC</h3>
+            <div class="card">
+                <p style="color:#8892b0; font-size:12px; margin-top:0;">Dán toàn bộ Script Violentmonkey gốc vào đây. Khi User chạy Loader, hệ thống sẽ tự động kéo Code này về máy khách.</p>
+                <textarea id="s-code" class="inp" rows="12" style="font-family:monospace; font-size:11px; background:#000;" placeholder="// ==UserScript==\n...">{safe_vm_script}</textarea>
+                <button class="btn-neon" style="background:linear-gradient(90deg, #a855f7, #6366f1);" onclick="updateScript()"><i class="fas fa-cloud-upload-alt"></i> LƯU VÀ XUẤT BẢN</button>
             </div>
         </div>
 
         <div id="screen-admin-olm" class="screen">
             <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
-            <h3 style="margin-top:0; color:#ef4444;">🚫 CHẶN OLM DÙNG TOOL</h3>
-            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
-                <input type="text" id="o-name" class="form-control" placeholder="Nhập tên định danh OLM">
+            <h3 style="margin-top:20px; color:#ef4444; font-weight:900;"><i class="fas fa-skull-crossbones"></i> DANH SÁCH ĐEN OLM</h3>
+            <div class="card">
+                <input type="text" id="o-name" class="inp" placeholder="Nhập tên định danh OLM cần trảm">
                 <div style="display:flex; gap:10px;">
-                    <input type="number" id="o-dur" class="form-control" value="1" placeholder="Thời gian">
-                    <select id="o-unit" class="form-control" style="background:#1a1d29; color:#fff;">
-                        <option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Khóa Vĩnh Viễn</option>
+                    <input type="number" id="o-dur" class="inp" value="1" placeholder="Thời gian">
+                    <select id="o-unit" class="inp" style="background:#0b0d14;">
+                        <option value="m">Phút</option><option value="h">Giờ</option><option value="d" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option>
                     </select>
                 </div>
-                <button class="btn-primary" style="background:linear-gradient(90deg, #ef4444, #f97316);" onclick="banOlm()">CHẶN NGAY</button>
+                <button class="btn-neon" style="background:linear-gradient(90deg, #ef4444, #b91c1c);" onclick="banOlm()"><i class="fas fa-gavel"></i> THI HÀNH ÁN</button>
             </div>
         </div>
-
-        <div id="screen-admin-script" class="screen">
+        
+        <div id="screen-admin-system" class="screen">
             <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
-            <h3 style="margin-top:0; color:#a855f7;">📜 CẬP NHẬT LÕI SCRIPT</h3>
-            <div style="background:#1a1d29; padding:20px; border-radius:15px;">
-                <textarea id="s-code" class="form-control" rows="8" placeholder="// ==UserScript==\n..."></textarea>
-                <button class="btn-primary" style="background:linear-gradient(90deg, #a855f7, #6366f1);" onclick="updateScript()">LƯU VÀ XUẤT BẢN NHANH</button>
+            <h3 style="margin-top:20px; color:#ffcc00; font-weight:900;"><i class="fas fa-cogs"></i> HỆ THỐNG SERVER</h3>
+            <div class="card">
+                <h5 style="color:#fff; margin-top:0; font-size:14px;">Gửi Thông Báo Global</h5>
+                <textarea id="sys-msg" class="inp" rows="3" placeholder="Nhập thông báo..."></textarea>
+                <button class="btn-neon" style="background:linear-gradient(90deg, #ffcc00, #f97316);" onclick="sendGlobalNotice()"><i class="fas fa-bullhorn"></i> GỬI THÔNG BÁO</button>
+            </div>
+            <div class="card">
+                <h5 style="color:#ef4444; margin-top:0; font-size:14px;">Chế Độ Bảo Trì Web</h5>
+                <div style="display:flex; gap:10px;">
+                    <input type="number" id="mnt-dur" class="inp" value="0" placeholder="Thời gian (0 = Tắt)">
+                    <select id="mnt-unit" class="inp" style="background:#0b0d14;"><option value="m">Phút</option><option value="h" selected>Giờ</option><option value="d">Ngày</option></select>
+                </div>
+                <button class="btn-neon" style="background:linear-gradient(90deg, #ef4444, #b91c1c);" onclick="setMaintenance()"><i class="fas fa-shield-alt"></i> CẬP NHẬT BẢO TRÌ</button>
             </div>
         </div>
 
         <script>
             let tgId = localStorage.getItem('lvt_tg_id');
-            let isMnt = {is_mnt}; let mntTime = {mnt_time};
-            let checkBanInterval;
-            
-            if(isMnt) {{
-                document.getElementById('mnt-overlay').style.display='flex';
-                setInterval(()=>{{
-                    let rem = mntTime - Date.now();
-                    if(rem<=0) location.reload();
-                    else {{
-                        let d=Math.floor(rem/86400000), h=Math.floor((rem%86400000)/3600000), m=Math.floor((rem%3600000)/60000), s=Math.floor((rem%60000)/1000);
-                        document.getElementById('mnt-cd').innerHTML = `Đếm ngược: ${{d}}d ${{h}}h ${{m}}m ${{s}}s`;
-                    }}
-                }}, 1000);
-            }}
+            const Toast = Swal.mixin({{ toast: true, position: 'top-end', showConfirmButton: false, timer: 2000, background: '#1a1c26', color: '#fff' }});
             
             function api(path, body, cb) {{
                 let headers = {{'Content-Type':'application/json'}};
@@ -2049,6 +2216,7 @@ def telegram_mini_app():
                 fetch(path, {{method:'POST', headers:headers, body:JSON.stringify(body)}}).then(r=>r.json()).then(cb);
             }}
             
+            let checkBanInterval;
             function startBanCheck() {{
                 if(checkBanInterval) clearInterval(checkBanInterval);
                 checkBanInterval = setInterval(()=>{{
@@ -2080,56 +2248,63 @@ def telegram_mini_app():
                         tgId = id; localStorage.setItem('lvt_tg_id', id);
                         document.getElementById('display-id').innerText = id;
                         if(r.is_admin) document.getElementById('btn-admin-panel').style.display = 'block';
-                        navTo('scr-dash');
-                        loadK(); startBanCheck();
-                    }} else if(r.status==='banned') {{
-                        Swal.fire('Lỗi', 'ID BỊ CẤM', 'error');
-                    }} else Swal.fire('Lỗi', 'ID không được cấp phép hoặc đã hết hạn!', 'error');
+                        navTo('scr-dash'); loadK(); startBanCheck();
+                    }} else if (r.status === 'banned') {{
+                        Swal.fire('Từ Chối', 'ID Telegram Này Đã Bị Cấm!', 'error');
+                    }} else Swal.fire('Từ Chối', 'ID không có quyền truy cập Mini App!', 'error');
                 }});
             }}
             if(tgId && !isMnt) auth();
             
+            function navTo(screenId) {{
+                document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+                document.getElementById(screenId).classList.add('active');
+            }}
+
             function switchT(t) {{
-                ['act','mgr','scr'].forEach(x=>{{ 
+                ['act','mgr'].forEach(x=>{{ 
                     document.getElementById('tab-'+x).style.display='none'; 
-                    document.querySelector('.nav-btn:nth-child('+({{'act':1,'mgr':2,'scr':3}}[x])+')').classList.remove('act');
+                    document.querySelector('.nav-btn:nth-child('+({{'act':1,'mgr':2}}[x])+')').classList.remove('act');
                 }});
                 document.getElementById('tab-'+t).style.display='block';
-                document.querySelector('.nav-btn:nth-child('+({{'act':1,'mgr':2,'scr':3}}[t])+')').classList.add('act');
+                document.querySelector('.nav-btn:nth-child('+({{'act':1,'mgr':2}}[t])+')').classList.add('act');
                 if(t==='mgr') loadK();
             }}
-            
+
+            function copyT(t) {{
+                navigator.clipboard.writeText(t);
+                Toast.fire({{ icon: 'success', title: 'Đã sao chép' }});
+            }}
+
             function actKey() {{
                 let k = document.getElementById('k_inp').value, o = document.getElementById('o_inp').value;
-                if(!k||!o) return Swal.fire('Lỗi','Nhập đủ thông tin','error');
+                if(!k||!o) return Swal.fire('Lỗi','Điền đủ Key và Tài khoản OLM!','warning');
                 api('/api/tg/activate_key', {{tg_id:tgId, key:k, olm:o}}, r => {{
-                    if(r.status==='success') Swal.fire('Thành công', `Đang sử dụng Key ${{r.vip?'VIP':'THƯỜNG'}}!<br>Xác thực key thành công.`, 'success');
+                    if(r.status==='success') Swal.fire('Kích Hoạt', `Tuyệt vời! Tool đã sẵn sàng cho nick [${{o}}]`, 'success');
                     else Swal.fire('Lỗi', r.msg, 'error');
                 }});
             }}
-            
+
             function loadK() {{
                 api('/api/tg/my_keys', {{tg_id:tgId}}, r => {{
                     if(r.status==='success') {{
                         let h = '';
                         r.keys.forEach(k=>{{
-                            let sColor = k.status==='active' ? '#22c55e' : '#ef4444';
-                            let sText = k.status==='active' ? 'Hoạt động' : 'Bị khóa';
-                            let cdId = 'cd_' + k.key;
-                            h+=`<div class="card" style="font-size:13px; line-height:1.6;">
-                            <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #2a2d3d;padding-bottom:8px;margin-bottom:8px;">
-                                <b style="color:#00bfff;">${{k.key.substring(0,10)}}...</b>
-                                <b style="color:${{k.vip?'#bd00ff':'#ffcc00'}}">${{k.vip?'VIP':'THƯỜNG'}}</b>
+                            let sColor = k.status==='active' ? '#00ffcc' : '#ef4444';
+                            h+=`<div class="card" style="border-left: 4px solid ${{k.vip?'#bd00ff':'#ffcc00'}}">
+                            <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+                                <b style="color:#00ffcc; font-size:15px;">${{k.key.substring(0,12)}}...</b>
+                                <span style="background:${{k.vip?'rgba(189,0,255,0.2)':'rgba(255,204,0,0.2)'}}; color:${{k.vip?'#bd00ff':'#ffcc00'}}; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:bold;">${{k.vip?'VIP PRO':'THƯỜNG'}}</span>
                             </div>
-                            <div style="color:#8892b0;">Tài khoản chỉ định: <span style="color:#fff;">${{k.olm}}</span></div>
-                            <div style="color:#8892b0;">Thiết bị: <span style="color:#fff;">${{k.devs}}</span></div>
-                            <div style="color:#8892b0;">Trạng thái: <span style="color:${{sColor}};font-weight:bold;">${{sText}}</span></div>
-                            <div style="color:#8892b0; margin-top:5px;">Hạn: <span id="${{cdId}}" style="color:#00ffcc;font-weight:bold;">${{k.exp}}</span></div>
+                            <div style="color:#8892b0; font-size:12px; margin-bottom:4px;"><i class="fas fa-user-tag"></i> Ghim OLM: <span style="color:#fff;">${{k.olm || 'Chưa ghim'}}</span></div>
+                            <div style="color:#8892b0; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị: <span style="color:#fff;">${{k.devs}}</span></div>
+                            <div style="color:#8892b0; font-size:12px; margin-bottom:4px;"><i class="fas fa-info-circle"></i> Trạng thái: <span style="color:${{sColor}};">${{k.status.toUpperCase()}}</span></div>
+                            <div style="color:#00ffcc; font-size:12px; font-weight:bold; margin-top:8px; background:rgba(0,0,0,0.4); padding:6px; border-radius:6px; text-align:center;"><i class="far fa-clock"></i> <span id="cd_mgr_${{k.key}}">${{k.exp}}</span></div>
                             </div>`;
                             
                             if(k.exp_ms !== 'permanent' && k.exp_ms !== 'pending' && k.status === 'active') {{
                                 setInterval(()=>{{
-                                    let el = document.getElementById(cdId);
+                                    let el = document.getElementById('cd_mgr_' + k.key);
                                     if(el) {{
                                         let rem = k.exp_ms - Date.now();
                                         if(rem<=0) el.innerHTML = "HẾT HẠN";
@@ -2141,51 +2316,115 @@ def telegram_mini_app():
                                 }}, 1000);
                             }}
                         }});
-                        document.getElementById('k_list').innerHTML = h || '<div style="color:#8892b0;text-align:center;">Chưa có key nào.</div>';
+                        document.getElementById('k_list').innerHTML = h || '<div style="color:#4a4d5d;text-align:center;font-style:italic;">Kho rỗng.</div>';
                     }}
                 }});
             }}
 
-            function navTo(screenId) {
-                document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-                document.getElementById(screenId).classList.add('active');
-            }
+            /* ADMIN FUNCTIONS */
+            function createKeys() {{
+                let p = document.getElementById('k-prefix').value, q = document.getElementById('k-qty').value;
+                let d = document.getElementById('k-dur').value, u = document.getElementById('k-unit').value, v = document.getElementById('k-vip').checked;
+                api('/api/tg_admin/create_keys', {{prefix: p, quantity: q, duration: d, unit: u, is_vip: v}}, (res) => {{
+                    let kHtml = res.keys.map(k => `<div style="background:#0b0d14; color:#00ffcc; padding:10px; margin:5px 0; border-radius:8px; font-family:monospace; font-size:13px; font-weight:bold; cursor:pointer; border:1px solid #333;" onclick="copyT('${{k}}')">${{k}}</div>`).join('');
+                    Swal.fire({{title: '✅ SẢN XUẤT THÀNH CÔNG', html: `<div style="text-align:left; max-height:250px; overflow-y:auto;">${{kHtml}}</div><p style="font-size:12px; color:#889; margin-top:10px;">Bấm vào mã Key để copy</p>`, background:'#1a1c26', color:'#fff', confirmButtonColor:'#00ffcc'}});
+                }});
+            }}
 
-            function copyT(t) {
-                navigator.clipboard.writeText(t);
-                Swal.fire({toast:true, position:'top', icon:'success', title:'Đã copy!', showConfirmButton:false, timer:1500, background:'#1a1d29', color:'#fff'});
-            }
+            function loadAdminKeys() {{
+                api('/api/tg_admin/get_all_keys', {{}}, r => {{
+                    if(r.status === 'success') {{
+                        let h = '';
+                        r.keys.forEach(k => {{
+                            let isBan = k.status === 'banned';
+                            h += `<div class="card admin-key-item" data-key="${{k.key.toLowerCase()}}" style="padding:12px; border-left: 3px solid ${{isBan?'#ef4444':'#00ffcc'}};">
+                                <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                                    <strong style="color:#fff; font-family:monospace; font-size:13px; cursor:pointer;" onclick="copyT('${{k.key}}')">${{k.key}}</strong>
+                                    <span style="color:${{k.vip?'#bd00ff':'#889'}} ; font-size:10px; font-weight:900;">${{k.vip?'[VIP]':'[NOR]'}}</span>
+                                </div>
+                                <div style="font-size:11px; color:#8892b0; margin-bottom:8px; line-height:1.5;">
+                                    OLM: <span style="color:#ffcc00">${{k.olm || 'Chưa ghim'}}</span> | Thiết bị: <span style="color:#00ffcc">${{k.devs}}/${{k.max_dev}}</span><br>
+                                    Hạn: <span style="color:${{isBan?'#ef4444':'#fff'}}">${{k.exp}}</span>
+                                </div>
+                                <div style="display:flex; flex-wrap:wrap; gap:5px;">
+                                    <button class="action-btn" style="background:rgba(0,153,255,0.2); color:#0099ff;" onclick="addTimeAdmin('${{k.key}}')"><i class="fas fa-plus"></i> Giờ</button>
+                                    <button class="action-btn" style="background:rgba(255,204,0,0.2); color:#ffcc00;" onclick="bindOlmAdmin('${{k.key}}', '${{k.olm}}')"><i class="fas fa-link"></i> Ghim</button>
+                                    <button class="action-btn" style="background:rgba(34,197,94,0.2); color:#22c55e;" onclick="actionKey('${{k.key}}', 'reset')"><i class="fas fa-sync-alt"></i> Mới</button>
+                                    ${{isBan ? 
+                                        `<button class="action-btn" style="background:rgba(255,255,255,0.1); color:#fff;" onclick="actionKey('${{k.key}}', 'unban')">Mở</button>` : 
+                                        `<button class="action-btn" style="background:rgba(239,68,68,0.2); color:#ef4444;" onclick="actionKey('${{k.key}}', 'ban')">Trảm</button>`
+                                    }}
+                                    <button class="action-btn" style="background:rgba(100,100,100,0.2); color:#889;" onclick="actionKey('${{k.key}}', 'delete')"><i class="fas fa-trash"></i></button>
+                                </div>
+                            </div>`;
+                        }});
+                        document.getElementById('admin-key-list').innerHTML = h;
+                    }}
+                }});
+            }}
 
-            function createKeys() {
-                let p = document.getElementById('k-prefix').value; let q = document.getElementById('k-qty').value; let d = document.getElementById('k-dur').value; let u = document.getElementById('k-unit').value; let v = document.getElementById('k-vip').checked;
-                api('/api/tg_admin/create_keys', {prefix: p, quantity: q, duration: d, unit: u, is_vip: v}, (res) => {
-                    let kHtml = res.keys.map(k => `<div style="background:#000; color:#00ffcc; padding:8px; margin:5px 0; border-radius:5px; font-family:monospace; font-size:12px; cursor:pointer;" onclick="copyT('${k}')">${k}</div>`).join('');
-                    Swal.fire({title: 'ĐÃ TẠO XONG', html: `<div style="text-align:left; max-height:200px; overflow-y:auto;">${kHtml}</div>`, background:'#1a1d29', color:'#fff', confirmButtonColor:'#00ffcc'});
-                });
-            }
+            function filterAdminKeys() {{
+                let s = document.getElementById('search-key-inp').value.toLowerCase();
+                document.querySelectorAll('.admin-key-item').forEach(el => {{
+                    el.style.display = el.dataset.key.includes(s) ? 'block' : 'none';
+                }});
+            }}
 
-            function banOlm() {
-                let n = document.getElementById('o-name').value; let d = document.getElementById('o-dur').value; let u = document.getElementById('o-unit').value;
-                if(!n) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập', background:'#1a1d29', color:'#fff'});
-                api('/api/tg_admin/ban_olm', {olm_name: n, duration: d, unit: u}, () => { Swal.fire('Thành công', 'Đã cấm tài khoản OLM', 'success'); });
-            }
+            function actionKey(k, act) {{
+                let msg = act==='delete'?'Xóa vĩnh viễn key này?':(act==='reset'?'Reset máy và làm mới Key này?':false);
+                if(msg) {{
+                    Swal.fire({{ title: 'Xác Nhận', text: msg, icon: 'warning', showCancelButton: true, confirmButtonText: 'ĐỒNG Ý', background: '#1a1c26', color: '#fff' }}).then((r) => {{
+                        if(r.isConfirmed) api('/api/tg_admin/action_key', {{key:k, action:act}}, ()=>loadAdminKeys());
+                    }});
+                }} else api('/api/tg_admin/action_key', {{key:k, action:act}}, ()=>loadAdminKeys());
+            }}
 
-            function updateScript() {
+            function addTimeAdmin(k) {{
+                Swal.fire({{
+                    title: 'CỘNG THỜI GIAN',
+                    html: `<input id="t-val" class="swal2-input" type="number" placeholder="Số lượng (VD: 10)">
+                           <select id="t-unit" class="swal2-select" style="width:70%; margin-top:10px;"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option></select>`,
+                    showCancelButton: true, confirmButtonText: 'BƠM GIỜ', background: '#1a1c26', color: '#fff'
+                }}).then((r) => {{
+                    if(r.isConfirmed) {{
+                        let v = document.getElementById('t-val').value, u = document.getElementById('t-unit').value;
+                        if(v) api('/api/tg_admin/add_time', {{key:k, val:v, unit:u}}, ()=>{{ Toast.fire({{icon:'success', title:'Đã bơm thời gian!'}}); loadAdminKeys(); }});
+                    }}
+                }});
+            }}
+
+            function bindOlmAdmin(k, old) {{
+                Swal.fire({{
+                    title: 'GHIM ĐỊNH DANH OLM',
+                    input: 'text', inputValue: old, inputPlaceholder: 'Để trống để gỡ ghim...',
+                    showCancelButton: true, confirmButtonText: 'GHIM CHẶT', background: '#1a1c26', color: '#fff'
+                }}).then((r) => {{
+                    if(r.isConfirmed) api('/api/tg_admin/bind_olm', {{key:k, olm_name:r.value}}, ()=>loadAdminKeys());
+                }});
+            }}
+
+            function updateScript() {{
                 let code = document.getElementById('s-code').value;
-                if(!code) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa dán code', background:'#1a1d29', color:'#fff'});
-                api('/api/tg_admin/update_script', {script_content: code}, () => { Swal.fire('Thành công', 'Cập nhật mã Script thành công', 'success'); });
-            }
-            
-            function sendGlobalNotice() {
-                let msg = document.getElementById('sys-msg').value;
-                if(!msg) return Swal.fire({icon:'error', title:'Lỗi', text:'Chưa nhập', background:'#1a1d29', color:'#fff'});
-                api('/api/tg_admin/system_actions', {action: 'global_notice', message: msg}, () => { Swal.fire('Thành công', 'Đã gửi thông báo', 'success'); });
-            }
+                if(!code.includes('==UserScript==')) return Swal.fire({{title: 'Cảnh báo', text: 'Thiếu Header // ==UserScript==', icon: 'warning', background: '#1a1c26', color: '#fff'}});
+                api('/api/tg_admin/update_script', {{script_content: code}}, () => {{ Swal.fire({{title: 'Thành Công', text: 'Đã lưu Script Violentmonkey gốc lên hệ thống!', icon: 'success', background: '#1a1c26', color: '#fff'}}); }});
+            }}
 
-            function setMaintenance() {
-                let d = document.getElementById('mnt-dur').value; let u = document.getElementById('mnt-unit').value;
-                api('/api/tg_admin/system_actions', {action: 'maintenance', duration: d, unit: u}, () => { Swal.fire('Thành công', 'Đã cập nhật trạng thái bảo trì', 'success'); });
-            }
+            function banOlm() {{
+                let n = document.getElementById('o-name').value, d = document.getElementById('o-dur').value, u = document.getElementById('o-unit').value;
+                if(!n) return Swal.fire({{title: 'Lỗi', text: 'Chưa nhập tên nick', icon: 'warning', background: '#1a1c26', color: '#fff'}});
+                api('/api/tg_admin/ban_olm', {{olm_name: n, duration: d, unit: u}}, () => {{ Swal.fire({{title: 'Thành công', text: `Đã cấm tài khoản [${{n}}]`, icon: 'success', background: '#1a1c26', color: '#fff'}}); }});
+            }}
+
+            function sendGlobalNotice() {{
+                let msg = document.getElementById('sys-msg').value;
+                if(!msg) return Swal.fire({{title: 'Lỗi', text: 'Chưa nhập nội dung', icon: 'warning', background: '#1a1c26', color: '#fff'}});
+                api('/api/tg_admin/system_actions', {{action: 'global_notice', message: msg}}, () => {{ Swal.fire({{title: 'Thành công', text: 'Đã gửi thông báo', icon: 'success', background: '#1a1c26', color: '#fff'}}); }});
+            }}
+
+            function setMaintenance() {{
+                let d = document.getElementById('mnt-dur').value, u = document.getElementById('mnt-unit').value;
+                api('/api/tg_admin/system_actions', {{action: 'maintenance', duration: d, unit: u}}, () => {{ Swal.fire({{title: 'Thành công', text: 'Đã cập nhật trạng thái bảo trì', icon: 'success', background: '#1a1c26', color: '#fff'}}); }});
+            }}
         </script>
     </body>
     </html>
