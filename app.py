@@ -155,7 +155,7 @@ SHOP_PACKAGES = {
     "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
     "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
     "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
-    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở Rộng"},
+    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở rộng"},
     "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
     "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
     "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
@@ -689,12 +689,12 @@ def serve_loader_script():
         else if (type === 'err' || type === 'mnt' || type === 'ban') {{
             let c = type==='err'?'#ff3366':(type==='mnt'?'#ffcc00':'#ff0000');
             d.innerHTML = `
-            <div style="background:rgba(20,20,30,0.9); border:2px solid ${c}; padding:40px; border-radius:20px; text-align:center; box-shadow:0 0 30px ${c}55;">
-                <div style="font-size:50px; margin-bottom:15px;">${type==='err'?'⚠️':(type==='mnt'?'🛠️':'⛔')}</div>
-                <h2 style="color:${c}; margin:0 0 15px 0;">THÔNG BÁO TỪ HỆ THỐNG</h2>
-                <p style="color:#ccc; font-size:15px;">${msg}</p>
-                ${xtra ? `<div id="lvt_cd" style="color:${c}; margin-top:20px; font-weight:bold; font-size:18px;"></div>` : ''}
-                <button id="lvt_btn_cl" style="margin-top:25px; padding:12px 30px; background:${c}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">QUAY LẠI</button>
+            <div style="background:rgba(20,20,30,0.9); border:2px solid ${{c}}; padding:40px; border-radius:20px; text-align:center; box-shadow:0 0 30px ${{c}}55;">
+                <div style="font-size:50px; margin-bottom:15px;">${{type==='err'?'⚠️':(type==='mnt'?'🛠️':'⛔')}}</div>
+                <h2 style="color:${{c}}; margin:0 0 15px 0;">THÔNG BÁO TỪ HỆ THỐNG</h2>
+                <p style="color:#ccc; font-size:15px;">${{msg}}</p>
+                ${{xtra ? `<div id="lvt_cd" style="color:${{c}}; margin-top:20px; font-weight:bold; font-size:18px;"></div>` : ''}}
+                <button id="lvt_btn_cl" style="margin-top:25px; padding:12px 30px; background:${{c}}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">QUAY LẠI</button>
             </div>`;
             document.body.appendChild(d);
             document.getElementById('lvt_btn_cl').onclick = () => {{ d.remove(); gm_s('l_k',''); sUI('login'); }};
@@ -705,7 +705,7 @@ def serve_loader_script():
                     else {{
                         let dd = Math.floor(r/86400000), hh = Math.floor((r%86400000)/3600000), mm = Math.floor((r%3600000)/60000), ss = Math.floor((r%60000)/1000);
                         let eCD = document.getElementById('lvt_cd');
-                        if(eCD) eCD.innerText = `Đếm ngược: ${dd}d ${hh}h ${mm}m ${ss}s`;
+                        if(eCD) eCD.innerText = `Đếm ngược: ${{dd}}d ${{hh}}h ${{mm}}m ${{ss}}s`;
                     }}
                 }}, 1000);
             }}
@@ -734,17 +734,17 @@ def serve_loader_script():
                 let expStr = "Vĩnh viễn";
                 if(exp !== 'permanent') {{
                     let dd = Math.floor(r/86400000), hh = Math.floor((r%86400000)/3600000), mm = Math.floor((r%3600000)/60000), ss = Math.floor((r%60000)/1000);
-                    expStr = `${dd}d ${hh}h ${mm}m ${ss}s`;
+                    expStr = `${{dd}}d ${{hh}}h ${{mm}}m ${{ss}}s`;
                 }}
                 e.innerHTML = `
                     <div style="margin-bottom:6px;border-bottom:1px dashed rgba(255,255,255,0.1);padding-bottom:6px;">
-                        <span style="color:#8892b0">Key:</span> <b style="color:#00ffcc;float:right">${n.substring(0,8)}...</b>
+                        <span style="color:#8892b0">Key:</span> <b style="color:#00ffcc;float:right">${{n.substring(0,8)}}...</b>
                     </div>
                     <div style="margin-bottom:6px;">
-                        <span style="color:#8892b0">Thiết bị:</span> <b style="color:#ffcc00;float:right">${d} / ${m}</b>
+                        <span style="color:#8892b0">Thiết bị:</span> <b style="color:#ffcc00;float:right">${{d}} / ${{m}}</b>
                     </div>
                     <div>
-                        <span style="color:#8892b0">Hạn SD:</span> <b style="color:#ff3366;float:right">${expStr}</b>
+                        <span style="color:#8892b0">Hạn SD:</span> <b style="color:#ff3366;float:right">${{expStr}}</b>
                     </div>
                 `;
             }}
@@ -1063,6 +1063,65 @@ def tg_admin_system_actions():
         save_db(db)
     return jsonify({"status": "success"})
 
+@app.route('/api/tg_admin/sys_data', methods=['POST'])
+def tg_admin_sys_data():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    db = load_db()
+    now = int(time.time()*1000)
+    
+    users = []
+    for uname, udata in db.get("users", {}).items():
+        if udata.get("role") == "admin": continue
+        users.append({"username": uname, "balance": udata.get("balance", 0)})
+        
+    game_keys = []
+    for k, v in db.get("game_keys", {}).items():
+        exp_str = "Vĩnh viễn" if v["exp"]=="permanent" else ("Chưa KH" if v["exp"]=="pending" else ("Hết hạn" if v["exp"]<now else time.strftime("%d/%m %H:%M", time.localtime(v["exp"]/1000))))
+        game_keys.append({"key": k, "exp": exp_str, "status": v.get("status", "active")})
+        
+    admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
+    ips = db.get("banned_ips", [])
+    
+    return jsonify({"status": "success", "users": users, "game_keys": game_keys, "tg_admins": admins, "banned_ips": ips})
+
+@app.route('/api/tg_admin/action_extra', methods=['POST'])
+def tg_admin_action_extra():
+    if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
+    data = request.json or {}
+    act = data.get("action")
+    db = load_db()
+    with db_lock:
+        if act == 'add_balance':
+            uname = data.get("username")
+            amt = safe_int(data.get("amount"))
+            if uname in db.get("users", {}):
+                db["users"][uname]["balance"] = max(0, db["users"][uname].get("balance", 0) + amt)
+        elif act == 'create_game':
+            qty = safe_int(data.get("qty"), 1)
+            dur = safe_int(data.get("dur"), 1)
+            unit = data.get("unit")
+            mults = {"hours": 3600000, "days": 86400000}
+            for _ in range(qty):
+                nk = generate_game_key_15()
+                db.setdefault("game_keys", {})[nk] = {"exp": "pending" if unit != "permanent" else "permanent", "maxDevices": 1, "devices": [], "status": "active"}
+                if unit != "permanent": db["game_keys"][nk]["durationMs"] = dur * mults.get(unit, 86400000)
+        elif act == 'del_game':
+            db.get("game_keys", {}).pop(data.get("key"), None)
+        elif act == 'add_tg':
+            val = data.get("val")
+            if val and val not in db.setdefault("settings", {}).setdefault("tg_admins", []): db["settings"]["tg_admins"].append(val)
+        elif act == 'del_tg':
+            val = data.get("val")
+            if val in db.setdefault("settings", {}).setdefault("tg_admins", []): db["settings"]["tg_admins"].remove(val)
+        elif act == 'add_ip':
+            val = data.get("val")
+            if val and val not in db.setdefault("banned_ips", []): db["banned_ips"].append(val)
+        elif act == 'del_ip':
+            val = data.get("val")
+            if val in db.setdefault("banned_ips", []): db["banned_ips"].remove(val)
+        save_db(db)
+    return jsonify({"status": "success"})
+
 @app.route('/telegram_mini_app')
 def telegram_mini_app():
     db = load_db()
@@ -1199,6 +1258,28 @@ def telegram_mini_app():
                     <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Thông Báo & Server</div><div style="font-size: 12px; color: #8892b0;">Bảo trì hệ thống, Gửi thông báo</div></div>
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
+            
+            <div class="section-title">QUẢN LÝ MỞ RỘNG (MỚI)</div>
+            <div class="select-btn" onclick="navTo('screen-admin-users'); loadExtraData();">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(51, 102, 255, 0.15); color:#3366ff;"><i class="fas fa-users"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Quản Lý Users</div><div style="font-size: 12px; color: #8892b0;">Xem số dư, Bơm tiền trực tiếp</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+            
+            <div class="select-btn" onclick="navTo('screen-admin-game'); loadExtraData();">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(255, 102, 0, 0.15); color:#ff6600;"><i class="fas fa-gamepad"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Quản Lý Game Keys</div><div style="font-size: 12px; color: #8892b0;">Tạo và Quản lý Key 15 Ký tự</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
+
+            <div class="select-btn" onclick="navTo('screen-admin-firewall'); loadExtraData();">
+                <div class="select-btn-left">
+                    <div class="icon-box" style="background:rgba(255, 51, 102, 0.15); color:#ff3366;"><i class="fas fa-shield-virus"></i></div>
+                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Firewall & Phân Quyền</div><div style="font-size: 12px; color: #8892b0;">Khóa IP máy, Cấp quyền TG</div></div>
+                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
+            </div>
         </div>
 
         <div id="screen-admin-keys" class="screen">
@@ -1268,6 +1349,42 @@ def telegram_mini_app():
                     <select id="mnt-unit" class="inp" style="background:#0b0d14;"><option value="m">Phút</option><option value="h" selected>Giờ</option><option value="d">Ngày</option></select>
                 </div>
                 <button class="btn-neon" style="background:linear-gradient(90deg, #ef4444, #b91c1c);" onclick="setMaintenance()"><i class="fas fa-shield-alt"></i> CẬP NHẬT BẢO TRÌ</button>
+            </div>
+        </div>
+        
+        <div id="screen-admin-users" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:20px; color:#3366ff; font-weight:900;"><i class="fas fa-users"></i> QUẢN LÝ USERS</h3>
+            <div id="admin-user-list" style="padding-bottom:50px;"></div>
+        </div>
+
+        <div id="screen-admin-game" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:20px; color:#ff6600; font-weight:900;"><i class="fas fa-gamepad"></i> TẠO GAME KEYS</h3>
+            <div class="card">
+                <input type="number" id="gk-qty" class="inp" value="1" placeholder="Số lượng">
+                <input type="number" id="gk-dur" class="inp" placeholder="Thời gian">
+                <select id="gk-unit" class="inp"><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select>
+                <button class="btn-neon" style="background:linear-gradient(90deg, #ffcc00, #ff6600);" onclick="createGameKeys()">TẠO KEY GAME 15 KÝ TỰ</button>
+            </div>
+            <h5 style="color:#ffcc00;">KHO KEY GAME:</h5>
+            <div id="admin-game-list" style="padding-bottom:50px;"></div>
+        </div>
+
+        <div id="screen-admin-firewall" class="screen">
+            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
+            <h3 style="margin-top:20px; color:#ff3366; font-weight:900;"><i class="fas fa-shield-virus"></i> BẢO MẬT HỆ THỐNG</h3>
+            <div class="card">
+                <h5 style="color:#00ffcc;">Cấp Quyền TG Admin</h5>
+                <input type="text" id="tg-add-inp" class="inp" placeholder="ID Telegram">
+                <button class="btn-neon mb-3" onclick="actionFirewall('add_tg')">CẤP QUYỀN TG ADMIN</button>
+                <div id="tg-admin-list"></div>
+            </div>
+            <div class="card">
+                <h5 style="color:#ff3366;">Khóa IP Trực Tiếp (Firewall)</h5>
+                <input type="text" id="ip-add-inp" class="inp" placeholder="Nhập IP cần khoá...">
+                <button class="btn-neon mb-3" style="background:#ff3366;" onclick="actionFirewall('add_ip')">CHẶN ĐỨT IP NÀY</button>
+                <div id="ip-ban-list"></div>
             </div>
         </div>
 
@@ -1386,7 +1503,6 @@ def telegram_mini_app():
                 }});
             }}
 
-            /* ADMIN FUNCTIONS */
             function createKeys() {{
                 let p = document.getElementById('k-prefix').value, q = document.getElementById('k-qty').value;
                 let d = document.getElementById('k-dur').value, u = document.getElementById('k-unit').value, v = document.getElementById('k-vip').checked;
@@ -1469,8 +1585,7 @@ def telegram_mini_app():
             }}
 
             function updateScript() {{
-                api('/api/script/core_engine.js', {{}}, (r)=>{{ // dummy to check 
-                }});
+                api('/api/script/core_engine.js', {{}}, (r)=>{{ }});
                 let code = document.getElementById('s-code').value;
                 api('/api/tg_admin/update_script', {{script_content: code}}, () => {{ Swal.fire({{title: 'Thành Công', text: 'Đã lưu Script Violentmonkey gốc lên hệ thống!', icon: 'success', background: '#1a1c26', color: '#fff'}}); }});
             }}
@@ -1490,6 +1605,47 @@ def telegram_mini_app():
             function setMaintenance() {{
                 let d = document.getElementById('mnt-dur').value, u = document.getElementById('mnt-unit').value;
                 api('/api/tg_admin/system_actions', {{action: 'maintenance', duration: d, unit: u}}, () => {{ Swal.fire({{title: 'Thành công', text: 'Đã cập nhật trạng thái bảo trì', icon: 'success', background: '#1a1c26', color: '#fff'}}); }});
+            }}
+            
+            /* THÊM MỚI: CÁC JS LOGIC CHO SCREEN MỞ RỘNG (CHUYỂN TỪ WEB ADMIN) */
+            function loadExtraData() {{
+                api('/api/tg_admin/sys_data', {{}}, r => {{
+                    if(r.status==='success') {{
+                        let uH = r.users.map(u => `<div class="card p-3 mb-2" style="background:rgba(0,0,0,0.4); border:1px solid #3366ff;"><strong style="color:#00ffcc; font-size:15px;">${{u.username}}</strong> | Dư: ${{u.balance}}đ<div class="d-flex mt-2"><input type="number" id="amt_${{u.username}}" class="inp m-0" style="padding:8px; border-radius:5px;" placeholder="± Tiền..."><button class="btn-neon ms-2" style="padding:8px; border-radius:5px; background:#3366ff;" onclick="api('/api/tg_admin/action_extra', {{action:'add_balance', username:'${{u.username}}', amount: document.getElementById('amt_${{u.username}}').value}}, ()=>loadExtraData())">CỘNG/TRỪ</button></div></div>`).join('');
+                        let elU = document.getElementById('admin-user-list'); if(elU) elU.innerHTML = uH || '<p class="text-center">Chưa có user nào.</p>';
+                        
+                        let gH = r.game_keys.map(k => `<div class="card p-3 mb-2" style="background:rgba(0,0,0,0.4); border:1px solid #ffcc00;"><strong style="color:#ffcc00; font-family:monospace; font-size:15px;" onclick="copyT('${{k.key}}')">${{k.key}}</strong><div style="font-size:11px; margin-top:5px; color:#8892b0;">Hạn: <span style="color:#fff;">${{k.exp}}</span> | Trạng thái: ${{k.status}}</div><div class="d-flex gap-2 mt-2"><button class="action-btn" style="background:rgba(239,68,68,0.2); color:#ef4444;" onclick="api('/api/tg_admin/action_extra', {{action:'ban_game', key:'${{k.key}}'}}, ()=>loadExtraData())">Trảm</button><button class="action-btn" style="background:rgba(100,100,100,0.2); color:#fff;" onclick="if(confirm('Xoá?')) api('/api/tg_admin/action_extra', {{action:'del_game', key:'${{k.key}}'}}, ()=>loadExtraData())"><i class="fas fa-trash"></i> Xoá</button></div></div>`).join('');
+                        let elG = document.getElementById('admin-game-list'); if(elG) elG.innerHTML = gH || '<p class="text-center">Chưa có key game nào.</p>';
+                        
+                        let tH = r.tg_admins.map(t => `<div class="d-flex justify-content-between align-items-center mb-2" style="border-bottom:1px dashed #333; padding-bottom:10px;"><span style="color:#00ffcc; font-weight:bold;">ID: ${{t}}</span> <button class="action-btn" style="background:rgba(239,68,68,0.2); color:#ef4444;" onclick="api('/api/tg_admin/action_extra', {{action:'del_tg', val:'${{t}}'}}, ()=>loadExtraData())">Tước quyền</button></div>`).join('');
+                        let elT = document.getElementById('tg-admin-list'); if(elT) elT.innerHTML = tH;
+                        
+                        let iH = r.banned_ips.map(i => `<div class="d-flex justify-content-between align-items-center mb-2" style="border-bottom:1px dashed #333; padding-bottom:10px;"><span style="color:#ff3366; font-family:monospace;">${{i}}</span> <button class="action-btn" style="background:rgba(34,197,94,0.2); color:#22c55e;" onclick="api('/api/tg_admin/action_extra', {{action:'del_ip', val:'${{i}}'}}, ()=>loadExtraData())">Gỡ Block</button></div>`).join('');
+                        let elI = document.getElementById('ip-ban-list'); if(elI) elI.innerHTML = iH || '<p class="text-center text-muted">Không có IP nào bị khoá.</p>';
+                    }}
+                }});
+            }}
+            
+            function createGameKeys() {{
+                let q = document.getElementById('gk-qty').value;
+                let d = document.getElementById('gk-dur').value;
+                let u = document.getElementById('gk-unit').value;
+                if(!q) return;
+                api('/api/tg_admin/action_extra', {{action:'create_game', qty: q, dur: d, unit: u}}, () => {{
+                    Swal.fire('Thành công', 'Đã sản xuất Key Game!', 'success');
+                    loadExtraData();
+                }});
+            }}
+            
+            function actionFirewall(act) {{
+                let val = act==='add_tg' ? document.getElementById('tg-add-inp').value : document.getElementById('ip-add-inp').value;
+                if(!val) return Swal.fire('Lỗi', 'Chưa nhập dữ liệu!', 'warning');
+                api('/api/tg_admin/action_extra', {{action: act, val: val}}, () => {{
+                    Toast.fire('Thành công!');
+                    document.getElementById('tg-add-inp').value = '';
+                    document.getElementById('ip-add-inp').value = '';
+                    loadExtraData();
+                }});
             }}
         </script>
     </body>
