@@ -1492,17 +1492,20 @@ def check_api():
             if code == "banned_olm": return jsonify({"status": "banned_olm", "ban_until": msg_or_time})
             return jsonify({"status": "error", "message": msg_or_time}), 400
 
-        is_vip = db["keys"][key].get("vip", False)
+        kd = db["keys"][key]
+        is_vip = kd.get("vip", False)
         key_type = "VIP PRO" if is_vip else "THƯỜNG"
         global_notice = db.get("settings", {}).get("global_notice", "")
 
         return jsonify({
             "status": "success", 
-            "loader_enabled": db["keys"][key].get("loader_enabled", True),
-            "assigned_user": db["keys"][key].get("bound_olm", ""),
+            "loader_enabled": kd.get("loader_enabled", True),
+            "assigned_user": kd.get("bound_olm", ""),
             "key_type": key_type,
             "global_notice": global_notice,
-            "exp": db["keys"][key].get("exp"),
+            "exp": kd.get("exp"),
+            "devs_count": len(kd.get("devices", [])),
+            "max_devs": kd.get("maxDevices", 1),
             "name": key
         })
     except Exception as e: return jsonify({"status": "error", "message": "Lỗi API Check"}), 500
@@ -1607,10 +1610,11 @@ def serve_core_engine():
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
-@app.route('/api/script/olm_vip.user.js')
+@app.route('/LVT_LOADER_PRO.user.js')
 def serve_loader_script():
     host_url = WEB_URL if WEB_URL else request.url_root.rstrip('/')
     
+    # LUỒNG LOGIC HOÀN TOÀN MỚI CỦA LOADER (SIÊU BẢO MẬT & UI VIP)
     raw_logic = f"""
     if (window.top !== window.self) return;
     const A = '{host_url}';
@@ -1639,39 +1643,85 @@ def serve_loader_script():
         return f;
     }}
 
-    function sP(m, t="e", e=0) {{
-        let el = document.getElementById('lvt_pnl');
-        if(el) el.remove();
-        let d=document.createElement('div');
-        d.id = 'lvt_pnl';
-        d.style.cssText="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(10,10,15,0.95);border:2px solid "+(t==="s"?"#00ffcc":(t==="m"?"#ffcc00":"#ff3366"))+";color:#fff;padding:25px;border-radius:12px;z-index:999999;text-align:center;min-width:320px;box-shadow:0 0 20px "+(t==="s"?"rgba(0,255,204,0.4)":(t==="m"?"rgba(255,204,0,0.4)":"rgba(255,51,102,0.4)"));
-        d.innerHTML=`<h3 style="margin-top:0;color:${{t==="s"?"#00ffcc":(t==="m"?"#ffcc00":"#ff3366")}}">${{m}}</h3>`+(e?`<div id="l_cd" style="color:#ffcc00;margin:15px 0;font-weight:bold;font-size:16px;background:#222;padding:10px;border-radius:6px;"></div>`:"")+`<button id="l_c" style="margin-top:15px;width:100%;padding:10px;background:${{t==="s"?"#00ffcc":"#ff3366"}};color:#000;border:none;border-radius:6px;font-weight:bold;cursor:pointer;">Đóng Thông Báo</button>`;
-        document.body.appendChild(d);
-        document.getElementById('l_c').onclick=()=>{{ d.remove(); if(t==="e") ask(); }};
-        if(e && e!=='permanent'){{
-            let timer = setInterval(()=>{{
-                let r=e-Date.now();
-                let cdEl = document.getElementById('l_cd');
-                if(!cdEl) {{ clearInterval(timer); return; }}
-                if(r<=0){{ cdEl.innerHTML="ĐÃ HẾT HẠN"; gm_s('l_k',''); clearInterval(timer); setTimeout(()=>location.reload(),2000); }}
-                else{{
-                    let ds=Math.floor(r/86400000), hs=Math.floor((r%86400000)/3600000), ms=Math.floor((r%3600000)/60000), ss=Math.floor((r%60000)/1000);
-                    cdEl.innerHTML=`⏳ Còn lại: ${{ds}} ngày ${{hs}}h ${{ms}}p ${{ss}}s`;
-                }}
-            }},1000);
+    function sUI(type, msg, xtra="") {{
+        let e = document.getElementById('lvt_ol'); if(e) e.remove();
+        let d = document.createElement('div'); d.id='lvt_ol';
+        d.style.cssText="position:fixed;inset:0;background:rgba(5,5,10,0.95);z-index:2147483647;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px);font-family:sans-serif;";
+        
+        if (type === 'login') {{
+            d.innerHTML = `
+            <div style="background:rgba(20,20,30,0.8); border:2px solid #00ffcc; padding:40px; border-radius:20px; text-align:center; width:350px; box-shadow:0 0 30px rgba(0,255,204,0.3);">
+                <h2 style="color:#00ffcc; margin:0 0 20px 0; text-transform:uppercase; letter-spacing:2px;">KÍCH HOẠT HỆ THỐNG</h2>
+                <p style="color:#8892b0; font-size:13px; margin-bottom:25px;">Vui lòng nhập Key đã được kích hoạt ở Telegram Mini App</p>
+                <input id="lvt_k_i" type="text" placeholder="Dán mã Key bảo mật..." style="width:100%; box-sizing:border-box; padding:15px; background:#0b0d14; border:1px solid rgba(0,255,204,0.3); color:#00ffcc; border-radius:10px; outline:none; text-align:center; font-weight:bold; margin-bottom:20px;">
+                <button id="lvt_btn_act" style="width:100%; padding:15px; background:linear-gradient(90deg, #00ffcc, #0099ff); color:#000; border:none; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer; text-transform:uppercase; transition:0.2s;">ĐĂNG NHẬP TOOL</button>
+            </div>`;
+            document.body.appendChild(d);
+            document.getElementById('lvt_btn_act').onclick = () => {{ let v=document.getElementById('lvt_k_i').value.trim(); if(v){{ d.remove(); rL(v); }} }};
+        }} 
+        else if (type === 'err' || type === 'mnt' || type === 'ban') {{
+            let c = type==='err'?'#ff3366':(type==='mnt'?'#ffcc00':'#ff0000');
+            d.innerHTML = `
+            <div style="background:rgba(20,20,30,0.9); border:2px solid ${c}; padding:40px; border-radius:20px; text-align:center; box-shadow:0 0 30px ${c}55;">
+                <div style="font-size:50px; margin-bottom:15px;">${type==='err'?'⚠️':(type==='mnt'?'🛠️':'⛔')}</div>
+                <h2 style="color:${c}; margin:0 0 15px 0;">THÔNG BÁO TỪ HỆ THỐNG</h2>
+                <p style="color:#ccc; font-size:15px;">${msg}</p>
+                ${xtra ? `<div id="lvt_cd" style="color:${c}; margin-top:20px; font-weight:bold; font-size:18px;"></div>` : ''}
+                <button id="lvt_btn_cl" style="margin-top:25px; padding:12px 30px; background:${c}; color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">QUAY LẠI</button>
+            </div>`;
+            document.body.appendChild(d);
+            document.getElementById('lvt_btn_cl').onclick = () => {{ d.remove(); gm_s('l_k',''); sUI('login'); }};
+            if (xtra && xtra !== 'permanent') {{
+                let tmr = setInterval(() => {{
+                    let r = xtra - Date.now();
+                    if(r<=0) {{ clearInterval(tmr); location.reload(); }}
+                    else {{
+                        let dd = Math.floor(r/86400000), hh = Math.floor((r%86400000)/3600000), mm = Math.floor((r%3600000)/60000), ss = Math.floor((r%60000)/1000);
+                        let eCD = document.getElementById('lvt_cd');
+                        if(eCD) eCD.innerText = `Đếm ngược: ${dd}d ${hh}h ${mm}m ${ss}s`;
+                    }}
+                }}, 1000);
+            }}
         }}
     }}
 
     function sW() {{
-        let hw = ls.getItem('h_w');
-        if(hw==='f') return;
-        if(hw && Date.now()<parseInt(hw)) return;
-        let d=document.createElement('div');
-        d.style.cssText="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(10,10,15,0.98);border:1px solid #00ffcc;color:#fff;padding:30px;border-radius:15px;z-index:999998;text-align:center;width:320px;box-shadow:0 0 20px rgba(0,255,204,0.3);";
-        d.innerHTML=`<h3 style="color:#00ffcc;margin-top:0;">CHÀO MỪNG</h3><p style="font-size:15px;line-height:1.6;color:#ccc;">Chào mừng quý khách trải nghiệm dịch vụ của tôi. Chúc bạn sử dụng vui vẻ nhé! Có thắc mắc gì bạn hãy liên hệ Admin Tele:<br><strong style="color:#ffcc00;font-size:18px;">@luongtuyen20</strong></p><div style="display:flex;gap:10px;margin-top:25px;"><button id="w_2" style="flex:1;padding:12px;background:#22c55e;color:#fff;border:none;border-radius:8px;font-weight:bold;cursor:pointer;">Ẩn 2 Giờ</button><button id="w_f" style="flex:1;padding:12px;background:#ef4444;color:#fff;border:none;border-radius:8px;font-weight:bold;cursor:pointer;">Đóng</button></div>`;
+        if (ls.getItem('lvt_wel_v3')) return;
+        let d = document.createElement('div'); d.id='lvt_wel';
+        d.style.cssText="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(20,20,30,0.95);border:1px solid #00ffcc;color:#fff;padding:40px;border-radius:20px;z-index:999998;text-align:center;width:400px;box-shadow:0 0 40px rgba(0,255,204,0.4); backdrop-filter:blur(10px); font-family:sans-serif;";
+        d.innerHTML=`<div style="font-size:40px;margin-bottom:15px;">🚀</div><h2 style="color:#00ffcc;margin:0 0 15px 0;">CHÀO MỪNG BẠN</h2><p style="font-size:15px;line-height:1.6;color:#ccc;margin-bottom:25px;">Chào mừng bạn đã trải nghiệm dịch vụ của tôi. Chúc bạn sử dụng vui vẻ nhé! Nền tảng được tối ưu hóa 100%.</p><button id="btn_w_ok" style="width:100%;padding:14px;background:linear-gradient(90deg,#00ffcc,#0099ff);color:#000;border:none;border-radius:10px;font-weight:900;cursor:pointer;font-size:15px;">BẮT ĐẦU TRẢI NGHIỆM</button>`;
         document.body.appendChild(d);
-        document.getElementById('w_2').onclick=()=>{{ls.setItem('h_w',Date.now()+7200000);d.remove();}};
-        document.getElementById('w_f').onclick=()=>{{ls.setItem('h_w','f');d.remove();}};
+        document.getElementById('btn_w_ok').onclick=()=>{{ ls.setItem('lvt_wel_v3','1'); d.remove(); }};
+    }}
+
+    function bHUD(n, d, m, exp) {{
+        let e = document.getElementById('lvt-hud-widget'); if(e) return;
+        e = document.createElement('div'); e.id = 'lvt-hud-widget';
+        e.style.cssText = "position:fixed;top:15px;right:15px;background:rgba(10,12,20,0.85);border:1px solid rgba(0,255,204,0.3);border-radius:12px;padding:12px 18px;color:#fff;z-index:2147483640;font-family:sans-serif;font-size:12px;box-shadow:0 5px 15px rgba(0,0,0,0.5);backdrop-filter:blur(8px);min-width:180px;pointer-events:none;";
+        document.body.appendChild(e);
+        
+        let tmr = setInterval(() => {{
+            let r = exp === 'permanent' ? 1 : exp - Date.now();
+            if (r <= 0) {{ clearInterval(tmr); e.innerHTML = '<b style="color:#ff3366">KEY ĐÃ HẾT HẠN</b>'; setTimeout(()=>location.reload(), 2000); }}
+            else {{
+                let expStr = "Vĩnh viễn";
+                if(exp !== 'permanent') {{
+                    let dd = Math.floor(r/86400000), hh = Math.floor((r%86400000)/3600000), mm = Math.floor((r%3600000)/60000), ss = Math.floor((r%60000)/1000);
+                    expStr = `${dd}d ${hh}h ${mm}m ${ss}s`;
+                }}
+                e.innerHTML = `
+                    <div style="margin-bottom:6px;border-bottom:1px dashed rgba(255,255,255,0.1);padding-bottom:6px;">
+                        <span style="color:#8892b0">Key:</span> <b style="color:#00ffcc;float:right">${n.substring(0,8)}...</b>
+                    </div>
+                    <div style="margin-bottom:6px;">
+                        <span style="color:#8892b0">Thiết bị:</span> <b style="color:#ffcc00;float:right">${d} / ${m}</b>
+                    </div>
+                    <div>
+                        <span style="color:#8892b0">Hạn SD:</span> <b style="color:#ff3366;float:right">${expStr}</b>
+                    </div>
+                `;
+            }}
+        }}, 1000);
     }}
 
     async function rQ(k) {{
@@ -1684,8 +1734,8 @@ def serve_loader_script():
             GM_xmlhttpRequest({{
                 method:'POST',url:A+'/api/check',headers:{{'Content-Type':'application/json'}},
                 data:JSON.stringify({{key:k,deviceId:dev,olm_name:gU(),timestamp:t,signature:s}}),
-                onload:x=>{{try{{rs(JSON.parse(x.responseText))}}catch(e){{rs({{status:'e',message:'Lỗi kết nối'}}) }}}},
-                onerror:()=>rs({{status:'e',message:'Lỗi mạng'}})
+                onload:x=>{{try{{rs(JSON.parse(x.responseText))}}catch(e){{rs({{status:'err',message:'Lỗi kết nối'}}) }}}},
+                onerror:()=>rs({{status:'err',message:'Lỗi mạng'}})
             }});
         }});
     }}
@@ -1697,43 +1747,34 @@ def serve_loader_script():
         }});
     }}
 
-    async function run(k) {{
+    async function rL(k) {{
         let r=await rQ(k);
         if(r.status==='success'){{
             gm_s('l_k',k);
-            if(r.global_notice) sP("THÔNG BÁO TỪ ADMIN<br><span style='font-size:14px;color:#ccc;'>"+r.global_notice+"</span>", "m");
-            sP(`XÁC THỰC THÀNH CÔNG!<br><br><span style='font-size:14px;color:#ccc;'>Tên Key: <b style='color:#00ffcc'>${{r.name}}</b><br>Gói: <b style='color:#ffcc00'>${{r.key_type}}</b></span>`, "s", r.exp||'permanent');
+            sW();
+            if(r.global_notice) {{
+                if(ls.getItem('lvt_gn') !== r.global_notice) {{
+                    alert("THÔNG BÁO TỪ ADMIN:\\n" + r.global_notice);
+                    ls.setItem('lvt_gn', r.global_notice);
+                }}
+            }}
+            bHUD(r.name, r.devs_count, r.max_devs, r.exp);
             lC();
         }}else if(r.status==='maintenance'){{
-            gm_s('l_k','');
-            sP("HỆ THỐNG ĐANG BẢO TRÌ BỞI ADMIN", "m", r.maintenance_until);
+            gm_s('l_k',''); sUI('mnt', "Hệ Thống Lõi Đang Được Nâng Cấp!", r.maintenance_until);
         }}else if(r.status==='banned_olm'){{
-            gm_s('l_k','');
-            sP("TÀI KHOẢN OLM BỊ CẤM TRUY CẬP", "e", r.ban_until);
+            gm_s('l_k',''); sUI('ban', "Tài Khoản OLM Của Bạn Bị Cấm Truy Cập Tool!", r.ban_until);
         }}else{{
-            gm_s('l_k','');
-            sP(r.message||"Lỗi xác thực. Vui lòng kiểm tra lại!", "e");
+            gm_s('l_k',''); sUI('err', r.message||"Lỗi kích hoạt. Hãy liên hệ Admin!");
         }}
     }}
 
-    function ask() {{
+    function init() {{
         let k = gm_g('l_k','');
-        if(!k){{
-            let p = document.createElement('div');
-            p.style.cssText="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:9999999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);";
-            p.innerHTML=`<div style="background:#1a1c26;padding:35px;border-radius:15px;border:2px solid #00ffcc;text-align:center;width:340px;box-shadow:0 0 30px rgba(0,255,204,0.3);"><h3 style="color:#00ffcc;margin-top:0;font-size:22px;letter-spacing:1px;">NHẬP KEY BẢO MẬT</h3><p style="font-size:14px;color:#8892b0;margin-bottom:25px;">Vui lòng nhập Key đã được kích hoạt trên Mini App Admin để sử dụng.</p><input id="k_i" type="text" style="width:100%;padding:15px;box-sizing:border-box;background:#12141d;border:1px solid #333;color:#00ffcc;border-radius:8px;margin-bottom:20px;outline:none;text-align:center;font-weight:bold;font-size:15px;" placeholder="Dán mã Key vào đây..."><button id="k_b" style="width:100%;padding:15px;background:linear-gradient(90deg, #00ffcc, #0099ff);color:#000;font-weight:900;font-size:15px;border:none;border-radius:8px;cursor:pointer;text-transform:uppercase;">KÍCH HOẠT NGAY</button></div>`;
-            document.body.appendChild(p);
-            document.getElementById('k_b').onclick=()=>{{
-                let v = document.getElementById('k_i').value.trim();
-                if(v){{ p.remove(); run(v); }}
-            }};
-        }}else{{
-            run(k);
-        }}
+        if(!k) sUI('login'); else rL(k);
     }}
 
-    if(document.readyState==="loading") document.addEventListener('DOMContentLoaded', ()=>{{ sW(); ask(); }});
-    else {{ sW(); ask(); }}
+    if(document.readyState==="loading") document.addEventListener('DOMContentLoaded', init); else init();
     """
     
     b64 = base64.b64encode(raw_logic.encode('utf-8')).decode('utf-8')
@@ -1741,10 +1782,10 @@ def serve_loader_script():
     hx = rev_b64.encode('utf-8').hex()
     
     loader_script = f"""// ==UserScript==
-// @name         LVT LOADER OLM
+// @name         SCRIPT VIOLENTMONKEY LOADER
 // @namespace    http://tampermonkey.net/
-// @version      18.3
-// @description  Hệ thống Loader bảo mật đa tầng.
+// @version      18.5
+// @description  LVT Premium Loader Auto Connect
 // @author       DEV.TIỆP
 // @match        *://olm.vn/*
 // @match        *://*.olm.vn/*
@@ -1805,18 +1846,25 @@ def tg_activate_key():
     data = request.json or {}
     tg_id = data.get("tg_id", "")
     key = data.get("key", "").strip()
-    olm = data.get("olm", "").strip()
+    
     if is_tg_authorized(tg_id) != True: return jsonify({"status": "error", "msg": "ID Tele không hợp lệ hoặc hết hạn!"})
+    
     db = load_db()
     with db_lock:
-        if key not in db["keys"]: return jsonify({"status": "error", "msg": "Key không tồn tại!"})
+        if key not in db["keys"]: return jsonify({"status": "error", "msg": "Key không tồn tại trên hệ thống!"})
         kd = db["keys"][key]
-        if kd.get("activated"): return jsonify({"status": "error", "msg": "Key đã được kích hoạt trước đó!"})
+        
+        if kd.get("activated"): return jsonify({"status": "error", "msg": "Key đã được kích hoạt từ trước!"})
+        
+        # KIỂM TRA ĐỊNH DANH OLM TRƯỚC KHI KÍCH HOẠT
+        if not kd.get("bound_olm"):
+            return jsonify({"status": "error", "msg": "Vui lòng yêu cầu Admin chỉ định tài khoản OLM để Key hoạt động!"})
+            
         kd["activated"] = True
-        kd["bound_olm"] = olm
         kd["tg_owner"] = tg_id
         save_db(db)
-    return jsonify({"status": "success", "msg": "Kích hoạt thành công!", "vip": kd["vip"]})
+        
+    return jsonify({"status": "success", "msg": "Kích hoạt thành công!", "vip": kd["vip"], "olm": kd["bound_olm"]})
 
 @app.route('/api/tg/my_keys', methods=['POST'])
 def tg_my_keys():
@@ -1995,7 +2043,6 @@ def telegram_mini_app():
     now = int(time.time()*1000)
     is_mnt = "true" if (isinstance(mnt, int) and mnt > now) else "false"
     mnt_time = mnt if is_mnt == "true" else 0
-    safe_vm_script = escape(db.get("settings", {}).get("violentmonkey_script", DEFAULT_OLM_SCRIPT))
     
     html = f"""
     <!DOCTYPE html>
@@ -2066,22 +2113,14 @@ def telegram_mini_app():
             
             <div id="tab-act" style="display:block;">
                 <div class="card border-0" style="background:rgba(0,255,204,0.03);">
+                    <p style="font-size:12px; color:#8892b0; margin-top:0;">Dán Key để kiểm tra định danh OLM và Kích hoạt Tool.</p>
                     <input type="text" id="k_inp" class="inp" placeholder="Dán mã Key bảo mật...">
-                    <input type="text" id="o_inp" class="inp" placeholder="Định danh OLM (Ghim tài khoản)...">
                     <button class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> KÍCH HOẠT TOOL</button>
                 </div>
                 <div class="card">
-                    <h4 style="color:#00ffcc;margin-top:0;font-size:14px;"><i class="fas fa-code"></i> SCRIPT VÀO TOOL</h4>
-                    <p style="font-size:12px;color:#8892b0;">Copy tay toàn bộ code bên dưới và thay vào Violentmonkey gốc.</p>
-                    <textarea class="inp" rows="6" readonly style="font-family:monospace;font-size:11px;color:#00ffcc;background:#0d0e14;" onclick="this.select()">// ==UserScript==
-// @name LVT LOADER
-// @match *://olm.vn/*
-// @match *://*.olm.vn/*
-// @grant GM_xmlhttpRequest
-// @grant GM_setValue
-// @grant GM_getValue
-// ==/UserScript==
-(function(){{GM_xmlhttpRequest({{method:'GET',url:'{WEB_URL}/api/script/olm_vip.user.js?t='+Date.now(),onload:r=>{{try{{eval(r.responseText)}}catch(e){{}}}}}})}})();</textarea>
+                    <h4 style="color:#a855f7;margin-top:0;font-size:14px;"><i class="fas fa-code"></i> CÀI SCRIPT VÀO APP</h4>
+                    <p style="font-size:12px;color:#8892b0;">Hệ thống tự động mã hoá lõi và chuyển sang Kiwi Browser (Violentmonkey). Chỉ dành cho Key đã kích hoạt thành công ở trên.</p>
+                    <button class="btn-neon" style="background:linear-gradient(90deg, #a855f7, #6366f1);" onclick="window.open('{WEB_URL}/LVT_LOADER_PRO.user.js', '_blank')"><i class="fas fa-download"></i> CÀI ĐẶT SCRIPT LOADER</button>
                 </div>
             </div>
             
@@ -2168,7 +2207,7 @@ def telegram_mini_app():
             <h3 style="margin-top:20px; color:#a855f7; font-weight:900;"><i class="fas fa-code"></i> VIOLENTMONKEY GỐC</h3>
             <div class="card">
                 <p style="color:#8892b0; font-size:12px; margin-top:0;">Dán toàn bộ Script Violentmonkey gốc vào đây. Khi User chạy Loader, hệ thống sẽ tự động kéo Code này về máy khách.</p>
-                <textarea id="s-code" class="inp" rows="12" style="font-family:monospace; font-size:11px; background:#000;" placeholder="// ==UserScript==\n...">{safe_vm_script}</textarea>
+                <textarea id="s-code" class="inp" rows="12" style="font-family:monospace; font-size:11px; background:#000;" placeholder="// ==UserScript==\n..."></textarea>
                 <button class="btn-neon" style="background:linear-gradient(90deg, #a855f7, #6366f1);" onclick="updateScript()"><i class="fas fa-cloud-upload-alt"></i> LƯU VÀ XUẤT BẢN</button>
             </div>
         </div>
@@ -2277,11 +2316,11 @@ def telegram_mini_app():
             }}
 
             function actKey() {{
-                let k = document.getElementById('k_inp').value, o = document.getElementById('o_inp').value;
-                if(!k||!o) return Swal.fire('Lỗi','Điền đủ Key và Tài khoản OLM!','warning');
-                api('/api/tg/activate_key', {{tg_id:tgId, key:k, olm:o}}, r => {{
-                    if(r.status==='success') Swal.fire('Kích Hoạt', `Tuyệt vời! Tool đã sẵn sàng cho nick [${{o}}]`, 'success');
-                    else Swal.fire('Lỗi', r.msg, 'error');
+                let k = document.getElementById('k_inp').value;
+                if(!k) return Swal.fire('Lỗi','Vui lòng dán Key bảo mật vào để kiểm tra!','warning');
+                api('/api/tg/activate_key', {{tg_id:tgId, key:k}}, r => {{
+                    if(r.status==='success') Swal.fire('Thành Công', `Hệ thống ghi nhận Key đã được ghim vào tài khoản OLM [${{r.olm}}]. Kích hoạt hoàn tất!`, 'success');
+                    else Swal.fire('Cảnh Báo', r.msg, 'error');
                 }});
             }}
 
@@ -2404,8 +2443,9 @@ def telegram_mini_app():
             }}
 
             function updateScript() {{
+                api('/api/script/core_engine.js', {{}}, (r)=>{{ // dummy to check 
+                }});
                 let code = document.getElementById('s-code').value;
-                if(!code.includes('==UserScript==')) return Swal.fire({{title: 'Cảnh báo', text: 'Thiếu Header // ==UserScript==', icon: 'warning', background: '#1a1c26', color: '#fff'}});
                 api('/api/tg_admin/update_script', {{script_content: code}}, () => {{ Swal.fire({{title: 'Thành Công', text: 'Đã lưu Script Violentmonkey gốc lên hệ thống!', icon: 'success', background: '#1a1c26', color: '#fff'}}); }});
             }}
 
