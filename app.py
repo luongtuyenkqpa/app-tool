@@ -3,6 +3,7 @@ import urllib.parse
 from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session, abort
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix # [VÁ LỖI BẢO MẬT] Chống giả mạo IP
 
 # [VÁ LỖI LỆCH MÚI GIỜ CLOUD]
 try:
@@ -11,6 +12,9 @@ try:
 except: pass
 
 app = Flask(__name__)
+
+# [VÁ LỖI BẢO MẬT] Fix IP Spoofing qua HTTP Headers (X-Forwarded-For)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # [VÁ LỖI CSS_GLASS]
 CSS_GLASS = """
@@ -23,7 +27,8 @@ CSS_GLASS = """
 # ========================================================
 # HỆ THỐNG BOT TELEGRAM & MINI APP CAO CẤP
 # ========================================================
-TELEGRAM_BOT_TOKEN = "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o"
+# [CẢNH BÁO]: Khuyến cáo nên chuyển TOKEN sang biến môi trường os.environ trong tương lai.
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8714375866:AAG9r0aCCFOKtgR6B-LcFYBAnJ7x9yMs-8o")
 TELEGRAM_CHAT_ID = "7363320876"
 WEB_URL = "https://app-tool-trlp.onrender.com" 
 
@@ -121,8 +126,6 @@ def handle_exception(e):
     send_telegram_alert(f"<b>CRITICAL CRASH NGĂN CHẶN THÀNH CÔNG:</b>\n<pre>{error_detail[-300:]}</pre>")
     return "Hệ thống đang bảo trì.", 500
 
-# BẢO MẬT FLASK SESSION
-app.secret_key = os.environ.get('SECRET_KEY', hashlib.sha256(f"LVT_SECURE_KEY_2026_VIP".encode()).hexdigest())
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -1214,6 +1217,10 @@ def load_db():
                 data.setdefault("game_keys", {}) 
                 data.setdefault("tg_auth_ids", {str(TELEGRAM_CHAT_ID): {"exp": "permanent", "banned_until": 0}}) 
                 
+                # [VÁ LỖI BẢO MẬT] Sinh Secret Key ngẫu nhiên và lưu vĩnh viễn nếu chưa có
+                if "secret_key" not in data["settings"]:
+                    data["settings"]["secret_key"] = secrets.token_hex(32)
+
                 if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "global_notice" not in data["settings"]: data["settings"]["global_notice"] = ""
                 if "violentmonkey_script" not in data["settings"]: data["settings"]["violentmonkey_script"] = DEFAULT_OLM_SCRIPT
@@ -1300,9 +1307,11 @@ def garbage_collector():
         now_ms = int(time.time() * 1000)
         try:
             with api_rate_lock:
-                to_del_sig = [s for s, t in used_signatures.items() if now_ms - t > 20000]
-                for s in to_del_sig: del used_signatures[s]
-                if len(used_signatures) > 10000: used_signatures.clear()
+                # [VÁ LỖI BẢO MẬT] Tránh xóa sạch 100% gây lỗi Replay Attack
+                if len(used_signatures) > 10000:
+                    expired_sigs = [s for s, t in used_signatures.items() if now_ms - t > 20000]
+                    for s in expired_sigs: del used_signatures[s]
+                
                 if len(api_rate_cache) > 10000: api_rate_cache.clear()
             
             db = load_db()
@@ -1334,12 +1343,9 @@ def garbage_collector():
 
 threading.Thread(target=garbage_collector, daemon=True).start()
 
+# [VÁ LỖI BẢO MẬT] Bóc tách IP an toàn (Do đã dùng ProxyFix)
 def get_real_ip():
-    try:
-        if request.headers.get("CF-Connecting-IP"): return request.headers.get("CF-Connecting-IP")
-        if request.headers.getlist("X-Forwarded-For"): return request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
-        return request.remote_addr
-    except: return "Unknown_IP"
+    return request.remote_addr or "Unknown_IP"
 
 @app.before_request
 def firewall_and_csrf():
@@ -1357,6 +1363,12 @@ def firewall_and_csrf():
         if request.path.startswith("/admin") and request.path not in ["/admin_login", "/telegram_mini_app"]:
             if session.get('role') != 'admin':
                 return redirect('/admin_login')
+                
+            # [VÁ LỖI BẢO MẬT] Xác thực CSRF Token cho Admin Panel
+            if request.method == 'POST':
+                token = request.form.get("csrf_token")
+                if not token or token != session.get('csrf_token'):
+                    return "⚠️ BẢO MẬT LỚP 2: Lỗi xác thực CSRF Token (Phòng chống tấn công giả mạo). Vui lòng F5 lại trang!", 403
     except: pass
 
 @app.after_request
@@ -1411,11 +1423,19 @@ def verify_request_signature(data):
         ts = int(data.get("timestamp", 0))
         sig = data.get("signature", "")
         key = data.get("key", "")
-        if abs(int(time.time() * 1000) - ts) > 15000: return False
+        now_ms = int(time.time() * 1000)
+        
+        if abs(now_ms - ts) > 15000: return False
         global used_signatures
         with api_rate_lock:
             if sig in used_signatures: return False
-            used_signatures[sig] = int(time.time() * 1000)
+            used_signatures[sig] = now_ms
+            
+            # [VÁ LỖI BẢO MẬT] Xóa an toàn cache chữ ký
+            if len(used_signatures) > 10000:
+                expired = [s for s, t in used_signatures.items() if now_ms - t > 20000]
+                for s in expired: del used_signatures[s]
+                
         expected = hashlib.sha256(f"{key}{ts}{key}".encode()).hexdigest()
         return hmac.compare_digest(sig, expected)
     except: return False
@@ -2493,6 +2513,7 @@ def admin_login():
             if u_data and u_data.get("role") == "admin" and u_data.get("password_hash") == hash_pwd(pwd):
                 session['username'] = username
                 session['role'] = 'admin'
+                session['csrf_token'] = secrets.token_hex(16) # [VÁ LỖI BẢO MẬT] Sinh CSRF Token chống khai thác
                 admin_login_attempts.pop(ip, None) 
                 with db_lock: log_admin_action(db, f"Đăng nhập Admin: {ip}")
                 save_db(db)
@@ -2512,6 +2533,10 @@ def admin_dashboard():
     try:
         if session.get('role') != 'admin': return redirect('/admin_login')
         db = load_db()
+        
+        # Lấy Token CSRF của phiên hiện tại
+        csrf_input = f'<input type="hidden" name="csrf_token" value="{session.get("csrf_token", "")}">'
+        
         with db_lock:
             keys_items = list(db.get("keys", {}).items())
             users_items = list(db.get("users", {}).items())
@@ -2526,7 +2551,7 @@ def admin_dashboard():
             bal = udata.get("balance", 0)
             u_keys = "<br>".join([f"🔑 {escape(pk.get('key')[:8])}..." for pk in udata.get("purchased_keys", [])]) or "<span class='text-muted'>Chưa có</span>"
             u_ips = "<br>".join([escape(ip) for ip in udata.get("ips", [])]) or "<span class='text-muted'>Trống</span>"
-            users_html += f'''<tr class="text-nowrap"><td><strong class="text-warning">{escape(uname)}</strong></td><td><span class="badge bg-success">{bal:,}đ</span></td><td style="font-size:11px; text-align:left;">{u_keys}</td><td style="font-size:11px; text-align:left; color:#ffcc00;">{u_ips}</td><td><form action="/admin/add_balance" method="POST" class="d-flex gap-1 justify-content-center m-0"><input type="hidden" name="username" value="{escape(uname)}"><input type="number" name="amount" class="form-control form-control-sm bg-dark text-light border-secondary px-1 text-center m-0" style="width:70px;font-size:12px;height:28px;" placeholder="± Tiền" required><button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;height:28px; border-radius:6px;">CỘNG</button></form></td></tr>'''
+            users_html += f'''<tr class="text-nowrap"><td><strong class="text-warning">{escape(uname)}</strong></td><td><span class="badge bg-success">{bal:,}đ</span></td><td style="font-size:11px; text-align:left;">{u_keys}</td><td style="font-size:11px; text-align:left; color:#ffcc00;">{u_ips}</td><td><form action="/admin/add_balance" method="POST" class="d-flex gap-1 justify-content-center m-0">{csrf_input}<input type="hidden" name="username" value="{escape(uname)}"><input type="number" name="amount" class="form-control form-control-sm bg-dark text-light border-secondary px-1 text-center m-0" style="width:70px;font-size:12px;height:28px;" placeholder="± Tiền" required><button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;height:28px; border-radius:6px;">CỘNG</button></form></td></tr>'''
 
         keys_html = ''
         for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
@@ -2578,7 +2603,7 @@ def admin_dashboard():
                         <div class="col-md-12">
                             <div class="card p-4 h-100" style="border-color:rgba(0,255,204,0.4);">
                                 <h5 style="color:#00ffcc; margin-bottom:15px;"><i class="fab fa-telegram"></i> CẤP QUYỀN TG ADMIN THAY BẠN</h5>
-                                <form action="/admin/add_tg_admin" method="POST" class="d-flex gap-2 mb-3">
+                                <form action="/admin/add_tg_admin" method="POST" class="d-flex gap-2 mb-3">{csrf_input}
                                     <input type="text" name="tg_id" class="form-control form-control-sm m-0" placeholder="Nhập ID Telegram..." required>
                                     <button type="submit" class="btn btn-sm btn-info fw-bold px-3 rounded-pill text-dark">Cấp Quyền</button>
                                 </form>
@@ -2588,7 +2613,7 @@ def admin_dashboard():
                         <div class="col-md-12">
                             <div class="card p-4 h-100" style="border-color:rgba(189,0,255,0.4);">
                                 <h5 style="color:#bd00ff; margin-bottom:15px;"><i class="fas fa-key"></i> TẠO KEY MỚI</h5>
-                                <form action="/admin/create" method="POST" class="row g-3">
+                                <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
                                     <div class="col-6"><input type="text" name="prefix" class="form-control form-control-sm m-0" placeholder="Mã (VD: TEST)"></div>
                                     <div class="col-6"><input type="number" name="quantity" class="form-control form-control-sm m-0" value="1" placeholder="Số Lượng"></div>
                                     <div class="col-6"><input type="number" name="duration" class="form-control form-control-sm m-0" placeholder="Độ dài" required></div>
@@ -2601,7 +2626,7 @@ def admin_dashboard():
                         <div class="col-md-12">
                             <div class="card p-4 h-100" style="border-color:rgba(255,51,102,0.4);">
                                 <h5 class="text-danger margin-bottom:15px;"><i class="fas fa-shield-virus"></i> FIREWALL BANS IP</h5>
-                                <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3"><input type="text" name="ip" class="form-control form-control-sm m-0" placeholder="Nhập IP..." required><button type="submit" class="btn btn-sm btn-danger fw-bold px-3 rounded-pill">Chặn</button></form>
+                                <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">{csrf_input}<input type="text" name="ip" class="form-control form-control-sm m-0" placeholder="Nhập IP..." required><button type="submit" class="btn btn-sm btn-danger fw-bold px-3 rounded-pill">Chặn</button></form>
                                 <ul class="list-group list-group-flush" style="max-height:120px;overflow-y:auto; border: 1px solid rgba(255,255,255,0.05); border-radius:8px; padding:5px;">{blacklist_rows}</ul>
                             </div>
                         </div>
@@ -2616,13 +2641,13 @@ def admin_dashboard():
             </div>
         </div>
         
-        <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00; backdrop-filter: blur(15px);"><form action="/admin/bind_olm" method="POST"><div class="modal-body text-center p-4"><input type="hidden" name="key" id="bindKeyInput"><p class="text-white mb-2">Ghim Định Danh OLM cho Key:</p><p><strong id="bindKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p><input type="text" name="olm_name" id="bindOlmInput" class="form-control mt-3" placeholder="Tên nick OLM khách (để trống: hủy)"></div><div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-warning w-100 fw-bold text-dark rounded-pill">Ghim Chặt Cứng</button></div></form></div></div></div>
-        <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc; backdrop-filter: blur(15px);"><form action="/admin/add_time" method="POST"><div class="modal-body text-center p-4"><input type="hidden" name="key" id="addTimeKeyInput"><p class="text-white mb-2">Thêm thời gian cho Key:</p><p><strong id="addTimeKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p><input type="number" name="time_val" class="form-control mt-3" placeholder="Số lượng (Ví dụ: 10)" required><select name="time_unit" class="form-select mt-2" style="background-color:rgba(10,10,18,0.8); color:white;"><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option></select></div><div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-info w-100 fw-bold text-dark rounded-pill">XÁC NHẬN CỘNG</button></div></form></div></div></div>
+        <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00; backdrop-filter: blur(15px);"><form action="/admin/bind_olm" method="POST">{csrf_input}<div class="modal-body text-center p-4"><input type="hidden" name="key" id="bindKeyInput"><p class="text-white mb-2">Ghim Định Danh OLM cho Key:</p><p><strong id="bindKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p><input type="text" name="olm_name" id="bindOlmInput" class="form-control mt-3" placeholder="Tên nick OLM khách (để trống: hủy)"></div><div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-warning w-100 fw-bold text-dark rounded-pill">Ghim Chặt Cứng</button></div></form></div></div></div>
+        <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc; backdrop-filter: blur(15px);"><form action="/admin/add_time" method="POST">{csrf_input}<div class="modal-body text-center p-4"><input type="hidden" name="key" id="addTimeKeyInput"><p class="text-white mb-2">Thêm thời gian cho Key:</p><p><strong id="addTimeKeyDisplay" class="text-info" style="word-break: break-all;"></strong></p><input type="number" name="time_val" class="form-control mt-3" placeholder="Số lượng (Ví dụ: 10)" required><select name="time_unit" class="form-select mt-2" style="background-color:rgba(10,10,18,0.8); color:white;"><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option></select></div><div class="modal-footer border-secondary p-2"><button type="submit" class="btn btn-info w-100 fw-bold text-dark rounded-pill">XÁC NHẬN CỘNG</button></div></form></div></div></div>
         
         <div class="modal fade" id="vmScriptModal" tabindex="-1" data-bs-theme="dark">
           <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content" style="background:rgba(17,17,26,0.95); border:1px solid #00ffcc; backdrop-filter: blur(15px);">
-              <form action="/admin/update_vm_script" method="POST">
+              <form action="/admin/update_vm_script" method="POST">{csrf_input}
                   <div class="modal-header border-secondary">
                       <h5 class="modal-title" style="color:#00ffcc;font-weight:bold;">CẬP NHẬT CODE SCRIPT GỐC MỚI</h5>
                       <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -2637,7 +2662,7 @@ def admin_dashboard():
           </div>
         </div>
         
-        <div class="modal fade" id="sysModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95); border:1px solid #ffcc00; backdrop-filter: blur(15px);"><div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ffcc00;font-weight:bold;">HỆ THỐNG GLOBAL</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4"><form action="/admin/system" method="POST" class="mb-4"><h6>🔔 Thông báo toàn bộ User</h6><textarea name="global_notice" class="form-control mb-2" rows="2" placeholder="Nhập nội dung..."></textarea><button class="btn btn-warning btn-sm w-100 fw-bold">GỬI THÔNG BÁO</button></form><hr class="border-secondary"><form action="/admin/maintenance" method="POST"><h6>⚠️ Bảo trì hệ thống</h6><div class="d-flex gap-2 mb-2"><input type="number" name="duration" class="form-control" placeholder="Thời gian (0 = Tắt)"><select name="unit" class="form-select"><option value="m">Phút</option><option value="h" selected>Giờ</option><option value="d">Ngày</option></select></div><button class="btn btn-danger btn-sm w-100 fw-bold">CẬP NHẬT BẢO TRÌ</button></form></div></div></div></div>
+        <div class="modal fade" id="sysModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95); border:1px solid #ffcc00; backdrop-filter: blur(15px);"><div class="modal-header border-secondary"><h5 class="modal-title" style="color:#ffcc00;font-weight:bold;">HỆ THỐNG GLOBAL</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4"><form action="/admin/system" method="POST" class="mb-4">{csrf_input}<h6>🔔 Thông báo toàn bộ User</h6><textarea name="global_notice" class="form-control mb-2" rows="2" placeholder="Nhập nội dung..."></textarea><button class="btn btn-warning btn-sm w-100 fw-bold">GỬI THÔNG BÁO</button></form><hr class="border-secondary"><form action="/admin/maintenance" method="POST">{csrf_input}<h6>⚠️ Bảo trì hệ thống</h6><div class="d-flex gap-2 mb-2"><input type="number" name="duration" class="form-control" placeholder="Thời gian (0 = Tắt)"><select name="unit" class="form-select"><option value="m">Phút</option><option value="h" selected>Giờ</option><option value="d">Ngày</option></select></div><button class="btn btn-danger btn-sm w-100 fw-bold">CẬP NHẬT BẢO TRÌ</button></form></div></div></div></div>
 
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script>
@@ -2837,6 +2862,10 @@ def logout():
 def admin_hack_game():
     if session.get('role') != 'admin': return redirect('/admin_login')
     db = load_db()
+    
+    # Lấy Token CSRF của phiên hiện tại
+    csrf_input = f'<input type="hidden" name="csrf_token" value="{session.get("csrf_token", "")}">'
+    
     with db_lock:
         game_keys = list(db.get("game_keys", {}).items())
 
@@ -2895,7 +2924,7 @@ def admin_hack_game():
         
         <div class="card p-4 mb-4" style="border-color:#ffcc00; background:rgba(17,17,26,0.8);">
             <h5 class="text-warning fw-bold mb-3">🚀 TẠO KEY HACK GAME (15 KÍ TỰ ĐẶC BIỆT)</h5>
-            <form action="/admin/hack_game/create" method="POST" class="row g-3">
+            <form action="/admin/hack_game/create" method="POST" class="row g-3">{csrf_input}
                 <div class="col-md-3">
                     <input type="number" name="quantity" class="form-control" value="1" placeholder="Số lượng key cần tạo" required>
                 </div>
@@ -2929,9 +2958,9 @@ def admin_hack_game():
         </div>
     </div>
 
-    <div class="modal fade" id="timeModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc;"><form action="/admin/hack_game/add_time" method="POST"><div class="modal-body text-center p-4"><input type="hidden" name="key" id="timeKeyInput"><p class="text-white mb-2">Thêm thời gian cho Key:</p><h6 id="timeKeyDisplay" class="text-warning mb-3"></h6><input type="number" name="t_val" class="form-control mb-2" placeholder="Giá trị" required><select name="t_unit" class="form-select"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option><option value="years">Năm</option></select></div><div class="modal-footer p-2"><button type="submit" class="btn btn-info w-100 fw-bold rounded-pill">CỘNG THÊM</button></div></form></div></div></div>
+    <div class="modal fade" id="timeModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc;"><form action="/admin/hack_game/add_time" method="POST">{csrf_input}<div class="modal-body text-center p-4"><input type="hidden" name="key" id="timeKeyInput"><p class="text-white mb-2">Thêm thời gian cho Key:</p><h6 id="timeKeyDisplay" class="text-warning mb-3"></h6><input type="number" name="t_val" class="form-control mb-2" placeholder="Giá trị" required><select name="t_unit" class="form-select"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option><option value="years">Năm</option></select></div><div class="modal-footer p-2"><button type="submit" class="btn btn-info w-100 fw-bold rounded-pill">CỘNG THÊM</button></div></form></div></div></div>
 
-    <div class="modal fade" id="deviceModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00;"><form action="/admin/hack_game/add_device" method="POST"><div class="modal-body text-center p-4"><input type="hidden" name="key" id="devKeyInput"><p class="text-white mb-2">Mở rộng giới hạn máy cho Key:</p><h6 id="devKeyDisplay" class="text-info mb-3"></h6><input type="number" name="dev_add" class="form-control" value="1" placeholder="Thêm bao nhiêu máy?" required></div><div class="modal-footer p-2"><button type="submit" class="btn btn-warning w-100 fw-bold rounded-pill">CẤP PHÉP</button></div></form></div></div></div>
+    <div class="modal fade" id="deviceModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00;"><form action="/admin/hack_game/add_device" method="POST">{csrf_input}<div class="modal-body text-center p-4"><input type="hidden" name="key" id="devKeyInput"><p class="text-white mb-2">Mở rộng giới hạn máy cho Key:</p><h6 id="devKeyDisplay" class="text-info mb-3"></h6><input type="number" name="dev_add" class="form-control" value="1" placeholder="Thêm bao nhiêu máy?" required></div><div class="modal-footer p-2"><button type="submit" class="btn btn-warning w-100 fw-bold rounded-pill">CẤP PHÉP</button></div></form></div></div></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
@@ -3020,6 +3049,12 @@ def game_key_actions(action, key):
                 del db["game_keys"][key]
             save_db(db)
     return redirect('/admin/hack_game')
+
+# [VÁ LỖI BẢO MẬT] Đảm bảo Flask Secret Key được Load ngay khi chạy ứng dụng
+try:
+    init_db = load_db()
+    app.secret_key = os.environ.get('SECRET_KEY', init_db.get("settings", {}).get("secret_key", secrets.token_hex(32)))
+except Exception: pass
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
