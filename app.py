@@ -75,37 +75,6 @@ def telegram_polling():
                             ]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
                         
-                        elif text.startswith("/naptien") and chat_id == TELEGRAM_CHAT_ID:
-                            parts = text.split()
-                            if len(parts) >= 3:
-                                uname = parts[1].lower()
-                                try:
-                                    amt = int(parts[2])
-                                    db = load_db()
-                                    with db_lock:
-                                        if uname in db.get("users", {}):
-                                            db["users"][uname]["balance"] += amt
-                                            if db["users"][uname]["balance"] < 0: db["users"][uname]["balance"] = 0
-                                            action = "Cộng" if amt >= 0 else "Trừ"
-                                            db["users"][uname].setdefault("notices", []).append(f"Admin vừa {action} cho bạn {abs(amt):,}đ")
-                                            log_admin_action(db, f"TeleBot: {action} {abs(amt)}đ cho {uname}")
-                                            save_db(db)
-                                            send_telegram_alert(f"✅ Đã {action} {abs(amt):,}đ cho User: <b>{uname}</b>")
-                                        else:
-                                            send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
-                                except ValueError: send_telegram_alert("❌ Số tiền không hợp lệ!")
-                        
-                        elif text.startswith("/check") and chat_id == TELEGRAM_CHAT_ID:
-                            parts = text.split()
-                            if len(parts) >= 2:
-                                uname = parts[1].lower()
-                                db = load_db()
-                                u = db.get("users", {}).get(uname)
-                                if u:
-                                    keys_info = "".join([f"- <code>{pk['key'][:10]}...</code>\n" for pk in u.get("purchased_keys", [])]) or "Không có key nào."
-                                    send_telegram_alert(f"👤 <b>USER: {uname}</b>\n💰 Số dư: {u.get('balance', 0):,}đ\n🔑 <b>Key:</b>\n{keys_info}")
-                                else: send_telegram_alert(f"❌ Không tìm thấy user: {uname}")
-                        
                         elif text.startswith("// ==UserScript==") and chat_id == TELEGRAM_CHAT_ID:
                             db = load_db()
                             with db_lock:
@@ -150,16 +119,6 @@ _last_mtime_check = 0
 # ========================================================
 # CORE CONFIG & UTILS
 # ========================================================
-SHOP_PACKAGES = {
-    "TEST_VIP": {"name": "Key Test (VIP)", "price": 10000, "dur_ms": 3600000, "vip": True, "desc": "Trải nghiệm Hack OLM VIP"},
-    "7D_VIP": {"name": "7 Ngày (VIP)", "price": 30000, "dur_ms": 604800000, "vip": True, "desc": ""},
-    "30D_VIP": {"name": "1 Tháng (VIP)", "price": 100000, "dur_ms": 2592000000, "vip": True, "desc": ""},
-    "1Y_VIP": {"name": "1 Năm Học (VIP)", "price": 200000, "dur_ms": 31536000000, "vip": True, "desc": ""},
-    "1H_NOR": {"name": "1 Giờ (Thường)", "price": 5000, "dur_ms": 3600000, "vip": False, "desc": "Study Assistant Mở rộng"},
-    "7D_NOR": {"name": "7 Ngày (Thường)", "price": 25000, "dur_ms": 604800000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "30D_NOR": {"name": "1 Tháng (Thường)", "price": 55000, "dur_ms": 2592000000, "vip": False, "desc": "Study Assistant Mở Rộng"},
-    "1Y_NOR": {"name": "1 Năm Học (Thường)", "price": 125000, "dur_ms": 31536000000, "vip": False, "desc": "Study Assistant Mở Rộng"}
-}
 
 def safe_int(val, default=0):
     try: return int(val)
@@ -1067,22 +1026,9 @@ def tg_admin_system_actions():
 def tg_admin_sys_data():
     if not check_tg_admin_auth(request): return jsonify({"status": "error"}), 403
     db = load_db()
-    now = int(time.time()*1000)
-    
-    users = []
-    for uname, udata in db.get("users", {}).items():
-        if udata.get("role") == "admin": continue
-        users.append({"username": uname, "balance": udata.get("balance", 0)})
-        
-    game_keys = []
-    for k, v in db.get("game_keys", {}).items():
-        exp_str = "Vĩnh viễn" if v["exp"]=="permanent" else ("Chưa KH" if v["exp"]=="pending" else ("Hết hạn" if v["exp"]<now else time.strftime("%d/%m %H:%M", time.localtime(v["exp"]/1000))))
-        game_keys.append({"key": k, "exp": exp_str, "status": v.get("status", "active")})
-        
     admins = db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID])
     ips = db.get("banned_ips", [])
-    
-    return jsonify({"status": "success", "users": users, "game_keys": game_keys, "tg_admins": admins, "banned_ips": ips})
+    return jsonify({"status": "success", "tg_admins": admins, "banned_ips": ips})
 
 @app.route('/api/tg_admin/action_extra', methods=['POST'])
 def tg_admin_action_extra():
@@ -1091,23 +1037,7 @@ def tg_admin_action_extra():
     act = data.get("action")
     db = load_db()
     with db_lock:
-        if act == 'add_balance':
-            uname = data.get("username")
-            amt = safe_int(data.get("amount"))
-            if uname in db.get("users", {}):
-                db["users"][uname]["balance"] = max(0, db["users"][uname].get("balance", 0) + amt)
-        elif act == 'create_game':
-            qty = safe_int(data.get("qty"), 1)
-            dur = safe_int(data.get("dur"), 1)
-            unit = data.get("unit")
-            mults = {"hours": 3600000, "days": 86400000}
-            for _ in range(qty):
-                nk = generate_game_key_15()
-                db.setdefault("game_keys", {})[nk] = {"exp": "pending" if unit != "permanent" else "permanent", "maxDevices": 1, "devices": [], "status": "active"}
-                if unit != "permanent": db["game_keys"][nk]["durationMs"] = dur * mults.get(unit, 86400000)
-        elif act == 'del_game':
-            db.get("game_keys", {}).pop(data.get("key"), None)
-        elif act == 'add_tg':
+        if act == 'add_tg':
             val = data.get("val")
             if val and val not in db.setdefault("settings", {}).setdefault("tg_admins", []): db["settings"]["tg_admins"].append(val)
         elif act == 'del_tg':
@@ -1259,21 +1189,7 @@ def telegram_mini_app():
                 </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
             </div>
             
-            <div class="section-title">QUẢN LÝ MỞ RỘNG (MỚI)</div>
-            <div class="select-btn" onclick="navTo('screen-admin-users'); loadExtraData();">
-                <div class="select-btn-left">
-                    <div class="icon-box" style="background:rgba(51, 102, 255, 0.15); color:#3366ff;"><i class="fas fa-users"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Quản Lý Users</div><div style="font-size: 12px; color: #8892b0;">Xem số dư, Bơm tiền trực tiếp</div></div>
-                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
-            </div>
-            
-            <div class="select-btn" onclick="navTo('screen-admin-game'); loadExtraData();">
-                <div class="select-btn-left">
-                    <div class="icon-box" style="background:rgba(255, 102, 0, 0.15); color:#ff6600;"><i class="fas fa-gamepad"></i></div>
-                    <div><div style="font-size: 15px; font-weight: 800; color:#fff;">Quản Lý Game Keys</div><div style="font-size: 12px; color: #8892b0;">Tạo và Quản lý Key 15 Ký tự</div></div>
-                </div><i class="fas fa-chevron-right" style="color: #8892b0;"></i>
-            </div>
-
+            <div class="section-title">QUẢN LÝ MỞ RỘNG</div>
             <div class="select-btn" onclick="navTo('screen-admin-firewall'); loadExtraData();">
                 <div class="select-btn-left">
                     <div class="icon-box" style="background:rgba(255, 51, 102, 0.15); color:#ff3366;"><i class="fas fa-shield-virus"></i></div>
@@ -1352,25 +1268,6 @@ def telegram_mini_app():
             </div>
         </div>
         
-        <div id="screen-admin-users" class="screen">
-            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
-            <h3 style="margin-top:20px; color:#3366ff; font-weight:900;"><i class="fas fa-users"></i> QUẢN LÝ USERS</h3>
-            <div id="admin-user-list" style="padding-bottom:50px;"></div>
-        </div>
-
-        <div id="screen-admin-game" class="screen">
-            <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
-            <h3 style="margin-top:20px; color:#ff6600; font-weight:900;"><i class="fas fa-gamepad"></i> TẠO GAME KEYS</h3>
-            <div class="card">
-                <input type="number" id="gk-qty" class="inp" value="1" placeholder="Số lượng">
-                <input type="number" id="gk-dur" class="inp" placeholder="Thời gian">
-                <select id="gk-unit" class="inp"><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="permanent">Vĩnh Viễn</option></select>
-                <button class="btn-neon" style="background:linear-gradient(90deg, #ffcc00, #ff6600);" onclick="createGameKeys()">TẠO KEY GAME 15 KÝ TỰ</button>
-            </div>
-            <h5 style="color:#ffcc00;">KHO KEY GAME:</h5>
-            <div id="admin-game-list" style="padding-bottom:50px;"></div>
-        </div>
-
         <div id="screen-admin-firewall" class="screen">
             <button class="btn-back" onclick="navTo('screen-admin-main')"><i class="fas fa-arrow-left"></i> Quay lại</button>
             <h3 style="margin-top:20px; color:#ff3366; font-weight:900;"><i class="fas fa-shield-virus"></i> BẢO MẬT HỆ THỐNG</h3>
@@ -1607,33 +1504,15 @@ def telegram_mini_app():
                 api('/api/tg_admin/system_actions', {{action: 'maintenance', duration: d, unit: u}}, () => {{ Swal.fire({{title: 'Thành công', text: 'Đã cập nhật trạng thái bảo trì', icon: 'success', background: '#1a1c26', color: '#fff'}}); }});
             }}
             
-            /* THÊM MỚI: CÁC JS LOGIC CHO SCREEN MỞ RỘNG (CHUYỂN TỪ WEB ADMIN) */
             function loadExtraData() {{
                 api('/api/tg_admin/sys_data', {{}}, r => {{
                     if(r.status==='success') {{
-                        let uH = r.users.map(u => `<div class="card p-3 mb-2" style="background:rgba(0,0,0,0.4); border:1px solid #3366ff;"><strong style="color:#00ffcc; font-size:15px;">${{u.username}}</strong> | Dư: ${{u.balance}}đ<div class="d-flex mt-2"><input type="number" id="amt_${{u.username}}" class="inp m-0" style="padding:8px; border-radius:5px;" placeholder="± Tiền..."><button class="btn-neon ms-2" style="padding:8px; border-radius:5px; background:#3366ff;" onclick="api('/api/tg_admin/action_extra', {{action:'add_balance', username:'${{u.username}}', amount: document.getElementById('amt_${{u.username}}').value}}, ()=>loadExtraData())">CỘNG/TRỪ</button></div></div>`).join('');
-                        let elU = document.getElementById('admin-user-list'); if(elU) elU.innerHTML = uH || '<p class="text-center">Chưa có user nào.</p>';
-                        
-                        let gH = r.game_keys.map(k => `<div class="card p-3 mb-2" style="background:rgba(0,0,0,0.4); border:1px solid #ffcc00;"><strong style="color:#ffcc00; font-family:monospace; font-size:15px;" onclick="copyT('${{k.key}}')">${{k.key}}</strong><div style="font-size:11px; margin-top:5px; color:#8892b0;">Hạn: <span style="color:#fff;">${{k.exp}}</span> | Trạng thái: ${{k.status}}</div><div class="d-flex gap-2 mt-2"><button class="action-btn" style="background:rgba(239,68,68,0.2); color:#ef4444;" onclick="api('/api/tg_admin/action_extra', {{action:'ban_game', key:'${{k.key}}'}}, ()=>loadExtraData())">Trảm</button><button class="action-btn" style="background:rgba(100,100,100,0.2); color:#fff;" onclick="if(confirm('Xoá?')) api('/api/tg_admin/action_extra', {{action:'del_game', key:'${{k.key}}'}}, ()=>loadExtraData())"><i class="fas fa-trash"></i> Xoá</button></div></div>`).join('');
-                        let elG = document.getElementById('admin-game-list'); if(elG) elG.innerHTML = gH || '<p class="text-center">Chưa có key game nào.</p>';
-                        
                         let tH = r.tg_admins.map(t => `<div class="d-flex justify-content-between align-items-center mb-2" style="border-bottom:1px dashed #333; padding-bottom:10px;"><span style="color:#00ffcc; font-weight:bold;">ID: ${{t}}</span> <button class="action-btn" style="background:rgba(239,68,68,0.2); color:#ef4444;" onclick="api('/api/tg_admin/action_extra', {{action:'del_tg', val:'${{t}}'}}, ()=>loadExtraData())">Tước quyền</button></div>`).join('');
                         let elT = document.getElementById('tg-admin-list'); if(elT) elT.innerHTML = tH;
                         
                         let iH = r.banned_ips.map(i => `<div class="d-flex justify-content-between align-items-center mb-2" style="border-bottom:1px dashed #333; padding-bottom:10px;"><span style="color:#ff3366; font-family:monospace;">${{i}}</span> <button class="action-btn" style="background:rgba(34,197,94,0.2); color:#22c55e;" onclick="api('/api/tg_admin/action_extra', {{action:'del_ip', val:'${{i}}'}}, ()=>loadExtraData())">Gỡ Block</button></div>`).join('');
                         let elI = document.getElementById('ip-ban-list'); if(elI) elI.innerHTML = iH || '<p class="text-center text-muted">Không có IP nào bị khoá.</p>';
                     }}
-                }});
-            }}
-            
-            function createGameKeys() {{
-                let q = document.getElementById('gk-qty').value;
-                let d = document.getElementById('gk-dur').value;
-                let u = document.getElementById('gk-unit').value;
-                if(!q) return;
-                api('/api/tg_admin/action_extra', {{action:'create_game', qty: q, dur: d, unit: u}}, () => {{
-                    Swal.fire('Thành công', 'Đã sản xuất Key Game!', 'success');
-                    loadExtraData();
                 }});
             }}
             
@@ -1701,19 +1580,10 @@ def admin_dashboard():
         
         with db_lock:
             keys_items = list(db.get("keys", {}).items())
-            users_items = list(db.get("users", {}).items())
             banned_ips = list(db.get("banned_ips", []))
             tg_admins = list(db.get("settings", {}).get("tg_admins", [TELEGRAM_CHAT_ID]))
 
         now_ms = int(time.time() * 1000)
-
-        users_html = ""
-        for uname, udata in users_items:
-            if udata.get("role") == "admin": continue
-            bal = udata.get("balance", 0)
-            u_keys = "<br>".join([f"🔑 {escape(pk.get('key')[:8])}..." for pk in udata.get("purchased_keys", [])]) or "<span class='text-muted'>Chưa có</span>"
-            u_ips = "<br>".join([escape(ip) for ip in udata.get("ips", [])]) or "<span class='text-muted'>Trống</span>"
-            users_html += f'''<tr class="text-nowrap"><td><strong class="text-warning">{escape(uname)}</strong></td><td><span class="badge bg-success">{bal:,}đ</span></td><td style="font-size:11px; text-align:left;">{u_keys}</td><td style="font-size:11px; text-align:left; color:#ffcc00;">{u_ips}</td><td><form action="/admin/add_balance" method="POST" class="d-flex gap-1 justify-content-center m-0">{csrf_input}<input type="hidden" name="username" value="{escape(uname)}"><input type="number" name="amount" class="form-control form-control-sm bg-dark text-light border-secondary px-1 text-center m-0" style="width:70px;font-size:12px;height:28px;" placeholder="± Tiền" required><button type="submit" class="btn btn-sm btn-primary fw-bold" style="font-size:11px;height:28px; border-radius:6px;">CỘNG</button></form></td></tr>'''
 
         keys_html = ''
         for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
@@ -1752,20 +1622,13 @@ def admin_dashboard():
             <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
                 <h3 class="m-0 text-neon fw-bold"><i class="fas fa-shield-alt"></i> LVT SECURE ADMIN</h3>
                 <div>
-                    <a href="/admin/hack_game" class="btn btn-warning btn-sm fw-bold rounded-pill px-3 me-2">🎮 HACK GAME</a>
                     <a href="/logout" class="btn btn-outline-danger btn-sm fw-bold rounded-pill px-3">Thoát</a>
                 </div>
             </div>
             <div class="row g-4">
-                <div class="col-lg-7">
-                    <div class="card p-4 h-100" style="border-color:rgba(51,102,255,0.4);">
-                        <h5 style="color:#3366ff; margin-bottom:20px;"><i class="fas fa-users"></i> DANH SÁCH USER</h5>
-                        <div class="table-container table-responsive"><table class="table table-dark table-hover table-sm align-middle mb-0 text-center text-nowrap"><thead class="table-active"><tr><th>Tài Khoản</th><th>Số Dư</th><th>Keys Sỡ Hữu</th><th>IP Đăng Nhập</th><th>Cộng/Trừ Tiền</th></tr></thead><tbody>{users_html}</tbody></table></div>
-                    </div>
-                </div>
-                <div class="col-lg-5">
+                <div class="col-lg-12">
                     <div class="row g-4 h-100">
-                        <div class="col-md-12">
+                        <div class="col-md-4">
                             <div class="card p-4 h-100" style="border-color:rgba(0,255,204,0.4);">
                                 <h5 style="color:#00ffcc; margin-bottom:15px;"><i class="fab fa-telegram"></i> CẤP QUYỀN TG ADMIN THAY BẠN</h5>
                                 <form action="/admin/add_tg_admin" method="POST" class="d-flex gap-2 mb-3">{csrf_input}
@@ -1775,7 +1638,7 @@ def admin_dashboard():
                                 <ul class="list-group list-group-flush" style="max-height:120px;overflow-y:auto; border: 1px solid rgba(255,255,255,0.05); border-radius:8px; padding:5px;">{tg_admin_rows}</ul>
                             </div>
                         </div>
-                        <div class="col-md-12">
+                        <div class="col-md-4">
                             <div class="card p-4 h-100" style="border-color:rgba(189,0,255,0.4);">
                                 <h5 style="color:#bd00ff; margin-bottom:15px;"><i class="fas fa-key"></i> TẠO KEY MỚI</h5>
                                 <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
@@ -1788,7 +1651,7 @@ def admin_dashboard():
                                 </form>
                             </div>
                         </div>
-                        <div class="col-md-12">
+                        <div class="col-md-4">
                             <div class="card p-4 h-100" style="border-color:rgba(255,51,102,0.4);">
                                 <h5 class="text-danger margin-bottom:15px;"><i class="fas fa-shield-virus"></i> FIREWALL BANS IP</h5>
                                 <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">{csrf_input}<input type="text" name="ip" class="form-control form-control-sm m-0" placeholder="Nhập IP..." required><button type="submit" class="btn btn-sm btn-danger fw-bold px-3 rounded-pill">Chặn</button></form>
@@ -1860,21 +1723,6 @@ def del_tg_admin(tg_id):
         admins = db.setdefault("settings", {}).setdefault("tg_admins", [TELEGRAM_CHAT_ID])
         if tg_id in admins:
             admins.remove(tg_id)
-            save_db(db)
-    return redirect('/admin')
-
-@app.route('/admin/add_balance', methods=['POST'])
-def add_balance():
-    if session.get('role') != 'admin': return redirect('/login')
-    username = request.form.get('username')
-    amt = safe_int(request.form.get('amount'))
-    db = load_db()
-    with db_lock:
-        if username in db.get("users", {}):
-            db["users"][username]["balance"] += amt
-            if db["users"][username]["balance"] < 0: db["users"][username]["balance"] = 0
-            if amt > 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa nạp cho bạn +{amt:,}đ")
-            elif amt < 0: db["users"][username].setdefault("notices", []).append(f"Admin vừa trừ của bạn {amt:,}đ")
             save_db(db)
     return redirect('/admin')
 
@@ -2019,201 +1867,6 @@ def key_actions(action, key):
 def logout():
     session.clear()
     return redirect('/admin_login')
-
-# ========================================================
-# MODULE HACK GAME (QUẢN LÝ KEY 15 KÝ TỰ BẢO MẬT)
-# ========================================================
-@app.route('/admin/hack_game')
-def admin_hack_game():
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    db = load_db()
-    
-    # Lấy Token CSRF của phiên hiện tại
-    csrf_input = f'<input type="hidden" name="csrf_token" value="{session.get("csrf_token", "")}">'
-    
-    with db_lock:
-        game_keys = list(db.get("game_keys", {}).items())
-
-    now_ms = int(time.time() * 1000)
-    keys_html = ''
-    
-    for k, data in sorted(game_keys, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
-        st = data.get('status', 'active')
-        is_banned = (st == 'banned')
-        status_badge = '<span class="badge bg-success">Hoạt động</span>' if not is_banned else '<span class="badge bg-danger text-light border border-light">BỊ KHÓA</span>'
-        
-        is_expired = False
-        if data.get('exp') == 'pending': 
-            exp_text = '<span class="text-info fw-bold">Chưa kích hoạt</span>'
-        elif data.get('exp') == 'permanent': 
-            exp_text = '<span class="text-success fw-bold">Vĩnh Viễn</span>'
-        else:
-            is_expired = now_ms > data.get('exp', 0)
-            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-light"}">{time.strftime("%d/%m/%Y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
-        
-        if is_expired and not is_banned: status_badge = '<span class="badge bg-secondary">HẾT HẠN</span>'
-        
-        safe_k = escape(str(k))
-        dev_count = len(data.get('devices', []))
-        max_dev = data.get('maxDevices', 1)
-        
-        keys_html += f'''
-        <tr class="align-middle text-nowrap">
-            <td>
-                <strong class="text-warning fs-6" style="cursor:pointer;" onclick="copyKey('{safe_k}')" title="Bấm để copy">{safe_k}</strong><br>
-                {status_badge}
-            </td>
-            <td>{exp_text}</td>
-            <td><span class="badge bg-info text-dark fs-6">{dev_count} / {max_dev}</span></td>
-            <td>
-                <div class="d-flex gap-1 justify-content-center">
-                    <button class="btn btn-sm btn-info fw-bold text-dark rounded-pill" onclick="openGameTimeModal('{safe_k}')">⏳ Thêm Giờ</button>
-                    <button class="btn btn-sm btn-warning fw-bold text-dark rounded-pill" onclick="openDeviceModal('{safe_k}')">💻 Thêm Máy</button>
-                    <a href="/admin/hack_game/action/{"unban" if is_banned else "ban"}/{safe_k}" class="btn btn-sm btn-{"light" if is_banned else "danger"} fw-bold rounded-pill">{"Mở Khóa" if is_banned else "Band Key"}</a>
-                    <a href="/admin/hack_game/action/delete/{safe_k}" class="btn btn-sm btn-dark border-secondary rounded-pill" onclick="return confirm('Xóa vĩnh viễn Key Game này?')">🗑️</a>
-                </div>
-            </td>
-        </tr>'''
-
-    return f'''
-    <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>QUẢN LÝ HACK GAME</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <style>{CSS_GLASS}</style></head><body class="p-4">
-    <div class="container">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h3 class="text-neon fw-bold">🎮 BẢNG ĐIỀU KHIỂN HACK GAME</h3>
-            <a href="/admin" class="btn btn-outline-light rounded-pill">⬅ Trở về Admin Lõi</a>
-        </div>
-        
-        <div class="card p-4 mb-4" style="border-color:#ffcc00; background:rgba(17,17,26,0.8);">
-            <h5 class="text-warning fw-bold mb-3">🚀 TẠO KEY HACK GAME (15 KÍ TỰ ĐẶC BIỆT)</h5>
-            <form action="/admin/hack_game/create" method="POST" class="row g-3">{csrf_input}
-                <div class="col-md-3">
-                    <input type="number" name="quantity" class="form-control" value="1" placeholder="Số lượng key cần tạo" required>
-                </div>
-                <div class="col-md-3">
-                    <input type="number" name="time_val" class="form-control" placeholder="Nhập thời gian" required>
-                </div>
-                <div class="col-md-3">
-                    <select name="time_unit" class="form-select bg-dark text-light border-secondary">
-                        <option value="minutes">Phút</option>
-                        <option value="hours">Giờ</option>
-                        <option value="days" selected>Ngày</option>
-                        <option value="months">Tháng</option>
-                        <option value="years">Năm</option>
-                        <option value="permanent">Vĩnh Viễn</option>
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <button type="submit" class="btn w-100 fw-bold" style="background:#ffcc00; color:#000;">TẠO KEY NGAY</button>
-                </div>
-            </form>
-        </div>
-
-        <div class="card p-4" style="border-color:#00ffcc; background:rgba(17,17,26,0.8);">
-            <h5 class="text-info fw-bold mb-3">🔑 DANH SÁCH KEY GAME HIỆN TẠI</h5>
-            <div class="table-responsive" style="max-height:500px; overflow-y:auto;">
-                <table class="table table-dark table-hover text-center">
-                    <thead class="table-active"><tr><th>Mã Key Hack</th><th>Hạn Sử Dụng</th><th>Thiết Bị (Mặc định 1)</th><th>Bảng Điều Khiển Key</th></tr></thead>
-                    <tbody>{keys_html}</tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal fade" id="timeModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #00ffcc;"><form action="/admin/hack_game/add_time" method="POST">{csrf_input}<div class="modal-body text-center p-4"><input type="hidden" name="key" id="timeKeyInput"><p class="text-white mb-2">Thêm thời gian cho Key:</p><h6 id="timeKeyDisplay" class="text-warning mb-3"></h6><input type="number" name="t_val" class="form-control mb-2" placeholder="Giá trị" required><select name="t_unit" class="form-select"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option><option value="years">Năm</option></select></div><div class="modal-footer p-2"><button type="submit" class="btn btn-info w-100 fw-bold rounded-pill">CỘNG THÊM</button></div></form></div></div></div>
-
-    <div class="modal fade" id="deviceModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content" style="background:rgba(17,17,26,0.95);border:1px solid #ffcc00;"><form action="/admin/hack_game/add_device" method="POST">{csrf_input}<div class="modal-body text-center p-4"><input type="hidden" name="key" id="devKeyInput"><p class="text-white mb-2">Mở rộng giới hạn máy cho Key:</p><h6 id="devKeyDisplay" class="text-info mb-3"></h6><input type="number" name="dev_add" class="form-control" value="1" placeholder="Thêm bao nhiêu máy?" required></div><div class="modal-footer p-2"><button type="submit" class="btn btn-warning w-100 fw-bold rounded-pill">CẤP PHÉP</button></div></form></div></div></div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        function copyKey(t){{ navigator.clipboard.writeText(t); Swal.fire({{toast:true,position:'top',icon:'success',title:'Đã Copy!',showConfirmButton:false,timer:1000,background:'#111',color:'#00ffcc'}}); }}
-        function openGameTimeModal(key) {{ document.getElementById('timeKeyInput').value = key; document.getElementById('timeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('timeModal')).show(); }}
-        function openDeviceModal(key) {{ document.getElementById('devKeyInput').value = key; document.getElementById('devKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('deviceModal')).show(); }}
-    </script>
-    </body></html>'''
-
-@app.route('/admin/hack_game/create', methods=['POST'])
-def game_key_create():
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    qty = safe_int(request.form.get('quantity'), 1)
-    t_val = safe_int(request.form.get('time_val'), 0)
-    t_unit = request.form.get('time_unit')
-    
-    multipliers = {"minutes": 60000, "hours": 3600000, "days": 86400000, "months": 2592000000, "years": 31536000000}
-    
-    db = load_db()
-    with db_lock:
-        for _ in range(qty):
-            new_key = generate_game_key_15()
-            key_data = {
-                "exp": "pending",
-                "maxDevices": 1, 
-                "devices": [],
-                "status": "active"
-            }
-            if t_unit == 'permanent': 
-                key_data["exp"] = "permanent"
-            else:
-                key_data["durationMs"] = t_val * multipliers.get(t_unit, 0)
-            
-            db.setdefault("game_keys", {})[new_key] = key_data
-        save_db(db)
-    return redirect('/admin/hack_game')
-
-@app.route('/admin/hack_game/add_time', methods=['POST'])
-def game_key_add_time():
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    key = request.form.get('key', '')
-    t_val = safe_int(request.form.get('t_val'), 0)
-    t_unit = request.form.get('t_unit')
-    
-    multipliers = {"minutes": 60000, "hours": 3600000, "days": 86400000, "months": 2592000000, "years": 31536000000}
-    ms_to_add = t_val * multipliers.get(t_unit, 0)
-    
-    db = load_db()
-    with db_lock:
-        if key in db.get("game_keys", {}):
-            k_data = db["game_keys"][key]
-            if k_data.get("exp") != "permanent":
-                if k_data.get("exp") == "pending":
-                    k_data["durationMs"] = k_data.get("durationMs", 0) + ms_to_add
-                else:
-                    now = int(time.time() * 1000)
-                    curr_exp = max(k_data.get("exp", now), now)
-                    k_data["exp"] = curr_exp + ms_to_add
-            save_db(db)
-    return redirect('/admin/hack_game')
-
-@app.route('/admin/hack_game/add_device', methods=['POST'])
-def game_key_add_device():
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    key = request.form.get('key', '')
-    dev_add = safe_int(request.form.get('dev_add'), 1)
-    
-    db = load_db()
-    with db_lock:
-        if key in db.get("game_keys", {}):
-            db["game_keys"][key]["maxDevices"] = db["game_keys"][key].get("maxDevices", 1) + dev_add
-            save_db(db)
-    return redirect('/admin/hack_game')
-
-@app.route('/admin/hack_game/action/<action>/<key>')
-def game_key_actions(action, key):
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    db = load_db()
-    with db_lock:
-        if key in db.get("game_keys", {}):
-            if action == 'ban': 
-                db["game_keys"][key]["status"] = "banned"
-            elif action == 'unban': 
-                db["game_keys"][key]["status"] = "active"
-            elif action == 'delete': 
-                del db["game_keys"][key]
-            save_db(db)
-    return redirect('/admin/hack_game')
 
 # [VÁ LỖI BẢO MẬT] Đảm bảo Flask Secret Key được Load ngay khi chạy ứng dụng
 try:
