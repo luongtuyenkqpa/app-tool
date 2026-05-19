@@ -65,9 +65,10 @@ def telegram_polling():
                         
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để đăng nhập/đăng ký cấu hình Proxy & Script:"
+                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
                             keyboard = {"inline_keyboard": [
-                                [{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "url": f"{WEB_URL}/"}]
+                                # [FIX] Dùng web_app url để tương thích với Telegram Mini App
+                                [{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]
                             ]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
                         
@@ -97,6 +98,11 @@ threading.Thread(target=keep_awake, daemon=True).start()
 @app.route('/ping')
 def ping_server():
     return "OK", 200
+
+# [FIX] Tránh lỗi 404 cho các nút bấm Telegram Mini App cũ đang bị kẹt
+@app.route('/telegram_mini_app')
+def old_mini_app_redirect():
+    return redirect('/')
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -177,7 +183,7 @@ def load_db():
                 data.setdefault("admin_logs", [])
                 data.setdefault("security_alerts", []) 
                 data.setdefault("settings", {})
-                data.setdefault("game_keys", {})
+                data.setdefault("game_keys", {}) 
                 data.setdefault("tg_auth_ids", {str(TELEGRAM_CHAT_ID): {"exp": "permanent", "banned_until": 0}}) 
                 
                 if "secret_key" not in data["settings"]: data["settings"]["secret_key"] = secrets.token_hex(32)
@@ -230,7 +236,6 @@ def save_db(db=None):
             send_telegram_alert(f"LỖI GHI FILE DB: {str(e)}")
             if os.path.exists(temp_file): os.remove(temp_file)
 
-# Auto Key 15 Ký Tự Random
 def generate_proxy_key():
     return ''.join(secrets.choice(string.ascii_lowercase) for _ in range(15))
 
@@ -335,7 +340,7 @@ def user_login():
         session['role'] = u_data.get('role', 'user')
         session['csrf_token'] = secrets.token_hex(16)
         if session['role'] == 'admin':
-            return redirect('/admin') # Nếu là admin, đẩy thẳng vào C-Panel
+            return redirect('/admin') 
         return redirect('/')
     return swal_back("Từ chối", "Sai tài khoản hoặc mật khẩu!", "error")
 
@@ -354,17 +359,6 @@ def serve_custom_script():
     resp = make_response(script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    return resp
-
-# ========================================================
-# CHỨC NĂNG TẢI CHỨNG CHỈ (DÀNH CHO CLIENT)
-# ========================================================
-@app.route('/download-ca')
-def download_ca():
-    dummy_ca = "-----BEGIN CERTIFICATE-----\nMIIDzTCCArWgAwIBAgIQC... (Tự chèn CA của bạn ở Mitmproxy)\n-----END CERTIFICATE-----"
-    resp = make_response(dummy_ca)
-    resp.headers['Content-Type'] = 'application/x-pem-file'
-    resp.headers['Content-Disposition'] = 'attachment; filename="OLM_PROXY_CA.pem"'
     return resp
 
 # ========================================================
@@ -394,11 +388,10 @@ def generate_pac_file(key):
         return resp
 
 # ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG (CÓ CHỨC NĂNG ĐĂNG NHẬP)
+# GIAO DIỆN WEB NGƯỜI DÙNG (THÊM THIẾT BỊ VÀ EXP ĐẾM NGƯỢC)
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
-    # NẾU CHƯA ĐĂNG NHẬP -> HIỆN BẢNG CHÀO MỪNG VÀ ĐĂNG NHẬP
     if not session.get('username'):
         html = f"""
         <!DOCTYPE html>
@@ -461,7 +454,6 @@ def user_proxy_portal():
         """
         return render_template_string_safe(html)
 
-    # NẾU ĐÃ ĐĂNG NHẬP -> HIỆN BẢNG PROXY
     username = session.get('username')
     html = f"""
     <!DOCTYPE html>
@@ -479,7 +471,7 @@ def user_proxy_portal():
             .step-title {{ color: #00ffcc; font-weight: 900; margin-top: 15px; margin-bottom: 5px; font-size: 15px; border-bottom: 1px solid rgba(0,255,204,0.3); padding-bottom: 5px; text-transform:uppercase; }}
             .step-text {{ font-size: 13px; color: #ccc; line-height: 1.6; margin: 8px 0; }}
             .highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 16px; user-select: all; padding: 6px; background: rgba(0,255,204,0.1); border-radius: 5px; word-break: break-all; display: inline-block; width: 100%; box-sizing: border-box; }}
-            .cert-btn {{ background: linear-gradient(90deg, #a855f7, #6366f1); color: #fff; text-decoration: none; padding: 12px; border-radius: 8px; display: block; text-align: center; font-weight: 900; margin-top: 20px; transition: 0.3s; text-transform:uppercase; border:none; width:100%; cursor:pointer; }}
+            .cert-btn {{ background: linear-gradient(90deg, #a855f7, #6366f1); color: #fff; padding: 12px; border-radius: 8px; display: block; text-align: center; font-weight: 900; margin-top: 20px; transition: 0.3s; text-transform:uppercase; border:none; width:100%; cursor:pointer; }}
             .cert-btn:hover {{ transform: scale(1.02); box-shadow: 0 0 15px rgba(168,85,247,0.5); }}
             .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}
             .inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}
@@ -519,7 +511,18 @@ def user_proxy_portal():
                     <p style="font-size:11px; color:#ff3366; margin-top:5px; margin-bottom:0;"><i>* Copy chính xác đường link trên để dán vào cài đặt Wifi.</i></p>
                 </div>
                 
-                <button class="cert-btn" onclick="window.location.href='/download-ca'"><i class="fas fa-shield-alt"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</button>
+                <div style="display:flex; gap:10px; margin-bottom:12px; margin-top:15px;">
+                    <div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
+                        <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị:</div>
+                        <div id="res-dev" class="highlight" style="font-size:14px; color:#fff; background:none; padding:0;"></div>
+                    </div>
+                    <div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
+                        <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-clock"></i> Hạn dùng (EXP):</div>
+                        <div id="res-exp" class="highlight" style="font-size:14px; color:#ff3366; background:none; padding:0;"></div>
+                    </div>
+                </div>
+                
+                <button class="cert-btn" onclick="downloadMitmCert()"><i class="fas fa-shield-alt"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</button>
 
                 <div style="margin-top:25px; border-top: 1px dashed #555; padding-top: 15px;">
                     <h4 style="color:#00ffcc; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT THÔNG MINH</h4>
@@ -528,12 +531,12 @@ def user_proxy_portal():
                     <p class="step-text"><b>Bước 1:</b> Mở Cài đặt Wifi, ấn vào chữ <b>(i)</b> cạnh Wifi đang dùng.</p>
                     <p class="step-text"><b>Bước 2:</b> Tìm phần <b>Proxy</b>, đổi thành <b>Tự động cấu hình (Auto-Config)</b> <i>(Tuyệt đối không chọn Thủ công)</i>.</p>
                     <p class="step-text"><b>Bước 3:</b> Dán đường link PAC màu xanh ở trên vào ô <b>Địa chỉ web PAC</b> và Lưu lại.</p>
-                    <p class="step-text"><b>Bước 4:</b> Bấm Tải Chứng Chỉ và cài đặt vào máy (Chọn VPN/Ứng dụng).</p>
+                    <p class="step-text"><b>Bước 4:</b> Bấm nút Tải Chứng Chỉ màu tím ở trên, bảng sẽ tự mở link tải cho bạn. Hãy cài đặt vào máy (Chọn VPN/Ứng dụng).</p>
 
                     <div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div>
                     <p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Tự động (Automatic)</b>.</p>
                     <p class="step-text"><b>Bước 2:</b> Dán đường link PAC màu xanh ở trên vào ô <b>URL</b> rồi Lưu.</p>
-                    <p class="step-text"><b>Bước 3:</b> Bấm Tải Chứng Chỉ ở trên. Safari báo đã tải hồ sơ.</p>
+                    <p class="step-text"><b>Bước 3:</b> Bấm nút Tải Chứng Chỉ. Safari báo đã tải hồ sơ.</p>
                     <p class="step-text"><b>Bước 4:</b> Cài đặt -> Đã tải về hồ sơ -> Cài đặt.</p>
                     <p class="step-text"><b>Bước 5 (Bắt buộc):</b> Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh.</p>
                 </div>
@@ -541,6 +544,8 @@ def user_proxy_portal():
         </div>
 
         <script>
+            let expInterval;
+
             function actKey() {{
                 let k = document.getElementById('k_inp').value.trim().toLowerCase();
                 if(!k) return Swal.fire('Lỗi','Vui lòng dán Key!','warning');
@@ -554,10 +559,51 @@ def user_proxy_portal():
                         
                         let pacUrl = window.location.origin + "/proxy_config/" + k + ".pac";
                         document.getElementById('res-pac').innerText = pacUrl;
+
+                        // [MỚI] Hiển thị Thiết bị
+                        document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs;
+
+                        // [MỚI] Đồng hồ đếm ngược EXP
+                        if(expInterval) clearInterval(expInterval);
+                        if (r.exp === 'permanent') {{
+                            document.getElementById('res-exp').innerText = 'Vĩnh Viễn';
+                        }} else {{
+                            expInterval = setInterval(() => {{
+                                let rem = r.exp - Date.now();
+                                if(rem <= 0) {{
+                                    document.getElementById('res-exp').innerText = 'HẾT HẠN';
+                                    clearInterval(expInterval);
+                                }} else {{
+                                    let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000);
+                                    document.getElementById('res-exp').innerText = `${{d}}d ${{h}}h ${{m}}m ${{s}}s`;
+                                }}
+                            }}, 1000);
+                        }}
                         
                         Swal.fire('Thành Công', 'Đã cấp link cấu hình. Chỉ OLM mới đi qua Proxy, lướt web khác bình thường!', 'success');
                     }} else Swal.fire('Lỗi', r.msg, 'error');
                 }}).catch(e=>Swal.fire('Lỗi', 'Không thể kết nối đến Máy chủ!', 'error'));
+            }}
+
+            // [FIX] Cửa sổ cảnh báo nhắc nhở cài đặt proxy trước khi tải CA
+            function downloadMitmCert() {{
+                Swal.fire({{
+                    title: 'LƯU Ý BẮT BUỘC',
+                    html: '<p style="font-size:14px; color:#ccc;">Bạn <b>PHẢI</b> cài đặt xong cấu hình Proxy vào Wi-Fi (như hướng dẫn bên dưới) thì nút tải chứng chỉ này mới hoạt động.</p><p style="font-size:14px; color:#ff3366;">Nếu chưa cài Proxy vào Wi-Fi, trang tải sẽ báo lỗi.</p>',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#a855f7',
+                    cancelButtonColor: '#333',
+                    confirmButtonText: 'Đã Cài Proxy - Tải Ngay',
+                    cancelButtonText: 'Hủy bỏ',
+                    background: '#1a1c26',
+                    color: '#fff'
+                }}).then((result) => {{
+                    if (result.isConfirmed) {{
+                        // Chuyển thẳng đến trang chứng chỉ chuẩn của Proxy
+                        window.open('http://mitm.it/cert/pem', '_blank');
+                    }}
+                }});
             }}
         </script>
     </body>
@@ -590,7 +636,16 @@ def proxy_activate():
             kd["activated"] = True
             save_db(db)
             
-    return jsonify({"status": "success", "host": kd["proxy_host"], "port": kd["proxy_port"], "olm": kd["bound_olm"]})
+    # [BỔ SUNG] Trả về thông tin thời gian exp và số lượng thiết bị
+    return jsonify({
+        "status": "success", 
+        "host": kd["proxy_host"], 
+        "port": kd["proxy_port"], 
+        "olm": kd["bound_olm"],
+        "exp": kd["exp"],
+        "devices": len(kd.get("devices", [])),
+        "max_devs": kd.get("maxDevices", 1)
+    })
 
 # ========================================================
 # GIAO DIỆN WEB ADMIN (PC C-PANEL) - TRANG TÁCH BIỆT HOÀN TOÀN
