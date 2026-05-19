@@ -63,8 +63,8 @@ def telegram_polling():
                         user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
+                            welcome = f"🌟 <b>HỆ THỐNG KÍCH HOẠT KEY TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Trang Web bên dưới để tiến hành kích hoạt Key của bạn:"
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT KEY", "web_app": {"url": f"{WEB_URL}/"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -155,7 +155,7 @@ def load_db():
                 if "secret_key" not in data["settings"]: data["settings"]["secret_key"] = secrets.token_hex(32)
                 if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "custom_script" not in data["settings"]: data["settings"]["custom_script"] = ""
-                if "ca_cert" not in data["settings"]: data["settings"]["ca_cert"] = ""
+                if "vm_loader_script" not in data["settings"]: data["settings"]["vm_loader_script"] = ""
                 if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 
                 if "admin" not in data["users"]:
@@ -167,8 +167,6 @@ def load_db():
                     data["keys"][k].setdefault("maxDevices", 1)
                     data["keys"][k].setdefault("bound_olm", "") 
                     data["keys"][k].setdefault("vip", False)
-                    data["keys"][k].setdefault("proxy_host", "")
-                    data["keys"][k].setdefault("proxy_port", 8080)
                     data["keys"][k].setdefault("ban_until", 0)
                     data["keys"][k].setdefault("status", "active")
 
@@ -218,6 +216,9 @@ threading.Thread(target=garbage_collector, daemon=True).start()
 
 def get_real_ip(): return request.remote_addr or "Unknown_IP"
 
+def log_admin_action(db, msg):
+    pass
+
 @app.before_request
 def firewall_and_csrf():
     try:
@@ -242,7 +243,7 @@ def add_security_headers(response):
     return response
 
 # ========================================================
-# ĐĂNG KÝ / ĐĂNG NHẬP NGƯỜI DÙNG
+# ĐĂNG KÝ / ĐĂNG NHẬP NGƯỜI DÙNG (GIỮ NGUYÊN BACKEND)
 # ========================================================
 @app.route('/register', methods=['POST'])
 def user_register():
@@ -307,8 +308,8 @@ def serve_custom_script():
             .then(r => r.json())
             .then(d => {{
                 if(d.banned) {{
-                    localStorage.removeItem('lvt_proxy_key'); // Xóa key lưu ẩn
-                    alert("⚠️ LVT HỆ THỐNG: " + d.reason);
+                    localStorage.removeItem('lvt_proxy_key');
+                    alert("⚠️ HỆ THỐNG: " + d.reason);
                     window.location.href = "https://google.com";
                 }}
             }}).catch(e => {{}});
@@ -319,155 +320,99 @@ def serve_custom_script():
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
-@app.route('/download-ca')
-def download_ca():
+@app.route('/download-loader')
+def download_loader():
     db = load_db()
-    ca_data = db.get("settings", {}).get("ca_cert", "")
-    if not ca_data.strip(): return "⚠️ Admin chưa nạp Chứng chỉ CA của Termux lên hệ thống! Vui lòng báo Admin nạp vào C-Panel.", 404
-    resp = make_response(ca_data)
-    resp.headers['Content-Type'] = 'application/x-x509-ca-cert'
-    resp.headers['Content-Disposition'] = 'attachment; filename="LVT_PROXY_CA.crt"'
+    loader_data = db.get("settings", {}).get("vm_loader_script", "")
+    if not loader_data.strip(): 
+        return "⚠️ Admin chưa nạp file Script Violentmonkey Loader lên hệ thống!", 404
+    resp = make_response(loader_data)
+    resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename="violentmonkey_loader.user.js"'
     return resp
 
 # ========================================================
-# [FIX] ĐỊNH TUYẾN PAC ÉP ĐÚNG IP, BỎ 127.0.0.1
-# ========================================================
-@app.route('/proxy_config/<key>.pac')
-def generate_pac_file(key):
-    db = load_db()
-    with db_lock:
-        kd = db.get("keys", {}).get(key)
-        now = int(time.time() * 1000)
-        if not kd or not kd.get("proxy_host"): return "Trạng thái Key không hợp lệ.", 403
-        if kd.get("status") == "banned":
-            ban_until = kd.get("ban_until", "permanent")
-            if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): return "Key đã bị khóa.", 403
-            
-        host = kd.get("proxy_host")
-        port = kd.get("proxy_port")
-        
-        # CHỈ TRẢ VỀ ĐÚNG IP HOST (VD: 192.168.1.2:8080) TRÁNH GÂY LÚ ANDROID
-        pac_script = f"""
-        function FindProxyForURL(url, host) {{
-            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn" || host === "mitm.it") {{
-                return "PROXY {host}:{port}";
-            }}
-            return "DIRECT";
-        }}
-        """
-        resp = make_response(pac_script)
-        resp.headers['Content-Type'] = 'application/x-ns-proxy-autoconfig'
-        return resp
-
-# ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG 
+# GIAO DIỆN WEB NGƯỜI DÙNG CHỈ CÒN ĐĂNG NHẬP / KÍCH HOẠT KEY
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
-    if not session.get('username'):
-        html = f"""
-        <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LVT - Chào mừng đến Proxy LVT</title><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}{CSS_GLASS}.inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 15px; text-align: center; font-weight:bold; box-sizing:border-box; }}.inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}.nav {{ display: flex; gap: 8px; margin-bottom: 20px; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 12px; }}.nav-btn {{ flex: 1; padding: 12px; text-align: center; border-radius: 10px; color: #8892b0; font-size: 13px; font-weight: 800; cursor: pointer; transition:0.3s; }}.nav-btn.act {{ background: #00ffcc; color: #000; box-shadow: 0 0 15px rgba(0,255,204,0.3); }}</style></head><body><div class="glass-panel" style="max-width: 450px; width: 100%;"><h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-globe"></i> CHÀO MỪNG BẠN ĐẾN PROXY CỦA CHÚNG TÔI</h2><p style="color:#889; font-size:13px; margin-bottom:25px; line-height:1.5;">Hệ thống định tuyến thông minh. Vui lòng đăng nhập hoặc tạo tài khoản để sử dụng dịch vụ.</p><div class="nav"><div class="nav-btn act" onclick="switchT('login')">ĐĂNG NHẬP</div><div class="nav-btn" onclick="switchT('register')">ĐĂNG KÝ</div></div><div id="tab-login" style="display:block;"><form action="/login" method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tên tài khoản" required><input type="password" name="password" class="inp-neon" placeholder="Mật khẩu" required><button type="submit" class="btn-neon"><i class="fas fa-sign-in-alt"></i> VÀO HỆ THỐNG</button></form></div><div id="tab-register" style="display:none;"><form action="/register" method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tạo tên tài khoản mới" required><input type="password" name="password" class="inp-neon" placeholder="Tạo mật khẩu" required><button type="submit" class="btn-neon" style="background:linear-gradient(90deg, #a855f7, #6366f1);"><i class="fas fa-user-plus"></i> ĐĂNG KÝ NGAY</button></form></div></div><script>function switchT(t) {{ document.getElementById('tab-login').style.display = 'none'; document.getElementById('tab-register').style.display = 'none'; document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('act')); document.getElementById('tab-'+t).style.display = 'block'; if(t === 'login') document.querySelector('.nav-btn:nth-child(1)').classList.add('act'); else document.querySelector('.nav-btn:nth-child(2)').classList.add('act'); }}</script></body></html>
-        """
-        return render_template_string_safe(html)
-
-    username = session.get('username')
     html = f"""
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LVT - Kích Hoạt Định Tuyến</title><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}{CSS_GLASS}.info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #00ffcc; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; position: relative; }}.step-title {{ color: #00ffcc; font-weight: 900; margin-top: 15px; margin-bottom: 5px; font-size: 15px; border-bottom: 1px solid rgba(0,255,204,0.3); padding-bottom: 5px; text-transform:uppercase; }}.step-text {{ font-size: 13px; color: #ccc; line-height: 1.6; margin: 8px 0; }}.highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 14px; user-select: all; padding: 6px 10px; background: rgba(0,255,204,0.1); border-radius: 5px; word-break: break-all; display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box; }}.cert-btn {{ background: linear-gradient(90deg, #a855f7, #6366f1); color: #fff; text-decoration: none; padding: 12px; border-radius: 8px; display: block; text-align: center; font-weight: 900; margin-top: 20px; transition: 0.3s; text-transform:uppercase; border:none; width:100%; cursor:pointer; }}.cert-btn:hover {{ transform: scale(1.02); box-shadow: 0 0 15px rgba(168,85,247,0.5); }}.inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}.inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}.user-badge {{ position:absolute; top:20px; right:20px; background:rgba(0,255,204,0.1); color:#00ffcc; padding:8px 15px; border-radius:20px; font-weight:bold; font-size:12px; display:flex; align-items:center; gap:10px; border:1px solid rgba(0,255,204,0.3); z-index: 10; }}.logout-btn {{ color:#ff3366; text-decoration:none; background:rgba(255,51,102,0.1); padding:4px 10px; border-radius:15px; border:1px solid rgba(255,51,102,0.3); transition:0.3s; cursor:pointer; }}.logout-btn:hover {{ background:#ff3366; color:#fff; }}.btn-copy-pac {{ background: none; border: none; color: #fff; cursor: pointer; padding: 0 5px; }}</style></head><body><div class="user-badge"><i class="fas fa-user-circle"></i> {escape(username)} <a href="/user_logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Thoát Web</a></div><div class="glass-panel" style="max-width: 550px; width: 100%; margin-top: 50px;"><h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-route"></i> ĐỊNH TUYẾN PROXY LVT</h2><p style="color:#889; font-size:13px; margin-bottom:25px;">Chỉ can thiệp vào OLM. Các trang web khác hoạt động tốc độ cao bình thường.</p><input type="text" id="k_inp" class="inp-neon" placeholder="dán mã key 15 ký tự vào đây..."><button id="btn_activate" class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT</button><div id="proxy-result" class="info-box"><div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px dashed #333; padding-bottom: 10px; margin-bottom: 15px;"><h4 style="color:#00ffcc; margin:0; font-size:16px;">THÔNG TIN KẾT NỐI</h4><button class="logout-btn" style="border-radius: 8px; font-size: 11px;" onclick="logoutKey()"><i class="fas fa-eject"></i> Đăng xuất Key</button></div>
-                
-                <div style="margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;">
-                    <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-signal"></i> Trạng thái Proxy trên thiết bị:</div>
-                    <div id="res-proxy-status" style="font-size:14px; font-weight:bold; color:#f59e0b;"><i class="fas fa-spinner fa-spin"></i> Đang chờ cài đặt vào Wifi...</div>
-                </div>
-
-                <div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;">👤 Định danh OLM hợp lệ:</div><div class="highlight" style="color:#ffcc00; background:rgba(255,204,0,0.1); justify-content:center;" id="res-olm"></div></div><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-link"></i> Link Cấu Hình Tự Động (PAC URL):</div><div class="highlight" id="res-pac-container"></div><p style="font-size:11px; color:#ff3366; margin-top:5px; margin-bottom:0;"><i>* LƯU Ý: Nếu Web vẫn xoay "Đang chờ cài", hãy tắt bật lại Wifi điện thoại 1 lần.</i></p></div><div style="display:flex; gap:10px; margin-bottom:12px; margin-top:15px;"><div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị:</div><div id="res-dev" style="font-size:14px; font-weight:bold; color:#fff;"></div></div><div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-clock"></i> Hạn dùng (EXP):</div><div id="res-exp" style="font-size:14px; font-weight:bold; color:#ff3366;"></div></div></div><a href="/download-ca" class="cert-btn" download><i class="fas fa-shield-alt"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</a><div style="margin-top:25px; border-top: 1px dashed #555; padding-top: 15px;"><h4 style="color:#00ffcc; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT THÔNG MINH</h4><div class="step-title"><i class="fab fa-android"></i> DÀNH CHO ANDROID</div><p class="step-text"><b>Bước 1:</b> Mở Cài đặt Wifi, ấn vào chữ <b>(i)</b> cạnh Wifi đang dùng.</p><p class="step-text"><b>Bước 2:</b> Tìm phần <b>Proxy</b>, đổi thành <b>Tự động cấu hình (Auto-Config)</b>.</p><p class="step-text"><b>Bước 3:</b> Dán đường link PAC màu xanh ở trên vào ô <b>Địa chỉ web PAC / URL</b> và Lưu lại.</p><p class="step-text"><b>Bước 4:</b> Bấm tải Chứng Chỉ màu tím ở trên. Cài đặt vào máy (Cài đặt -> Chứng chỉ -> Chọn VPN và Ứng dụng).</p><div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div><p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Tự động (Automatic)</b>.</p><p class="step-text"><b>Bước 2:</b> Dán đường link PAC ở trên vào ô <b>URL</b> rồi Lưu.</p><p class="step-text"><b>Bước 3:</b> Bấm nút Tải Chứng Chỉ. Trình duyệt báo đã tải hồ sơ.</p><p class="step-text"><b>Bước 4:</b> Cài đặt -> Đã tải về hồ sơ -> Cài đặt.</p><p class="step-text"><b>Bước 5 (Quan Trọng):</b> Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh.</p></div></div></div>
-        
-        <script>
-            let expInterval;
-            let proxyChecker;
-
-            setInterval(function() {{ fetch('/api/check_ban_status', {{cache: 'no-store'}}).then(r => r.json()).then(d => {{ if(d.banned) {{ localStorage.removeItem('lvt_proxy_key'); alert("⚠️ HỆ THỐNG: " + d.reason); window.location.href = "https://google.com"; }} }}).catch(e => {{}}); }}, 10000); 
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LVT - Kích Hoạt Hệ Thống</title><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}{CSS_GLASS}.info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #00ffcc; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; }}.highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 14px; padding: 6px 10px; background: rgba(0,255,204,0.1); border-radius: 5px; word-break: break-all; display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box; margin-bottom: 10px; }}.inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}.inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}</style></head><body><div class="glass-panel" style="max-width: 500px; width: 100%;"><h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-key"></i> KÍCH HOẠT KEY HỆ THỐNG</h2><p style="color:#889; font-size:13px; margin-bottom:25px;">Vui lòng nhập mã Key gồm đúng 15 ký tự để nhận cấu hình & Script.</p><input type="text" id="k_inp" class="inp-neon" placeholder="dán mã key 15 ký tự vào đây..." maxlength="15"><button id="btn_activate" class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> KÍCH HOẠT NGAY</button><div id="proxy-result" class="info-box"><h4 style="color:#00ffcc; margin-top:0; margin-bottom:15px; font-size:16px; text-align:center; border-bottom:1px solid rgba(0,255,204,0.2); padding-bottom:10px;">THÔNG TIN KÍCH HOẠT</h4><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;">🔑 Mã Key đã dùng:</div><div class="highlight" id="res-key" style="color:#fff;"></div></div><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;">👤 Tài khoản OLM:</div><div class="highlight" style="color:#ffcc00;" id="res-olm"></div></div><div style="display:flex; gap:10px;"><div style="flex:1;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị:</div><div id="res-dev" class="highlight" style="justify-content:center;"></div></div><div style="flex:1;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-clock"></i> Hạn dùng:</div><div id="res-exp" class="highlight" style="color:#ff3366; justify-content:center;"></div></div></div><p style="font-size:12px; color:#00ffcc; text-align:center; margin-top:15px; margin-bottom:0;"><i class="fas fa-download"></i> Hệ thống đang tự động tải file Script Loader xuống...</p></div></div><script>
+        let expInterval;
+        function actKey() {
+            let k = document.getElementById('k_inp').value.trim().toLowerCase();
+            if(!k) { Swal.fire({title:'Lỗi', text:'Vui lòng nhập mã Key!', icon:'warning', background:'#11111A', color:'#fff'}); return; }
+            if(k.length !== 15) { Swal.fire({title:'Lỗi', text:'Mã hiệu lực phải có độ dài đúng 15 ký tự!', icon:'error', background:'#11111A', color:'#fff'}); return; }
             
-            window.onload = function() {{ let savedKey = localStorage.getItem('lvt_proxy_key'); if(savedKey) {{ document.getElementById('k_inp').value = savedKey; actKey(true); }} }}; 
+            document.getElementById('btn_activate').innerHTML = '<i class="fas fa-spinner fa-spin"></i> ĐANG XỬ LÝ...';
             
-            function copyPacUrl(url) {{ navigator.clipboard.writeText(url); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Link PAC!', showConfirmButton: false, timer: 1500, background: '#1a1c26', color: '#fff'}}); }} 
-            
-            function logoutKey() {{ localStorage.removeItem('lvt_proxy_key'); document.getElementById('k_inp').value = ''; document.getElementById('proxy-result').style.display = 'none'; if(expInterval) clearInterval(expInterval); if(proxyChecker) clearInterval(proxyChecker); Swal.fire({{toast: true, position: 'top-end', icon: 'info', title: 'Đã đăng xuất Key trên máy này!', showConfirmButton: false, timer: 2000, background: '#1a1c26', color: '#fff'}}); }} 
-            
-            function actKey(isAuto = false) {{ 
-                let k = document.getElementById('k_inp').value.trim().toLowerCase(); 
-                if(!k) {{ if(!isAuto) Swal.fire('Lỗi','Vui lòng dán Key!','warning'); return; }} 
-                if(!isAuto) {{ document.getElementById('btn_activate').innerHTML = '<i class="fas fa-spinner fa-spin"></i> ĐANG KIỂM TRA...'; }} 
-                
-                fetch('/api/proxy/activate', {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{key:k}}) }}).then(r=>r.json()).then(r=>{{ 
-                    document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT'; 
-                    if(r.status==='success') {{ 
-                        localStorage.setItem('lvt_proxy_key', k); 
-                        document.getElementById('proxy-result').style.display = 'block'; 
-                        document.getElementById('res-olm').innerText = r.olm; 
-                        let pacUrl = window.location.origin + "/proxy_config/" + k + ".pac"; 
-                        document.getElementById('res-pac-container').innerHTML = `<span style="word-break: break-all;">${{pacUrl}}</span> <button class="btn-copy-pac" onclick="copyPacUrl('${{pacUrl}}')" title="Copy"><i class="far fa-copy fa-lg"></i></button>`; 
-                        document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs; 
-                        
-                        if(expInterval) clearInterval(expInterval); 
-                        if (r.exp === 'permanent') {{ document.getElementById('res-exp').innerText = 'Vĩnh Viễn'; 
-                        }} else {{ 
-                            expInterval = setInterval(() => {{ let rem = r.exp - Date.now(); if(rem <= 0) {{ document.getElementById('res-exp').innerText = 'HẾT HẠN'; clearInterval(expInterval); localStorage.removeItem('lvt_proxy_key'); }} else {{ let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000); document.getElementById('res-exp').innerText = `${{d}}d ${{h}}h ${{m}}m ${{s}}s`; }} }}, 1000); 
-                        }} 
-
-                        // [SỬA LẠI PING BẰNG HTTPS + CHỐNG CACHE]
-                        if(proxyChecker) clearInterval(proxyChecker);
-                        document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang chờ cài đặt vào Wifi...';
-                        document.getElementById('res-proxy-status').style.color = '#f59e0b';
-                        
-                        proxyChecker = setInterval(() => {{
-                            // Thêm cache: "no-store" để tránh Chrome lấy cache giả
-                            fetch('https://olm.vn/lvt_proxy_ping', {{cache: 'no-store'}})
-                            .then(res => res.json())
-                            .then(data => {{
-                                if(data.status === 'ok') {{
-                                    clearInterval(proxyChecker);
-                                    document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-check-circle"></i> ĐÃ KẾT NỐI MẠNG RIÊNG TƯ';
-                                    document.getElementById('res-proxy-status').style.color = '#22c55e';
-                                    Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Tuyệt vời! Proxy đã được kết nối với Wifi của bạn.', showConfirmButton: false, timer: 4000, background: '#1a1c26', color: '#fff'}});
-                                }}
-                            }}).catch(err => {{}});
-                        }}, 3000);
-
-                        if(!isAuto) Swal.fire('Thành Công', 'Đã lưu Key. Hãy copy Link PAC dán vào cấu hình Wifi nhé!', 'success'); 
-                    }} else {{ 
-                        localStorage.removeItem('lvt_proxy_key'); 
-                        document.getElementById('proxy-result').style.display = 'none'; 
-                        if(!isAuto) Swal.fire('Lỗi', r.msg, 'error'); 
-                    }} 
-                }}).catch(e => {{ 
-                    document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT'; 
-                    if(!isAuto) Swal.fire('Lỗi', 'Không kết nối được tới server!', 'error'); 
-                }}); 
-            }}
-        </script>
-    </body>
-    </html>
+            fetch('/api/proxy/activate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:k}) }).then(r=>r.json()).then(r=>{
+                document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> KÍCH HOẠT NGAY';
+                if(r.status==='success') {
+                    Swal.fire({
+                        title: '💥 THÀNH CÔNG 💥',
+                        text: 'Bạn đã kích hoạt key thành công!',
+                        icon: 'success',
+                        background: '#11111A',
+                        color: '#fff',
+                        confirmButtonColor: '#00ffcc',
+                        timer: 3000
+                    });
+                    
+                    document.getElementById('proxy-result').style.display = 'block';
+                    document.getElementById('res-key').innerText = k;
+                    document.getElementById('res-olm').innerText = r.olm;
+                    document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs;
+                    
+                    if(expInterval) clearInterval(expInterval);
+                    if (r.exp === 'permanent') {
+                        document.getElementById('res-exp').innerText = 'Vĩnh Viễn';
+                    } else {
+                        expInterval = setInterval(() => {
+                            let rem = r.exp - Date.now();
+                            if(rem <= 0) {
+                                document.getElementById('res-exp').innerText = 'HẾT HẠN';
+                                clearInterval(expInterval);
+                            } else {
+                                let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000);
+                                document.getElementById('res-exp').innerText = `${d}d ${h}h ${m}m ${s}s`;
+                            }
+                        }, 1000);
+                    }
+                    
+                    // Kích hoạt tự động tải xuống file loader script
+                    setTimeout(() => { window.location.href = '/download-loader'; }, 1500);
+                } else {
+                    Swal.fire({title:'Thất bại', text: r.msg, icon:'error', background:'#11111A', color:'#fff'});
+                }
+            }).catch(e => {
+                document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> KÍCH HOẠT NGAY';
+                Swal.fire({title:'Lỗi', text:'Không kết nối được tới máy chủ!', icon:'error', background:'#11111A', color:'#fff'});
+            });
+        }
+    </script></body></html>
     """
     return render_template_string_safe(html)
 
 @app.route('/api/proxy/activate', methods=['POST'])
 def proxy_activate():
     data = request.json or {}
-    key = data.get("key", "").strip()
+    key = data.get("key", "").strip().lower()
+    if len(key) != 15:
+        return jsonify({"status": "error", "msg": "Độ dài Key không hợp lệ! Phải đúng 15 ký tự."})
+        
     client_ip = get_real_ip()
     db = load_db()
     now = int(time.time() * 1000)
     with db_lock:
-        if key not in db.get("keys", {}): return jsonify({"status": "error", "msg": "Mã Key không tồn tại hoặc sai định dạng!"})
+        if key not in db.get("keys", {}): return jsonify({"status": "error", "msg": "Mã Key không tồn tại hệ thống!"})
         kd = db["keys"][key]
         if kd.get("status") == "banned":
             ban_until = kd.get("ban_until", "permanent")
             if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): return jsonify({"status": "error", "msg": "Key của bạn đang bị Admin khóa!"})
             else: kd["status"] = "active"
         if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: return jsonify({"status": "error", "msg": "Key đã hết hạn sử dụng!"})
-        if not kd.get("bound_olm"): return jsonify({"status": "error", "msg": "Lỗi: Key chưa ghim Tên OLM. Không thể tạo Proxy!"})
-        if not kd.get("proxy_host"): return jsonify({"status": "error", "msg": "Lỗi: Admin chưa gán Host cho Key này!"})
-        kd["proxy_port"] = 8080
+        if not kd.get("bound_olm"): return jsonify({"status": "error", "msg": "Lỗi: Key chưa ghim Tên OLM. Không thể kích hoạt!"})
 
         devices = kd.setdefault("devices", [])
         if client_ip not in devices:
@@ -480,7 +425,7 @@ def proxy_activate():
             
         save_db(db)
             
-    return jsonify({"status": "success", "host": kd["proxy_host"], "port": kd["proxy_port"], "olm": kd["bound_olm"], "exp": kd["exp"], "devices": len(kd.get("devices", [])), "max_devs": kd.get("maxDevices", 1)})
+    return jsonify({"status": "success", "olm": kd["bound_olm"], "exp": kd["exp"], "devices": len(kd.get("devices", [])), "max_devs": kd.get("maxDevices", 1)})
 
 # ========================================================
 # GIAO DIỆN WEB ADMIN (PC C-PANEL)
@@ -527,12 +472,12 @@ def admin_dashboard():
         banned_ips = list(db.get("banned_ips", []))
         
         current_script_len = len(db.get("settings", {}).get("custom_script", ""))
-        if current_script_len > 10: script_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Script (Dung lượng: {current_script_len} bytes)</span>'
+        if current_script_len > 10: script_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Script ({current_script_len} bytes)</span>'
         else: script_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script nào được nạp!</span>'
 
-        current_ca_len = len(db.get("settings", {}).get("ca_cert", ""))
-        if current_ca_len > 10: ca_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Chứng Chỉ CA chuẩn (Dung lượng: {current_ca_len} bytes)</span>'
-        else: ca_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Chứng Chỉ CA!</span>'
+        current_loader_len = len(db.get("settings", {}).get("vm_loader_script", ""))
+        if current_loader_len > 10: loader_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Violenmonkey Loader ({current_loader_len} bytes)</span>'
+        else: loader_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa nạp Violentmonkey Loader!</span>'
 
     now_ms = int(time.time() * 1000)
     keys_html = ''
@@ -565,7 +510,6 @@ def admin_dashboard():
         
         safe_k = escape(str(k))
         bound_olm = escape(data.get('bound_olm', ''))
-        proxy_info = f"{data.get('proxy_host')}:{data.get('proxy_port')}" if data.get('proxy_host') else "Trống"
 
         keys_html += f'''<tr>
         <td>
@@ -574,14 +518,12 @@ def admin_dashboard():
         </td>
         <td>{exp_text}</td>
         <td class="text-start ps-4">
-            <div class="mb-1"><span class="text-muted small">OLM:</span> <span class="text-warning fw-bold">{bound_olm or '⚠️ Chưa ghim'}</span></div>
-            <div><span class="text-muted small">Host:</span> <span class="text-success font-monospace fw-bold">{proxy_info}</span></div>
+            <div class="mb-1"><span class="text-muted small">Định danh OLM:</span> <span class="text-warning fw-bold">{bound_olm or '⚠️ Chưa ghim'}</span></div>
         </td>
         <td><span class="badge bg-dark border border-secondary p-2 fs-6">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
         <td>
             <div class="d-flex flex-wrap gap-2 justify-content-center">
                 <button class="action-btn" onclick="openBindModal('{safe_k}', '{bound_olm}')" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
-                <button class="action-btn" onclick="openProxyModal('{safe_k}')" title="Gắn Proxy Host"><i class="fas fa-network-wired text-primary"></i></button>
                 <button class="action-btn" onclick="openAddTimeModal('{safe_k}')" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
                 {ban_btn}
                 <a href="/admin/action/delete/{safe_k}" class="action-btn text-muted" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
@@ -635,7 +577,7 @@ def admin_dashboard():
             <div class="row g-4 mb-4">
                 <div class="col-xl-4 col-lg-5">
                     <div class="card h-100" style="border-top: 4px solid #22c55e;">
-                        <div class="card-header text-success"><i class="fas fa-magic"></i> Tạo Key Proxy</div>
+                        <div class="card-header text-success"><i class="fas fa-magic"></i> Tạo Key Hệ Thống</div>
                         <div class="card-body">
                             <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Số lượng tạo</label><input type="number" name="quantity" class="form-control" value="1" required></div>
@@ -654,7 +596,7 @@ def admin_dashboard():
                         <div class="card-header text-info" style="color: #a855f7 !important;"><i class="fas fa-code"></i> Nạp Script Tiêm OLM</div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_script" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:12px;">Chỉ cần chọn file Script gốc (đuôi .js hoặc .txt) tải lên đây. Hệ thống sẽ tự động gộp file vào bộ xử lý lõi.</p>
+                                <p class="text-muted mb-3" style="font-size:12px;">Chọn file Script gốc (.js hoặc .txt) tải lên đây. Hệ thống tự động gộp file vào bộ xử lý core.</p>
                                 <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{script_status}</div>
                                 <input type="file" name="script_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
                                 <button type="submit" class="btn-primary-custom btn-purple mt-auto"><i class="fas fa-cloud-upload-alt"></i> Nạp File Script</button>
@@ -665,13 +607,13 @@ def admin_dashboard():
 
                 <div class="col-xl-4 col-lg-12">
                     <div class="card h-100" style="border-top: 4px solid #f59e0b;">
-                        <div class="card-header text-warning"><i class="fas fa-certificate"></i> Nạp File Chứng Chỉ CA</div>
+                        <div class="card-header text-warning"><i class="fas fa-file-code"></i> Nạp Script Violentmonkey Loader</div>
                         <div class="card-body d-flex flex-column">
-                            <form action="/admin/update_ca" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:12px;">Vui lòng copy file <code class="text-warning">mitmproxy-ca-cert.pem</code> từ điện thoại Termux ra, sau đó chọn File đó tải thẳng lên đây.</p>
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{ca_status}</div>
-                                <input type="file" name="ca_file" class="form-control mb-3 flex-grow-1" accept=".pem,.crt,.cer,.txt" required>
-                                <button type="submit" class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-save"></i> Upload Chứng Chỉ</button>
+                            <form action="/admin/update_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
+                                <p class="text-muted mb-3" style="font-size:12px;">Tải file cấu hình loader extension (.user.js) lên đây. Khách kích hoạt thành công sẽ tự động tải file này về.</p>
+                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{loader_status}</div>
+                                <input type="file" name="loader_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
+                                <button type="submit" class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-save"></i> Tải Lên Loader</button>
                             </form>
                         </div>
                     </div>
@@ -707,7 +649,7 @@ def admin_dashboard():
                     <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
                         <table class="table table-hover text-center align-middle mb-0">
                             <thead style="position: sticky; top: 0; z-index: 1;">
-                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th class="text-start ps-4">Thông tin cấu hình Proxy</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
+                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th class="text-start ps-4">Thông tin OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
                                 {keys_html or '<tr><td colspan="5" class="py-5 text-muted">Chưa có dữ liệu.</td></tr>'}
@@ -750,26 +692,6 @@ def admin_dashboard():
             </div>
         </div>
 
-        <div class="modal fade" id="proxyModal" tabindex="-1" data-bs-theme="dark">
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                    <form action="/admin/setup_proxy" method="POST">{csrf_input}
-                        <div class="modal-header"><h5 class="modal-title fw-bold text-primary"><i class="fas fa-network-wired"></i> GẮN SERVER PROXY</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-                        <div class="modal-body p-4 text-center">
-                            <input type="hidden" name="key" id="proxyKeyInput">
-                            <h4 id="proxyKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
-                            <p class="text-muted small">Nhập IP mạng LAN của máy sếp (VD: 192.168.1.5). Tuyệt đối không dùng chữ linh tinh.</p>
-                            <div class="input-group mb-3">
-                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success" placeholder="VD: 192.168.1.5" required>
-                                <button type="button" class="btn btn-outline-success px-3" onclick="document.getElementById('proxyHostInput').value = '192.168.1.' + Math.floor(Math.random()*255)" title="Random IP Cục Bộ"><i class="fas fa-random"></i></button>
-                            </div>
-                        </div>
-                        <div class="modal-footer p-3"><button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH</button></div>
-                    </form>
-                </div>
-            </div>
-        </div>
-
         <div class="modal fade" id="banModal" tabindex="-1" data-bs-theme="dark">
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
@@ -782,7 +704,7 @@ def admin_dashboard():
                                 <div class="col-6"><input type="number" name="time_val" class="form-control form-control-lg text-center" placeholder="Thời gian"></div>
                                 <div class="col-6"><select name="time_unit" class="form-select form-select-lg"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days">Ngày</option><option value="months">Tháng</option><option value="permanent" selected>Vĩnh Viễn</option></select></div>
                             </div>
-                            <p class="text-danger small mt-3">* Khách đang xài sẽ lập tức bị đá văng khỏi hệ thống.</p>
+                            <p class="text-danger small mt-3">* Khách đang dùng sẽ lập tức bị đá văng khỏi hệ thống.</p>
                         </div>
                         <div class="modal-footer p-3"><button type="submit" class="btn-primary-custom action-btn-danger w-100 border-0">XÁC NHẬN KHÓA</button></div>
                     </form>
@@ -794,7 +716,6 @@ def admin_dashboard():
         <script>
             function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
             function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
-            function openProxyModal(key) {{ document.getElementById('proxyKeyInput').value = key; document.getElementById('proxyKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('proxyModal')).show(); }}
             function openBanModal(key) {{ document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('banModal')).show(); }}
             function copyToClipboard(text) {{ navigator.clipboard.writeText(text); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}}); }}
         </script>
@@ -814,25 +735,10 @@ def create_key():
     with db_lock:
         for _ in range(qty):
             nk = generate_proxy_key()
-            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "vip": vip, "status": "active", "bound_olm": "", "proxy_host": "", "proxy_port": 8080, "ban_until": 0}
+            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "vip": vip, "status": "active", "bound_olm": "", "ban_until": 0}
             if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"minute":60000, "hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
             else: db["keys"][nk]["exp"] = "permanent"
         save_db(db)
-    return redirect('/admin')
-
-@app.route('/admin/setup_proxy', methods=['POST'])
-def admin_setup_proxy():
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    key = request.form.get('key', '').strip()
-    host = request.form.get('host', '').strip()
-    db = load_db()
-    with db_lock:
-        if key in db.get("keys", {}):
-            if not db["keys"][key].get("bound_olm"):
-                return swal_back("Lỗi Thiết Lập", "Key này chưa được ghim tài khoản OLM. Hãy bấm nút 'Ghim' trước khi gán Proxy!", "error")
-            db["keys"][key]["proxy_host"] = host
-            db["keys"][key]["proxy_port"] = 8080
-            save_db(db)
     return redirect('/admin')
 
 @app.route('/admin/add_time', methods=['POST'])
@@ -900,21 +806,19 @@ def admin_update_script():
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp file Script thành công!", "success", "/admin")
 
-@app.route('/admin/update_ca', methods=['POST'])
-def admin_update_ca():
+@app.route('/admin/update_loader', methods=['POST'])
+def admin_update_loader():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'ca_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Chứng chỉ!", "error")
-    file = request.files['ca_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Chứng chỉ!", "error")
-    try: ca_cert = file.read().decode('utf-8')
+    if 'loader_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script Loader!", "error")
+    file = request.files['loader_file']
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file!", "error")
+    try: loader_content = file.read().decode('utf-8')
     except: return swal_back("Lỗi", "File không hợp lệ", "error")
-    if not ca_cert.strip().startswith("-----BEGIN CERTIFICATE-----"): 
-        return swal_back("Lỗi", "File không đúng chuẩn CA Termux", "error")
     db = load_db()
     with db_lock:
-        db.setdefault("settings", {})["ca_cert"] = ca_cert.strip()
+        db.setdefault("settings", {})["vm_loader_script"] = loader_content
         save_db(db)
-    return swal_redirect("Thành Công", "Đã lưu chứng chỉ CA lên hệ thống!", "success", "/admin")
+    return swal_redirect("Thành Công", "Đã lưu script Violentmonkey Loader lên hệ thống!", "success", "/admin")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
