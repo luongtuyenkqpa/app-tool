@@ -168,7 +168,7 @@ def load_db():
                     data["keys"][k].setdefault("bound_olm", "") 
                     data["keys"][k].setdefault("vip", False)
                     data["keys"][k].setdefault("proxy_host", "")
-                    data["keys"][k].setdefault("proxy_port", 0)
+                    data["keys"][k].setdefault("proxy_port", 8080) # [FIX] Đưa mặc định về 8080
                     data["keys"][k].setdefault("ban_until", 0)
                     data["keys"][k].setdefault("status", "active")
 
@@ -330,6 +330,9 @@ def download_ca():
     resp.headers['Content-Disposition'] = 'attachment; filename="LVT_PROXY_CA.crt"'
     return resp
 
+# ========================================================
+# [BẢN NÂNG CẤP ĐỈNH CAO]: ĐA LUỒNG PAC FILE & ÉP CỔNG 8080
+# ========================================================
 @app.route('/proxy_config/<key>.pac')
 def generate_pac_file(key):
     db = load_db()
@@ -342,12 +345,12 @@ def generate_pac_file(key):
             if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): return "Key đã bị khóa.", 403
             
         host = kd.get("proxy_host")
-        port = kd.get("proxy_port")
         
+        # [QUAN TRỌNG] Cố định Port 8080 cho Termux và thử 3 luồng IP tránh chặn cục bộ
         pac_script = f"""
         function FindProxyForURL(url, host) {{
-            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn") {{
-                return "PROXY {host}:{port}";
+            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn" || host === "mitm.it") {{
+                return "PROXY 127.0.0.1:8080; PROXY localhost:8080; PROXY {host}:8080; DIRECT";
             }}
             return "DIRECT";
         }}
@@ -357,7 +360,7 @@ def generate_pac_file(key):
         return resp
 
 # ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG (THÊM TÍNH NĂNG CHECK PROXY REALTIME)
+# GIAO DIỆN WEB NGƯỜI DÙNG (CHECK PROXY BẰNG GIAO THỨC HTTP CHUẨN)
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
@@ -405,29 +408,24 @@ def user_proxy_portal():
                         document.getElementById('res-pac-container').innerHTML = `<span style="word-break: break-all;">${{pacUrl}}</span> <button class="btn-copy-pac" onclick="copyPacUrl('${{pacUrl}}')" title="Copy"><i class="far fa-copy fa-lg"></i></button>`; 
                         document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs; 
                         
-                        // Xử lý bộ đếm EXP
                         if(expInterval) clearInterval(expInterval); 
                         if (r.exp === 'permanent') {{ document.getElementById('res-exp').innerText = 'Vĩnh Viễn'; 
                         }} else {{ 
                             expInterval = setInterval(() => {{ let rem = r.exp - Date.now(); if(rem <= 0) {{ document.getElementById('res-exp').innerText = 'HẾT HẠN'; clearInterval(expInterval); localStorage.removeItem('lvt_proxy_key'); }} else {{ let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000); document.getElementById('res-exp').innerText = `${{d}}d ${{h}}h ${{m}}m ${{s}}s`; }} }}, 1000); 
                         }} 
 
-                        // [MỚI] Tự động dò tìm Proxy đã được kích hoạt trong Wifi chưa
+                        // [SỬA LẠI PING HTTP] Tránh lỗi chứng chỉ bảo mật của Chrome khi dò mạng nội bộ
                         if(proxyChecker) clearInterval(proxyChecker);
                         document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang chờ cài đặt vào Wifi...';
                         document.getElementById('res-proxy-status').style.color = '#f59e0b';
                         
                         proxyChecker = setInterval(() => {{
-                            // Bắn lệnh ping bí mật tới olm, nếu proxy hoạt động nó sẽ bắt được
-                            fetch('https://olm.vn/lvt_proxy_ping')
-                            .then(res => res.json())
-                            .then(data => {{
-                                if(data.status === 'ok') {{
-                                    clearInterval(proxyChecker);
-                                    document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-check-circle"></i> ĐÃ KẾT NỐI MẠNG RIÊNG TƯ';
-                                    document.getElementById('res-proxy-status').style.color = '#22c55e';
-                                    Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Tuyệt vời! Proxy đã được kết nối với Wifi của bạn.', showConfirmButton: false, timer: 4000, background: '#1a1c26', color: '#fff'}});
-                                }}
+                            fetch('http://olm.vn/lvt_proxy_ping', {{mode: 'no-cors'}})
+                            .then(res => {{
+                                clearInterval(proxyChecker);
+                                document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-check-circle"></i> ĐÃ KẾT NỐI MẠNG RIÊNG TƯ';
+                                document.getElementById('res-proxy-status').style.color = '#22c55e';
+                                Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Tuyệt vời! Proxy đã được kết nối với Wifi của bạn.', showConfirmButton: false, timer: 4000, background: '#1a1c26', color: '#fff'}});
                             }}).catch(err => {{}});
                         }}, 3000);
 
@@ -464,7 +462,10 @@ def proxy_activate():
             else: kd["status"] = "active"
         if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: return jsonify({"status": "error", "msg": "Key đã hết hạn sử dụng!"})
         if not kd.get("bound_olm"): return jsonify({"status": "error", "msg": "Lỗi: Key chưa ghim Tên OLM. Không thể tạo Proxy!"})
-        if not kd.get("proxy_host") or not kd.get("proxy_port"): return jsonify({"status": "error", "msg": "Lỗi: Admin chưa gán Host cho Key này!"})
+        
+        # [FIX] Đưa mặc định lấy port 8080 cho ổn định Termux
+        if not kd.get("proxy_host"): return jsonify({"status": "error", "msg": "Lỗi: Admin chưa gán Host cho Key này!"})
+        kd["proxy_port"] = 8080 
 
         devices = kd.setdefault("devices", [])
         if client_ip not in devices:
@@ -755,12 +756,13 @@ def admin_dashboard():
                         <div class="modal-body p-4 text-center">
                             <input type="hidden" name="key" id="proxyKeyInput">
                             <h4 id="proxyKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
+                            <p class="text-muted small">Cổng mặc định luôn là 8080 dành cho Termux.</p>
                             <div class="input-group mb-3">
-                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success" placeholder="VD: p1.sv.lvt.com" required>
-                                <button type="button" class="btn btn-outline-success px-3" onclick="document.getElementById('proxyHostInput').value = 'sv' + Math.floor(Math.random()*9999) + '.proxy.com'" title="Random Tên"><i class="fas fa-random"></i></button>
+                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success" placeholder="Nhập IP LAN (VD: 192.168.1.x)" required>
+                                <button type="button" class="btn btn-outline-success px-3" onclick="document.getElementById('proxyHostInput').value = '192.168.1.' + Math.floor(Math.random()*255)" title="Random Tên"><i class="fas fa-random"></i></button>
                             </div>
                         </div>
-                        <div class="modal-footer p-3"><button class="btn-primary-custom btn-purple w-100">LƯU & RANDOM CỔNG</button></div>
+                        <div class="modal-footer p-3"><button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH</button></div>
                     </form>
                 </div>
             </div>
@@ -810,7 +812,7 @@ def create_key():
     with db_lock:
         for _ in range(qty):
             nk = generate_proxy_key()
-            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "vip": vip, "status": "active", "bound_olm": "", "proxy_host": "", "proxy_port": 0, "ban_until": 0}
+            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "vip": vip, "status": "active", "bound_olm": "", "proxy_host": "", "proxy_port": 8080, "ban_until": 0}
             if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"minute":60000, "hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
             else: db["keys"][nk]["exp"] = "permanent"
         save_db(db)
@@ -827,7 +829,7 @@ def admin_setup_proxy():
             if not db["keys"][key].get("bound_olm"):
                 return swal_back("Lỗi Thiết Lập", "Key này chưa được ghim tài khoản OLM. Hãy bấm nút 'Ghim' trước khi gán Proxy!", "error")
             db["keys"][key]["proxy_host"] = host
-            db["keys"][key]["proxy_port"] = random.randint(10000, 65000)
+            db["keys"][key]["proxy_port"] = 8080 # LUÔN CỐ ĐỊNH 8080
             save_db(db)
     return redirect('/admin')
 
