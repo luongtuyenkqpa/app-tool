@@ -65,7 +65,7 @@ def telegram_polling():
                         
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
+                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để đăng nhập/đăng ký cấu hình Proxy & Script:"
                             keyboard = {"inline_keyboard": [
                                 [{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "url": f"{WEB_URL}/"}]
                             ]}
@@ -84,21 +84,19 @@ def telegram_polling():
 threading.Thread(target=telegram_polling, daemon=True).start()
 
 # ========================================================
-# [MỚI] HỆ THỐNG CHỐNG SLEEP/DIE SERVER RENDER (KEEP-AWAKE)
+# HỆ THỐNG CHỐNG SLEEP/DIE SERVER RENDER (KEEP-AWAKE)
 # ========================================================
 def keep_awake():
     while True:
-        time.sleep(14 * 60) # Ngủ 14 phút (Render free sleep sau 15p không hoạt động)
-        try:
-            # Tự động ping vào chính trang chủ để giữ server luôn thức
-            requests.get(WEB_URL, timeout=10)
+        time.sleep(14 * 60)
+        try: requests.get(WEB_URL, timeout=10)
         except Exception: pass
 
 threading.Thread(target=keep_awake, daemon=True).start()
 
 @app.route('/ping')
 def ping_server():
-    return "OK", 200 # API phụ để dùng UptimeRobot nếu cần
+    return "OK", 200
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -179,7 +177,7 @@ def load_db():
                 data.setdefault("admin_logs", [])
                 data.setdefault("security_alerts", []) 
                 data.setdefault("settings", {})
-                data.setdefault("game_keys", {}) # Giữ nguyên cấu trúc cũ
+                data.setdefault("game_keys", {})
                 data.setdefault("tg_auth_ids", {str(TELEGRAM_CHAT_ID): {"exp": "permanent", "banned_until": 0}}) 
                 
                 if "secret_key" not in data["settings"]: data["settings"]["secret_key"] = secrets.token_hex(32)
@@ -232,7 +230,7 @@ def save_db(db=None):
             send_telegram_alert(f"LỖI GHI FILE DB: {str(e)}")
             if os.path.exists(temp_file): os.remove(temp_file)
 
-# [TÍNH NĂNG MỚI] Auto Key 15 Ký Tự Random
+# Auto Key 15 Ký Tự Random
 def generate_proxy_key():
     return ''.join(secrets.choice(string.ascii_lowercase) for _ in range(15))
 
@@ -309,6 +307,44 @@ def add_security_headers(response):
     return response
 
 # ========================================================
+# HỆ THỐNG ĐĂNG KÝ / ĐĂNG NHẬP NGƯỜI DÙNG
+# ========================================================
+@app.route('/register', methods=['POST'])
+def user_register():
+    username = request.form.get('username', '').strip().lower()
+    pwd = request.form.get('password', '').strip()
+    if not username or not pwd: return swal_back("Lỗi", "Vui lòng nhập đủ thông tin!", "warning")
+    
+    db = load_db()
+    with db_lock:
+        if username in db["users"]:
+            return swal_back("Lỗi", "Tài khoản này đã tồn tại trên hệ thống!", "error")
+        db["users"][username] = {"password_hash": hash_pwd(pwd), "role": "user", "created_at": int(time.time() * 1000)}
+        save_db(db)
+    return swal_redirect("Thành công", "Đăng ký thành công! Vui lòng tiến hành Đăng Nhập.", "success", "/")
+
+@app.route('/login', methods=['POST'])
+def user_login():
+    username = request.form.get('username', '').strip().lower()
+    pwd = request.form.get('password', '').strip()
+    
+    db = load_db()
+    u_data = db.get("users", {}).get(username)
+    if u_data and u_data.get("password_hash") == hash_pwd(pwd):
+        session['username'] = username
+        session['role'] = u_data.get('role', 'user')
+        session['csrf_token'] = secrets.token_hex(16)
+        if session['role'] == 'admin':
+            return redirect('/admin') # Nếu là admin, đẩy thẳng vào C-Panel
+        return redirect('/')
+    return swal_back("Từ chối", "Sai tài khoản hoặc mật khẩu!", "error")
+
+@app.route('/user_logout')
+def user_logout():
+    session.clear()
+    return redirect('/')
+
+# ========================================================
 # API TẢI SCRIPT GỐC CHO PROXY (PYTHON MITMPROXY GỌI VÀO ĐÂY)
 # ========================================================
 @app.route('/api/get_script')
@@ -332,42 +368,101 @@ def download_ca():
     return resp
 
 # ========================================================
-# [MỚI] API TẠO FILE PAC TỰ ĐỘNG (ĐIỀU HƯỚNG CHỈ VÀO OLM MỚI QUA PROXY)
+# API TẠO FILE PAC TỰ ĐỘNG (ĐIỀU HƯỚNG CHỈ VÀO OLM MỚI QUA PROXY)
 # ========================================================
 @app.route('/proxy_config/<key>.pac')
 def generate_pac_file(key):
     db = load_db()
     with db_lock:
         kd = db.get("keys", {}).get(key)
-        
-        # Kiểm tra Key có tồn tại và hợp lệ không
         if not kd or kd.get("status") == "banned" or not kd.get("proxy_host"):
             return "Trạng thái Key không hợp lệ để cấp cấu hình.", 403
             
         host = kd.get("proxy_host")
         port = kd.get("proxy_port")
         
-        # Trả về đoạn code JavaScript cấu hình PAC chuẩn
         pac_script = f"""
         function FindProxyForURL(url, host) {{
-            // NẾU tên miền là olm.vn hoặc các web con của nó thì ĐI QUA PROXY CỦA TERMUX
             if (shExpMatch(host, "*.olm.vn") || host === "olm.vn") {{
                 return "PROXY {host}:{port}";
             }}
-            // TẤT CẢ web khác (youtube, facebook...) ĐI THẲNG BẰNG WIFI (Không qua Proxy)
             return "DIRECT";
         }}
         """
-        
         resp = make_response(pac_script)
         resp.headers['Content-Type'] = 'application/x-ns-proxy-autoconfig'
         return resp
 
 # ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG KÍCH HOẠT PROXY (ĐÃ CẬP NHẬT GIAO DIỆN PAC)
+# GIAO DIỆN WEB NGƯỜI DÙNG (CÓ CHỨC NĂNG ĐĂNG NHẬP)
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
+    # NẾU CHƯA ĐĂNG NHẬP -> HIỆN BẢNG CHÀO MỪNG VÀ ĐĂNG NHẬP
+    if not session.get('username'):
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="vi">
+        <head>
+            <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>LVT - Chào mừng đến Proxy LVT</title>
+            <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+                body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}
+                {CSS_GLASS}
+                .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 15px; text-align: center; font-weight:bold; box-sizing:border-box; }}
+                .inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}
+                .nav {{ display: flex; gap: 8px; margin-bottom: 20px; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 12px; }}
+                .nav-btn {{ flex: 1; padding: 12px; text-align: center; border-radius: 10px; color: #8892b0; font-size: 13px; font-weight: 800; cursor: pointer; transition:0.3s; }}
+                .nav-btn.act {{ background: #00ffcc; color: #000; box-shadow: 0 0 15px rgba(0,255,204,0.3); }}
+            </style>
+        </head>
+        <body>
+            <div class="glass-panel" style="max-width: 450px; width: 100%;">
+                <h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-globe"></i> CHÀO MỪNG BẠN ĐẾN PROXY CỦA CHÚNG TÔI</h2>
+                <p style="color:#889; font-size:13px; margin-bottom:25px; line-height:1.5;">Hệ thống định tuyến thông minh. Vui lòng đăng nhập hoặc tạo tài khoản để sử dụng dịch vụ.</p>
+                
+                <div class="nav">
+                    <div class="nav-btn act" onclick="switchT('login')">ĐĂNG NHẬP</div>
+                    <div class="nav-btn" onclick="switchT('register')">ĐĂNG KÝ</div>
+                </div>
+
+                <div id="tab-login" style="display:block;">
+                    <form action="/login" method="POST">
+                        <input type="text" name="username" class="inp-neon" placeholder="Tên tài khoản" required>
+                        <input type="password" name="password" class="inp-neon" placeholder="Mật khẩu" required>
+                        <button type="submit" class="btn-neon"><i class="fas fa-sign-in-alt"></i> VÀO HỆ THỐNG</button>
+                    </form>
+                </div>
+
+                <div id="tab-register" style="display:none;">
+                    <form action="/register" method="POST">
+                        <input type="text" name="username" class="inp-neon" placeholder="Tạo tên tài khoản mới" required>
+                        <input type="password" name="password" class="inp-neon" placeholder="Tạo mật khẩu" required>
+                        <button type="submit" class="btn-neon" style="background:linear-gradient(90deg, #a855f7, #6366f1);"><i class="fas fa-user-plus"></i> ĐĂNG KÝ NGAY</button>
+                    </form>
+                </div>
+            </div>
+            <script>
+                function switchT(t) {{
+                    document.getElementById('tab-login').style.display = 'none';
+                    document.getElementById('tab-register').style.display = 'none';
+                    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('act'));
+                    
+                    document.getElementById('tab-'+t).style.display = 'block';
+                    if(t === 'login') document.querySelector('.nav-btn:nth-child(1)').classList.add('act');
+                    else document.querySelector('.nav-btn:nth-child(2)').classList.add('act');
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        return render_template_string_safe(html)
+
+    # NẾU ĐÃ ĐĂNG NHẬP -> HIỆN BẢNG PROXY
+    username = session.get('username')
     html = f"""
     <!DOCTYPE html>
     <html lang="vi">
@@ -378,66 +473,69 @@ def user_proxy_portal():
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-            body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }}
+            body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}
             {CSS_GLASS}
-            .info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #a855f7; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; }}
-            .step-title {{ color: #a855f7; font-weight: 900; margin-top: 15px; margin-bottom: 5px; font-size: 15px; border-bottom: 1px solid rgba(168,85,247,0.3); padding-bottom: 5px; text-transform:uppercase; }}
+            .info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #00ffcc; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; }}
+            .step-title {{ color: #00ffcc; font-weight: 900; margin-top: 15px; margin-bottom: 5px; font-size: 15px; border-bottom: 1px solid rgba(0,255,204,0.3); padding-bottom: 5px; text-transform:uppercase; }}
             .step-text {{ font-size: 13px; color: #ccc; line-height: 1.6; margin: 8px 0; }}
             .highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 16px; user-select: all; padding: 6px; background: rgba(0,255,204,0.1); border-radius: 5px; word-break: break-all; display: inline-block; width: 100%; box-sizing: border-box; }}
             .cert-btn {{ background: linear-gradient(90deg, #a855f7, #6366f1); color: #fff; text-decoration: none; padding: 12px; border-radius: 8px; display: block; text-align: center; font-weight: 900; margin-top: 20px; transition: 0.3s; text-transform:uppercase; border:none; width:100%; cursor:pointer; }}
             .cert-btn:hover {{ transform: scale(1.02); box-shadow: 0 0 15px rgba(168,85,247,0.5); }}
             .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}
             .inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}
+            .user-badge {{ position:absolute; top:20px; right:20px; background:rgba(0,255,204,0.1); color:#00ffcc; padding:8px 15px; border-radius:20px; font-weight:bold; font-size:12px; display:flex; align-items:center; gap:10px; border:1px solid rgba(0,255,204,0.3); }}
+            .logout-btn {{ color:#ff3366; text-decoration:none; background:rgba(255,51,102,0.1); padding:4px 10px; border-radius:15px; border:1px solid rgba(255,51,102,0.3); transition:0.3s; }}
+            .logout-btn:hover {{ background:#ff3366; color:#fff; }}
         </style>
     </head>
     <body>
-        <div class="glass-panel" style="max-width: 550px; width: 100%;">
+        <div class="user-badge">
+            <i class="fas fa-user-circle"></i> Xin chào, {escape(username)}
+            <a href="/user_logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Thoát</a>
+        </div>
+
+        <div class="glass-panel" style="max-width: 550px; width: 100%; margin-top: 50px;">
             <h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-route"></i> ĐỊNH TUYẾN PROXY LVT</h2>
             <p style="color:#889; font-size:13px; margin-bottom:25px;">Chỉ can thiệp vào OLM. Các trang web khác hoạt động tốc độ cao bình thường.</p>
             
-            <input type="text" id="k_inp" class="inp-neon" placeholder="Dán mã Key 15 ký tự vào đây...">
+            <input type="text" id="k_inp" class="inp-neon" placeholder="dán mã key 15 ký tự vào đây...">
             <button class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT</button>
 
             <div id="proxy-result" class="info-box">
-                <h4 style="color:#00ffcc; text-align:center; margin-top:0; font-size:18px;">THÔNG TIN KẾT NỐI</h4>
-                
-                <div style="margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
+                <div style="text-align:center; margin-bottom:15px;">
+                    <span style="background:rgba(0,255,204,0.2); color:#00ffcc; padding:5px 15px; border-radius:20px; font-size:12px; font-weight:bold;">
+                        <i class="fas fa-wifi"></i> Đã đồng bộ IP Mạng
+                    </span>
+                </div>
+
+                <div style="margin-bottom:12px;">
                     <div style="color:#889; font-size:12px; margin-bottom:4px;">👤 Định danh OLM hợp lệ:</div>
                     <div id="res-olm" class="highlight" style="color:#ffcc00; background:rgba(255,204,0,0.1);"></div>
                 </div>
-
-                <div style="margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
-                    <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-link"></i> Link PAC (Dành cho Auto-Config):</div>
+                
+                <div style="margin-bottom:12px;">
+                    <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-link"></i> Link Cấu Hình Tự Động (PAC URL):</div>
                     <div id="res-pac" class="highlight"></div>
-                    <p style="font-size:11px; color:#ff3366; margin-top:5px; margin-bottom:0;"><i>* Copy link trên dán vào "URL / Địa chỉ Web PAC" trong cài đặt.</i></p>
-                </div>
-
-                <div style="display:flex; gap:10px;">
-                    <div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
-                        <div style="color:#889; font-size:12px; margin-bottom:4px;">🌐 Máy Chủ:</div>
-                        <div id="res-host" class="highlight" style="font-size:13px; color:#ccc;"></div>
-                    </div>
-                    <div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
-                        <div style="color:#889; font-size:12px; margin-bottom:4px;">🔌 Cổng:</div>
-                        <div id="res-port" class="highlight" style="font-size:13px; color:#ccc;"></div>
-                    </div>
+                    <p style="font-size:11px; color:#ff3366; margin-top:5px; margin-bottom:0;"><i>* Copy chính xác đường link trên để dán vào cài đặt Wifi.</i></p>
                 </div>
                 
                 <button class="cert-btn" onclick="window.location.href='/download-ca'"><i class="fas fa-shield-alt"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</button>
 
                 <div style="margin-top:25px; border-top: 1px dashed #555; padding-top: 15px;">
-                    <h4 style="color:#ff3366; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT</h4>
+                    <h4 style="color:#00ffcc; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT THÔNG MINH</h4>
                     
                     <div class="step-title"><i class="fab fa-android"></i> DÀNH CHO ANDROID</div>
-                    <p class="step-text"><b>1.</b> Mở Wifi -> Chọn sửa Wifi đang kết nối -> Chọn Proxy là <b>Tự động cấu hình (Auto-Config)</b>.</p>
-                    <p class="step-text"><b>2.</b> Dán <b>Link PAC</b> màu xanh ở trên vào ô Địa chỉ Web PAC rồi lưu lại.</p>
-                    <p class="step-text"><b>3.</b> Nếu máy không có Tự động cấu hình, hãy chọn <b>Thủ công</b> rồi nhập Tên Máy Chủ và Cổng ở trên.</p>
-                    <p class="step-text"><b>4.</b> Cài đặt Chứng chỉ CA (chọn VPN và Ứng dụng).</p>
+                    <p class="step-text"><b>Bước 1:</b> Mở Cài đặt Wifi, ấn vào chữ <b>(i)</b> cạnh Wifi đang dùng.</p>
+                    <p class="step-text"><b>Bước 2:</b> Tìm phần <b>Proxy</b>, đổi thành <b>Tự động cấu hình (Auto-Config)</b> <i>(Tuyệt đối không chọn Thủ công)</i>.</p>
+                    <p class="step-text"><b>Bước 3:</b> Dán đường link PAC màu xanh ở trên vào ô <b>Địa chỉ web PAC</b> và Lưu lại.</p>
+                    <p class="step-text"><b>Bước 4:</b> Bấm Tải Chứng Chỉ và cài đặt vào máy (Chọn VPN/Ứng dụng).</p>
 
                     <div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div>
-                    <p class="step-text"><b>1.</b> Mở Wifi -> Bấm (i) -> Cấu hình Proxy -> Chọn <b>Tự động (Automatic)</b>.</p>
-                    <p class="step-text"><b>2.</b> Dán <b>Link PAC</b> màu xanh vào ô URL rồi Lưu.</p>
-                    <p class="step-text"><b>3.</b> Cài Hồ sơ chứng chỉ vừa tải. Cuối cùng vào Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh lên.</p>
+                    <p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Tự động (Automatic)</b>.</p>
+                    <p class="step-text"><b>Bước 2:</b> Dán đường link PAC màu xanh ở trên vào ô <b>URL</b> rồi Lưu.</p>
+                    <p class="step-text"><b>Bước 3:</b> Bấm Tải Chứng Chỉ ở trên. Safari báo đã tải hồ sơ.</p>
+                    <p class="step-text"><b>Bước 4:</b> Cài đặt -> Đã tải về hồ sơ -> Cài đặt.</p>
+                    <p class="step-text"><b>Bước 5 (Bắt buộc):</b> Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh.</p>
                 </div>
             </div>
         </div>
@@ -453,14 +551,11 @@ def user_proxy_portal():
                     if(r.status==='success') {{
                         document.getElementById('proxy-result').style.display = 'block';
                         document.getElementById('res-olm').innerText = r.olm;
-                        document.getElementById('res-host').innerText = r.host;
-                        document.getElementById('res-port').innerText = r.port;
                         
-                        // [MỚI] Tự động tạo link PAC hiển thị cho khách
                         let pacUrl = window.location.origin + "/proxy_config/" + k + ".pac";
                         document.getElementById('res-pac').innerText = pacUrl;
-
-                        Swal.fire('Thành Công', 'Xác thực thành công. Vui lòng cài đặt theo hướng dẫn!', 'success');
+                        
+                        Swal.fire('Thành Công', 'Đã cấp link cấu hình. Chỉ OLM mới đi qua Proxy, lướt web khác bình thường!', 'success');
                     }} else Swal.fire('Lỗi', r.msg, 'error');
                 }}).catch(e=>Swal.fire('Lỗi', 'Không thể kết nối đến Máy chủ!', 'error'));
             }}
@@ -498,7 +593,7 @@ def proxy_activate():
     return jsonify({"status": "success", "host": kd["proxy_host"], "port": kd["proxy_port"], "olm": kd["bound_olm"]})
 
 # ========================================================
-# GIAO DIỆN WEB ADMIN (PC C-PANEL)
+# GIAO DIỆN WEB ADMIN (PC C-PANEL) - TRANG TÁCH BIỆT HOÀN TOÀN
 # ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
@@ -528,7 +623,7 @@ def admin_login():
             admin_login_attempts[ip] = attempts
             return swal_back("Từ Chối", f"Sai mật khẩu! Bạn còn {5 - attempts['count']} lần thử.", "error")
             
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>C-Panel Proxy Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #00ffcc; }}</style></head><body style="background:#05050a; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP</button></form></div></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>C-Panel Proxy Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #00ffcc; }}</style></head><body style="background:#05050a; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
     except Exception as e: return f"LỖI: {str(e)}", 200
 
 @app.route('/admin')
