@@ -83,6 +83,23 @@ def telegram_polling():
 
 threading.Thread(target=telegram_polling, daemon=True).start()
 
+# ========================================================
+# [MỚI] HỆ THỐNG CHỐNG SLEEP/DIE SERVER RENDER (KEEP-AWAKE)
+# ========================================================
+def keep_awake():
+    while True:
+        time.sleep(14 * 60) # Ngủ 14 phút (Render free sleep sau 15p không hoạt động)
+        try:
+            # Tự động ping vào chính trang chủ để giữ server luôn thức
+            requests.get(WEB_URL, timeout=10)
+        except Exception: pass
+
+threading.Thread(target=keep_awake, daemon=True).start()
+
+@app.route('/ping')
+def ping_server():
+    return "OK", 200 # API phụ để dùng UptimeRobot nếu cần
+
 @app.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, HTTPException): return e
@@ -308,7 +325,6 @@ def serve_custom_script():
 # ========================================================
 @app.route('/download-ca')
 def download_ca():
-    # Bạn thay thư mục chứng chỉ thật của bạn ở máy chủ vào đây hoặc giữ giả lập này để test
     dummy_ca = "-----BEGIN CERTIFICATE-----\nMIIDzTCCArWgAwIBAgIQC... (Tự chèn CA của bạn ở Mitmproxy)\n-----END CERTIFICATE-----"
     resp = make_response(dummy_ca)
     resp.headers['Content-Type'] = 'application/x-pem-file'
@@ -316,7 +332,39 @@ def download_ca():
     return resp
 
 # ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG KÍCH HOẠT PROXY (KHÔNG ADMIN, KHÔNG TELE)
+# [MỚI] API TẠO FILE PAC TỰ ĐỘNG (ĐIỀU HƯỚNG CHỈ VÀO OLM MỚI QUA PROXY)
+# ========================================================
+@app.route('/proxy_config/<key>.pac')
+def generate_pac_file(key):
+    db = load_db()
+    with db_lock:
+        kd = db.get("keys", {}).get(key)
+        
+        # Kiểm tra Key có tồn tại và hợp lệ không
+        if not kd or kd.get("status") == "banned" or not kd.get("proxy_host"):
+            return "Trạng thái Key không hợp lệ để cấp cấu hình.", 403
+            
+        host = kd.get("proxy_host")
+        port = kd.get("proxy_port")
+        
+        # Trả về đoạn code JavaScript cấu hình PAC chuẩn
+        pac_script = f"""
+        function FindProxyForURL(url, host) {{
+            // NẾU tên miền là olm.vn hoặc các web con của nó thì ĐI QUA PROXY CỦA TERMUX
+            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn") {{
+                return "PROXY {host}:{port}";
+            }}
+            // TẤT CẢ web khác (youtube, facebook...) ĐI THẲNG BẰNG WIFI (Không qua Proxy)
+            return "DIRECT";
+        }}
+        """
+        
+        resp = make_response(pac_script)
+        resp.headers['Content-Type'] = 'application/x-ns-proxy-autoconfig'
+        return resp
+
+# ========================================================
+# GIAO DIỆN WEB NGƯỜI DÙNG KÍCH HOẠT PROXY (ĐÃ CẬP NHẬT GIAO DIỆN PAC)
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
@@ -325,7 +373,7 @@ def user_proxy_portal():
     <html lang="vi">
     <head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>LVT - Kích Hoạt Proxy Web</title>
+        <title>LVT - Kích Hoạt Định Tuyến</title>
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
@@ -335,60 +383,68 @@ def user_proxy_portal():
             .info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #a855f7; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; }}
             .step-title {{ color: #a855f7; font-weight: 900; margin-top: 15px; margin-bottom: 5px; font-size: 15px; border-bottom: 1px solid rgba(168,85,247,0.3); padding-bottom: 5px; text-transform:uppercase; }}
             .step-text {{ font-size: 13px; color: #ccc; line-height: 1.6; margin: 8px 0; }}
-            .highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 16px; user-select: all; }}
+            .highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 16px; user-select: all; padding: 6px; background: rgba(0,255,204,0.1); border-radius: 5px; word-break: break-all; display: inline-block; width: 100%; box-sizing: border-box; }}
             .cert-btn {{ background: linear-gradient(90deg, #a855f7, #6366f1); color: #fff; text-decoration: none; padding: 12px; border-radius: 8px; display: block; text-align: center; font-weight: 900; margin-top: 20px; transition: 0.3s; text-transform:uppercase; border:none; width:100%; cursor:pointer; }}
             .cert-btn:hover {{ transform: scale(1.02); box-shadow: 0 0 15px rgba(168,85,247,0.5); }}
-            .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; }}
+            .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}
             .inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}
         </style>
     </head>
     <body>
         <div class="glass-panel" style="max-width: 550px; width: 100%;">
-            <h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-network-wired"></i> KÍCH HOẠT PROXY LVT</h2>
-            <p style="color:#889; font-size:13px; margin-bottom:25px;">Nhập Key kích hoạt do Admin cấp để nhận Cấu hình Máy Chủ riêng biệt.</p>
+            <h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-route"></i> ĐỊNH TUYẾN PROXY LVT</h2>
+            <p style="color:#889; font-size:13px; margin-bottom:25px;">Chỉ can thiệp vào OLM. Các trang web khác hoạt động tốc độ cao bình thường.</p>
             
             <input type="text" id="k_inp" class="inp-neon" placeholder="Dán mã Key 15 ký tự vào đây...">
-            <button class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> KIỂM TRA VÀ LẤY CẤU HÌNH</button>
+            <button class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT</button>
 
             <div id="proxy-result" class="info-box">
-                <h4 style="color:#00ffcc; text-align:center; margin-top:0; font-size:18px;">THÔNG TIN KẾT NỐI TƯ NHÂN</h4>
+                <h4 style="color:#00ffcc; text-align:center; margin-top:0; font-size:18px;">THÔNG TIN KẾT NỐI</h4>
+                
                 <div style="margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
                     <div style="color:#889; font-size:12px; margin-bottom:4px;">👤 Định danh OLM hợp lệ:</div>
-                    <div id="res-olm" class="highlight" style="color:#ffcc00;"></div>
+                    <div id="res-olm" class="highlight" style="color:#ffcc00; background:rgba(255,204,0,0.1);"></div>
                 </div>
+
                 <div style="margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
-                    <div style="color:#889; font-size:12px; margin-bottom:4px;">🌐 Tên Máy Chủ (Host):</div>
-                    <div id="res-host" class="highlight"></div>
+                    <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-link"></i> Link PAC (Dành cho Auto-Config):</div>
+                    <div id="res-pac" class="highlight"></div>
+                    <p style="font-size:11px; color:#ff3366; margin-top:5px; margin-bottom:0;"><i>* Copy link trên dán vào "URL / Địa chỉ Web PAC" trong cài đặt.</i></p>
                 </div>
-                <div style="margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
-                    <div style="color:#889; font-size:12px; margin-bottom:4px;">🔌 Số Cổng (Port):</div>
-                    <div id="res-port" class="highlight" style="color:#ff3366;"></div>
+
+                <div style="display:flex; gap:10px;">
+                    <div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
+                        <div style="color:#889; font-size:12px; margin-bottom:4px;">🌐 Máy Chủ:</div>
+                        <div id="res-host" class="highlight" style="font-size:13px; color:#ccc;"></div>
+                    </div>
+                    <div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
+                        <div style="color:#889; font-size:12px; margin-bottom:4px;">🔌 Cổng:</div>
+                        <div id="res-port" class="highlight" style="font-size:13px; color:#ccc;"></div>
+                    </div>
                 </div>
                 
-                <button class="cert-btn" onclick="window.location.href='/download-ca'"><i class="fas fa-download"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</button>
+                <button class="cert-btn" onclick="window.location.href='/download-ca'"><i class="fas fa-shield-alt"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</button>
 
                 <div style="margin-top:25px; border-top: 1px dashed #555; padding-top: 15px;">
-                    <h4 style="color:#ff3366; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT BẮT BUỘC</h4>
+                    <h4 style="color:#ff3366; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT</h4>
                     
                     <div class="step-title"><i class="fab fa-android"></i> DÀNH CHO ANDROID</div>
-                    <p class="step-text"><b>Bước 1:</b> Mở Cài đặt Wifi, ấn vào chữ <b>(i)</b> hoặc Mũi tên cạnh Wifi đang kết nối.</p>
-                    <p class="step-text"><b>Bước 2:</b> Tìm phần <b>Proxy</b>, đổi thành <b>Thủ Công</b>.</p>
-                    <p class="step-text"><b>Bước 3:</b> Nhập chính xác <b>Tên máy chủ</b> và <b>Cổng</b> đã lấy ở trên vào ô trống và Lưu lại.</p>
-                    <p class="step-text"><b>Bước 4:</b> Bấm nút Tải Chứng Chỉ màu tím ở trên. Sau đó vào Cài đặt điện thoại -> Tìm kiếm "Chứng chỉ" -> Chọn <b>Cài đặt chứng chỉ</b> -> Chọn loại: <b>Chứng chỉ VPN và ứng dụng</b> (đối với máy yêu cầu chọn). Chọn file vừa tải về và đặt tên là "LVT Proxy".</p>
-                    <p class="step-text"><b>Bước 5:</b> Mở Chrome/Safari, vào thẳng <b>olm.vn</b> và Script sẽ tự động hiện lên góc màn hình!</p>
+                    <p class="step-text"><b>1.</b> Mở Wifi -> Chọn sửa Wifi đang kết nối -> Chọn Proxy là <b>Tự động cấu hình (Auto-Config)</b>.</p>
+                    <p class="step-text"><b>2.</b> Dán <b>Link PAC</b> màu xanh ở trên vào ô Địa chỉ Web PAC rồi lưu lại.</p>
+                    <p class="step-text"><b>3.</b> Nếu máy không có Tự động cấu hình, hãy chọn <b>Thủ công</b> rồi nhập Tên Máy Chủ và Cổng ở trên.</p>
+                    <p class="step-text"><b>4.</b> Cài đặt Chứng chỉ CA (chọn VPN và Ứng dụng).</p>
 
                     <div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div>
-                    <p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Thủ công</b> -> Nhập Máy chủ và Cổng.</p>
-                    <p class="step-text"><b>Bước 2:</b> Bấm nút Tải Chứng Chỉ ở trên. Safari sẽ báo Đã tải hồ sơ.</p>
-                    <p class="step-text"><b>Bước 3:</b> Mở Cài đặt máy -> <b>Đã tải về hồ sơ</b> -> Cài đặt.</p>
-                    <p class="step-text"><b>Bước 4: (Rất Quan Trọng)</b> Vào Cài đặt chung -> Giới thiệu -> Kéo xuống dưới cùng chọn <b>Cài đặt tin cậy chứng chỉ</b> -> Gạt nút xanh cho chứng chỉ vừa cài.</p>
+                    <p class="step-text"><b>1.</b> Mở Wifi -> Bấm (i) -> Cấu hình Proxy -> Chọn <b>Tự động (Automatic)</b>.</p>
+                    <p class="step-text"><b>2.</b> Dán <b>Link PAC</b> màu xanh vào ô URL rồi Lưu.</p>
+                    <p class="step-text"><b>3.</b> Cài Hồ sơ chứng chỉ vừa tải. Cuối cùng vào Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh lên.</p>
                 </div>
             </div>
         </div>
 
         <script>
             function actKey() {{
-                let k = document.getElementById('k_inp').value.trim();
+                let k = document.getElementById('k_inp').value.trim().toLowerCase();
                 if(!k) return Swal.fire('Lỗi','Vui lòng dán Key!','warning');
                 fetch('/api/proxy/activate', {{
                     method:'POST', headers:{{'Content-Type':'application/json'}},
@@ -399,7 +455,12 @@ def user_proxy_portal():
                         document.getElementById('res-olm').innerText = r.olm;
                         document.getElementById('res-host').innerText = r.host;
                         document.getElementById('res-port').innerText = r.port;
-                        Swal.fire('Thành Công', 'Xác thực thành công. Vui lòng cài đặt Proxy theo hướng dẫn!', 'success');
+                        
+                        // [MỚI] Tự động tạo link PAC hiển thị cho khách
+                        let pacUrl = window.location.origin + "/proxy_config/" + k + ".pac";
+                        document.getElementById('res-pac').innerText = pacUrl;
+
+                        Swal.fire('Thành Công', 'Xác thực thành công. Vui lòng cài đặt theo hướng dẫn!', 'success');
                     }} else Swal.fire('Lỗi', r.msg, 'error');
                 }}).catch(e=>Swal.fire('Lỗi', 'Không thể kết nối đến Máy chủ!', 'error'));
             }}
