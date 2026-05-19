@@ -201,6 +201,7 @@ def load_db():
                     data["keys"][k].setdefault("activated", False)
                     data["keys"][k].setdefault("proxy_host", "")
                     data["keys"][k].setdefault("proxy_port", 0)
+                    data["keys"][k].setdefault("ban_until", 0) # Mới
 
                 GLOBAL_DB = data
                 _last_db_mtime = current_mtime
@@ -345,13 +346,54 @@ def user_logout():
     return redirect('/')
 
 # ========================================================
+# [MỚI] API KIỂM TRA TRẠNG THÁI KHÓA KEY ĐỂ KICK USER TRÊN OLM
+# ========================================================
+@app.route('/api/check_ban_status')
+def check_ban_status():
+    ip = get_real_ip()
+    db = load_db()
+    now = int(time.time() * 1000)
+    
+    if ip in db.get("banned_ips", []):
+        return jsonify({"banned": True, "reason": "IP của bạn đã bị Firewall chặn đứt."})
+        
+    for k, v in db.get("keys", {}).items():
+        if ip in v.get("devices", []):
+            if v.get("status") == "banned":
+                ban_until = v.get("ban_until", "permanent")
+                if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now):
+                    return jsonify({"banned": True, "reason": "Key của bạn đã bị Admin khóa. Bạn đã bị kick khỏi hệ thống!"})
+                else:
+                    v["status"] = "active"
+                    save_db(db)
+                    return jsonify({"banned": False})
+    return jsonify({"banned": False})
+
+# ========================================================
 # API TẢI SCRIPT GỐC CHO PROXY (PYTHON MITMPROXY GỌI VÀO ĐÂY)
 # ========================================================
 @app.route('/api/get_script')
 def serve_custom_script():
     db = load_db()
-    script = db.get("settings", {}).get("custom_script", "")
-    resp = make_response(script)
+    user_script = db.get("settings", {}).get("custom_script", "")
+    
+    # [THÊM]: Chèn thêm 1 đoạn mã chạy ngầm để Kick user nếu bị Banned Key
+    kick_payload = f"""
+    (function() {{
+        setInterval(function() {{
+            fetch('{WEB_URL}/api/check_ban_status')
+            .then(r => r.json())
+            .then(d => {{
+                if(d.banned) {{
+                    alert("⚠️ LVT HỆ THỐNG: " + d.reason);
+                    window.location.href = "https://google.com";
+                }}
+            }}).catch(e => {{}});
+        }}, 10000); // Check mỗi 10 giây
+    }})();
+    """
+    
+    resp = make_response(kick_payload + "\n" + user_script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return resp
@@ -364,18 +406,22 @@ def generate_pac_file(key):
     db = load_db()
     with db_lock:
         kd = db.get("keys", {}).get(key)
-        if not kd or kd.get("status") == "banned" or not kd.get("proxy_host"):
-            return "Trạng thái Key không hợp lệ để cấp cấu hình.", 403
+        now = int(time.time() * 1000)
+        
+        # Check Banned
+        if not kd or not kd.get("proxy_host"): return "Trạng thái Key không hợp lệ.", 403
+        if kd.get("status") == "banned":
+            ban_until = kd.get("ban_until", "permanent")
+            if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): return "Key đã bị khóa.", 403
             
         host = kd.get("proxy_host")
         port = kd.get("proxy_port")
         
-        # [FIX QUAN TRỌNG]: Bắt buộc mitm.it và olm.vn phải chui qua Proxy Termux (127.0.0.1:8080)
-        # Các tên miền khác sẽ đi thẳng.
+        # [FIX] Cấu hình mitm.it đi thẳng vào cổng Proxy để tải Chứng chỉ thành công!
         pac_script = f"""
         function FindProxyForURL(url, host) {{
             if (shExpMatch(host, "*.olm.vn") || host === "olm.vn" || host === "mitm.it") {{
-                return "PROXY 127.0.0.1:8080; PROXY {host}:{port}; DIRECT";
+                return "PROXY {host}:{port}";
             }}
             return "DIRECT";
         }}
@@ -528,7 +574,7 @@ def user_proxy_portal():
                     <p class="step-text"><b>Bước 1:</b> Mở Cài đặt Wifi, ấn vào chữ <b>(i)</b> cạnh Wifi đang dùng.</p>
                     <p class="step-text"><b>Bước 2:</b> Tìm phần <b>Proxy</b>, đổi thành <b>Tự động cấu hình (Auto-Config)</b> <i>(Tuyệt đối không chọn Thủ công)</i>.</p>
                     <p class="step-text"><b>Bước 3:</b> Dán đường link PAC màu xanh ở trên vào ô <b>Địa chỉ web PAC</b> và Lưu lại.</p>
-                    <p class="step-text"><b>Bước 4:</b> Bấm nút Tải Chứng Chỉ màu tím ở trên, bảng sẽ tự mở link tải cho bạn. Hãy cài đặt vào máy (Chọn VPN/Ứng dụng).</p>
+                    <p class="step-text"><b>Bước 4:</b> Bấm nút Tải Chứng Chỉ màu tím ở trên, trang tải sẽ tự động mở. Cài đặt vào máy (Chọn VPN/Ứng dụng).</p>
 
                     <div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div>
                     <p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Tự động (Automatic)</b>.</p>
@@ -542,6 +588,18 @@ def user_proxy_portal():
 
         <script>
             let expInterval;
+            
+            // Check Band liên tục cho người dùng đang ở trang kích hoạt
+            setInterval(function() {{
+                fetch('/api/check_ban_status')
+                .then(r => r.json())
+                .then(d => {{
+                    if(d.banned) {{
+                        alert("⚠️ HỆ THỐNG: " + d.reason);
+                        window.location.href = "https://google.com";
+                    }}
+                }}).catch(e => {{}});
+            }}, 10000);
 
             function actKey() {{
                 let k = document.getElementById('k_inp').value.trim().toLowerCase();
@@ -583,12 +641,12 @@ def user_proxy_portal():
             function downloadMitmCert() {{
                 Swal.fire({{
                     title: 'LƯU Ý BẮT BUỘC',
-                    html: '<p style="font-size:14px; color:#ccc;">Bạn <b>PHẢI</b> cài đặt xong cấu hình Proxy PAC vào Wi-Fi thì nút tải chứng chỉ này mới hoạt động.</p>',
+                    html: '<p style="font-size:14px; color:#ccc;">Bạn <b>PHẢI</b> dán Link PAC (màu xanh) vào cài đặt Wi-Fi và lưu lại trước. Lúc đó nút tải này mới hoạt động.</p>',
                     icon: 'warning',
                     showCancelButton: true,
                     confirmButtonColor: '#a855f7',
                     cancelButtonColor: '#333',
-                    confirmButtonText: 'Đã Cài Proxy - Tải Ngay',
+                    confirmButtonText: 'Đã Dán Xong - Tải CA',
                     cancelButtonText: 'Hủy bỏ',
                     background: '#1a1c26',
                     color: '#fff'
@@ -615,7 +673,14 @@ def proxy_activate():
         if key not in db.get("keys", {}): return jsonify({"status": "error", "msg": "Mã Key không tồn tại hoặc sai định dạng!"})
         kd = db["keys"][key]
         
-        if kd.get("status") == "banned": return jsonify({"status": "error", "msg": "Key của bạn đã bị Admin khóa vĩnh viễn!"})
+        # Check Banned 
+        if kd.get("status") == "banned":
+            ban_until = kd.get("ban_until", "permanent")
+            if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now):
+                return jsonify({"status": "error", "msg": "Key của bạn đang bị Admin khóa!"})
+            else:
+                kd["status"] = "active"
+
         if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now:
             return jsonify({"status": "error", "msg": "Key đã hết hạn sử dụng. Hãy liên hệ Admin gia hạn!"})
 
@@ -625,11 +690,11 @@ def proxy_activate():
         if not kd.get("proxy_host") or not kd.get("proxy_port"):
             return jsonify({"status": "error", "msg": "Lỗi: Admin chưa thiết lập Tên máy chủ cho Key này. Hãy báo Admin cấu hình trước!"})
 
-        # [FIX]: GHI NHẬN THIẾT BỊ THEO IP
+        # GHI NHẬN THIẾT BỊ THEO IP
         devices = kd.setdefault("devices", [])
         if client_ip not in devices:
             if len(devices) >= kd.get("maxDevices", 1):
-                return jsonify({"status": "error", "msg": "Key này đã đạt giới hạn số lượng thiết bị tối đa!"})
+                return jsonify({"status": "error", "msg": "Key này đã đạt giới hạn số lượng thiết bị (Wifi) tối đa!"})
             devices.append(client_ip)
 
         if kd.get("exp") == "pending":
@@ -649,7 +714,7 @@ def proxy_activate():
     })
 
 # ========================================================
-# GIAO DIỆN WEB ADMIN (PC C-PANEL) - ĐÃ LÀM MỚI UI HOÀN TOÀN
+# GIAO DIỆN WEB ADMIN (PC C-PANEL) - CHUẨN ĐẸP 
 # ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
@@ -697,8 +762,25 @@ def admin_dashboard():
     keys_html = ''
     for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
         st = data.get('status', 'active')
-        is_banned = (st == 'banned')
-        status_badge = '<span class="badge badge-custom text-bg-success"><i class="fas fa-check-circle"></i> Sống</span>' if not is_banned else '<span class="badge badge-custom text-bg-danger"><i class="fas fa-times-circle"></i> Trảm</span>'
+        ban_until = data.get("ban_until", 0)
+        
+        # Check Banned Status Realtime
+        if st == "banned":
+            if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now_ms):
+                is_banned = True
+            else:
+                is_banned = False
+                data["status"] = "active" # Update visual dynamically
+        else:
+            is_banned = False
+
+        if is_banned:
+            status_badge = '<span class="badge badge-custom text-bg-danger"><i class="fas fa-ban"></i> Bị Khóa</span>'
+            ban_btn = f'<a href="/admin/action/unban/{escape(str(k))}" class="action-btn text-success" title="Mở khóa Key"><i class="fas fa-unlock"></i></a>'
+        else:
+            status_badge = '<span class="badge badge-custom text-bg-success"><i class="fas fa-check-circle"></i> Sống</span>'
+            ban_btn = f'<button class="action-btn action-btn-danger" onclick="openBanModal(\'{escape(str(k))}\')" title="Khóa Key ngay lập tức"><i class="fas fa-ban"></i></button>'
+
         vip_badge = '<span class="badge badge-custom" style="background:#f59e0b; color:#000;"><i class="fas fa-crown"></i> VIP</span>' if data.get('vip', False) else '<span class="badge badge-custom bg-secondary">Thường</span>'
         
         is_expired = False
@@ -716,7 +798,7 @@ def admin_dashboard():
 
         keys_html += f'''<tr>
         <td>
-            <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')" title="Nhấn để sao chép Key">{safe_k} <i class="far fa-copy text-muted small"></i></div>
+            <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')" title="Nhấn để Copy">{safe_k} <i class="far fa-copy text-muted small"></i></div>
             <div class="d-flex gap-1 justify-content-center">{vip_badge} {status_badge}</div>
         </td>
         <td>{exp_text}</td>
@@ -730,7 +812,8 @@ def admin_dashboard():
                 <button class="action-btn" onclick="openBindModal('{safe_k}', '{bound_olm}')" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
                 <button class="action-btn" onclick="openProxyModal('{safe_k}')" title="Gắn Proxy Host"><i class="fas fa-network-wired text-primary"></i></button>
                 <button class="action-btn" onclick="openAddTimeModal('{safe_k}')" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
-                <a href="/admin/action/delete/{safe_k}" class="action-btn action-btn-danger" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
+                {ban_btn}
+                <a href="/admin/action/delete/{safe_k}" class="action-btn text-muted" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
             </div>
         </td>
         </tr>'''
@@ -827,7 +910,7 @@ def admin_dashboard():
                         <div class="card-header text-info" style="color: #a855f7 !important;"><i class="fas fa-code"></i> Nạp Script ViolentMonkey Tiêm Tự Động</div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_script" method="POST" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:13px; line-height:1.6;">Dán mã nguồn Script chức năng Violentmonkey vào đây. Hệ thống Proxy sẽ tự động Inject trực tiếp vào web OLM.vn của máy khách (Hỗ trợ Bypass Anti-Cheat mới nhất).</p>
+                                <p class="text-muted mb-3" style="font-size:13px; line-height:1.6;">Dán mã nguồn Script chức năng Violentmonkey vào đây. Hệ thống Proxy sẽ tự động Inject trực tiếp vào web OLM.vn của máy khách.</p>
                                 <textarea name="script_content" class="form-control flex-grow-1 mb-3" style="font-family: 'Consolas', monospace; font-size: 13px; background: #07090e !important; color: #10b981 !important; resize: none; min-height: 200px;" placeholder="// ==UserScript==...">{current_script}</textarea>
                                 <button type="submit" class="btn-primary-custom btn-purple mt-auto"><i class="fas fa-cloud-upload-alt"></i> Cập Nhật Lên Máy Chủ Proxy</button>
                             </form>
@@ -839,7 +922,7 @@ def admin_dashboard():
             <div class="row g-4 mb-4">
                 <div class="col-12">
                     <div class="card">
-                        <div class="card-header text-danger"><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen)</div>
+                        <div class="card-header text-danger"><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen IP)</div>
                         <div class="card-body">
                             <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">{csrf_input}
                                 <input type="text" name="ip" class="form-control" style="max-width:300px;" placeholder="Nhập IP cần khoá..." required>
@@ -886,7 +969,7 @@ def admin_dashboard():
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
                     <form action="/admin/bind_olm" method="POST">{csrf_input}
-                        <div class="modal-header">
+                        <div class="modal-header border-secondary">
                             <h5 class="modal-title fw-bold text-warning"><i class="fas fa-user-tag"></i> GHIM ĐỊNH DANH OLM</h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
@@ -896,7 +979,7 @@ def admin_dashboard():
                             <h4 id="bindKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
                             <input type="text" name="olm_name" id="bindOlmInput" class="form-control form-control-lg text-center" placeholder="Nhập tên tài khoản OLM của khách..." required>
                         </div>
-                        <div class="modal-footer p-3">
+                        <div class="modal-footer border-secondary p-3">
                             <button class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706); color:#000;">LƯU ĐỊNH DANH</button>
                         </div>
                     </form>
@@ -908,7 +991,7 @@ def admin_dashboard():
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
                     <form action="/admin/add_time" method="POST">{csrf_input}
-                        <div class="modal-header">
+                        <div class="modal-header border-secondary">
                             <h5 class="modal-title fw-bold text-info"><i class="fas fa-clock"></i> CỘNG THÊM THỜI GIAN</h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
@@ -928,7 +1011,7 @@ def admin_dashboard():
                                 </div>
                             </div>
                         </div>
-                        <div class="modal-footer p-3">
+                        <div class="modal-footer border-secondary p-3">
                             <button class="btn-primary-custom w-100">XÁC NHẬN CỘNG GIỜ</button>
                         </div>
                     </form>
@@ -940,7 +1023,7 @@ def admin_dashboard():
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
                     <form action="/admin/setup_proxy" method="POST">{csrf_input}
-                        <div class="modal-header">
+                        <div class="modal-header border-secondary">
                             <h5 class="modal-title fw-bold text-primary"><i class="fas fa-network-wired"></i> GẮN SERVER PROXY TƯ NHÂN</h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
@@ -948,16 +1031,52 @@ def admin_dashboard():
                             <input type="hidden" name="key" id="proxyKeyInput">
                             <p class="text-warning fw-bold mb-2 small"><i class="fas fa-exclamation-triangle"></i> LƯU Ý: Phải Ghim Tên OLM Trước!</p>
                             <h4 id="proxyKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
-                            <p class="text-muted" style="font-size:13px;">Bạn có thể tự nhập tên Máy Chủ hoặc ấn nút Random. Cổng sẽ được ngẫu nhiên cấp phát an toàn.</p>
+                            <p class="text-muted" style="font-size:13px;">Chỉ cần nhập tên Máy Chủ. Cổng Proxy sẽ được hệ thống ngẫu nhiên cấp phát an toàn.</p>
                             
                             <div class="input-group mb-3">
-                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success fw-bold" placeholder="VD: p1.sv.lvt.com" required>
-                                <button type="button" class="btn btn-outline-success" onclick="document.getElementById('proxyHostInput').value = 'sv' + Math.floor(Math.random()*999) + '.proxy.com'" title="Random Tên Máy Chủ"><i class="fas fa-random"></i> Random</button>
+                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success" placeholder="VD: p1.sv.lvt.com" required>
+                                <button type="button" class="btn btn-outline-success px-3" onclick="document.getElementById('proxyHostInput').value = 'sv' + Math.floor(Math.random()*9999) + '.proxy.com'" title="Random nhanh tên host"><i class="fas fa-random"></i></button>
                             </div>
                             
                         </div>
-                        <div class="modal-footer p-3">
-                            <button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH VÀ TẠO CỔNG</button>
+                        <div class="modal-footer border-secondary p-3">
+                            <button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH VÀ RANDOM CỔNG</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal fade" id="banModal" tabindex="-1" data-bs-theme="dark">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <form action="/admin/custom_ban" method="POST">{csrf_input}
+                        <div class="modal-header border-secondary">
+                            <h5 class="modal-title fw-bold text-danger"><i class="fas fa-ban"></i> KHÓA KEY (TRẢM KHÁCH)</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body p-4 text-center">
+                            <input type="hidden" name="key" id="banKeyInput">
+                            <p class="text-muted mb-2">Đang thiết lập khóa Key:</p>
+                            <h4 id="banKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <input type="number" name="time_val" class="form-control form-control-lg text-center" placeholder="Thời gian">
+                                </div>
+                                <div class="col-6">
+                                    <select name="time_unit" class="form-select form-select-lg">
+                                        <option value="minutes">Phút</option>
+                                        <option value="hours">Giờ</option>
+                                        <option value="days">Ngày</option>
+                                        <option value="months">Tháng</option>
+                                        <option value="permanent" selected>Vĩnh Viễn</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <p class="text-danger small mt-3 mb-0">* LƯU Ý: Khi bị khóa, khách đang xài sẽ lập tức bị hệ thống đá văng khỏi OLM.vn.</p>
+                        </div>
+                        <div class="modal-footer border-secondary p-3">
+                            <button type="submit" class="btn-primary-custom action-btn-danger w-100 border-0" style="border-radius: 8px;">XÁC NHẬN KHÓA</button>
                         </div>
                     </form>
                 </div>
@@ -969,8 +1088,8 @@ def admin_dashboard():
             function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
             function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
             function openProxyModal(key) {{ document.getElementById('proxyKeyInput').value = key; document.getElementById('proxyKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('proxyModal')).show(); }}
+            function openBanModal(key) {{ document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('banModal')).show(); }}
             
-            // [FIX] Tính năng Copy Key
             function copyToClipboard(text) {{
                 navigator.clipboard.writeText(text);
                 Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}});
@@ -992,7 +1111,7 @@ def create_key():
     with db_lock:
         for _ in range(qty):
             nk = generate_proxy_key()
-            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "vip": vip, "status": "active", "bound_olm": "", "proxy_host": "", "proxy_port": 0}
+            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "vip": vip, "status": "active", "bound_olm": "", "proxy_host": "", "proxy_port": 0, "ban_until": 0}
             if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"minute":60000, "hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
             else: db["keys"][nk]["exp"] = "permanent"
         save_db(db)
@@ -1030,6 +1149,26 @@ def admin_add_time():
             if kd.get("exp") == "pending": kd["durationMs"] = kd.get("durationMs", 0) + ms_to_add
             else:
                 kd["exp"] = max(kd.get("exp", now), now) + ms_to_add
+            save_db(db)
+    return redirect('/admin')
+
+# [MỚI] API XỬ LÝ KHÓA KEY THEO THỜI GIAN
+@app.route('/admin/custom_ban', methods=['POST'])
+def admin_custom_ban():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    key = request.form.get('key', '').strip()
+    t_val = safe_int(request.form.get('time_val', 0))
+    t_unit = request.form.get('time_unit', 'permanent')
+    db = load_db()
+    with db_lock:
+        if key in db.get("keys", {}):
+            kd = db["keys"][key]
+            kd["status"] = "banned"
+            if t_unit == 'permanent':
+                kd["ban_until"] = "permanent"
+            else:
+                ms_to_add = t_val * {"minutes": 60000, "hours": 3600000, "days": 86400000, "months": 2592000000}.get(t_unit, 0)
+                kd["ban_until"] = int(time.time() * 1000) + ms_to_add
             save_db(db)
     return redirect('/admin')
 
@@ -1085,7 +1224,11 @@ def key_actions(action, key):
     db = load_db()
     with db_lock:
         if key in db.get("keys", {}):
-            if action == 'delete': db["keys"].pop(key, None)
+            if action == 'delete': 
+                db["keys"].pop(key, None)
+            elif action == 'unban':
+                db["keys"][key]['status'] = 'active'
+                db["keys"][key]['ban_until'] = 0
             save_db(db)
     return redirect('/admin')
 
