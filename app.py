@@ -90,7 +90,7 @@ def handle_exception(e):
     if isinstance(e, HTTPException): return e
     return "Hệ thống đang bảo trì.", 500
 
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 # Nâng giới hạn file lên 10MB
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = True      
@@ -197,10 +197,6 @@ def save_db(db=None):
 def generate_proxy_key():
     return ''.join(secrets.choice(string.ascii_lowercase) for _ in range(15))
 
-def log_admin_action(db, action_text):
-    db.setdefault("admin_logs", []).insert(0, {"time": int(time.time() * 1000), "action": action_text})
-    db["admin_logs"] = db["admin_logs"][:100]
-
 def garbage_collector():
     while True:
         time.sleep(3600) 
@@ -220,8 +216,7 @@ def garbage_collector():
 
 threading.Thread(target=garbage_collector, daemon=True).start()
 
-def get_real_ip():
-    return request.remote_addr or "Unknown_IP"
+def get_real_ip(): return request.remote_addr or "Unknown_IP"
 
 @app.before_request
 def firewall_and_csrf():
@@ -281,7 +276,7 @@ def user_logout():
     return redirect('/')
 
 # ========================================================
-# KICK USER & GIAO DỊCH SCRIPT (THÊM AUTO THÔNG BÁO UI)
+# KICK USER & GIAO DỊCH SCRIPT
 # ========================================================
 @app.route('/api/check_ban_status')
 def check_ban_status():
@@ -306,22 +301,8 @@ def serve_custom_script():
     db = load_db()
     user_script = db.get("settings", {}).get("custom_script", "")
     
-    # Payload gộp 2 chức năng:
-    # 1. Kick User nếu bị Khóa Key.
-    # 2. Bật Thông báo Mạng riêng tư (Chỉ hiện 1 lần)
-    logic_payload = f"""
+    kick_payload = f"""
     (function() {{
-        // Auto Notification
-        if (!sessionStorage.getItem('lvt_proxy_connected')) {{
-            var toast = document.createElement('div');
-            toast.innerHTML = '✅ LVT PROXY: Kết nối thành công mạng riêng tư! Chúc bạn sử dụng OLM vui vẻ.';
-            toast.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#00ffcc; color:#000; padding:15px 20px; border-radius:10px; z-index:9999999; font-weight:bold; box-shadow:0 0 20px rgba(0,255,204,0.6); font-family:sans-serif; transition: 0.5s; opacity: 1;';
-            document.body.appendChild(toast);
-            setTimeout(function(){{ toast.style.opacity = '0'; setTimeout(()=>toast.remove(), 500); }}, 5000);
-            sessionStorage.setItem('lvt_proxy_connected', 'true');
-        }}
-
-        // Check Ban (Kick)
         setInterval(function() {{
             fetch('{WEB_URL}/api/check_ban_status')
             .then(r => r.json())
@@ -335,10 +316,8 @@ def serve_custom_script():
         }}, 10000); 
     }})();
     """
-    
-    resp = make_response(logic_payload + "\n" + user_script)
+    resp = make_response(kick_payload + "\n" + user_script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return resp
 
 @app.route('/download-ca')
@@ -346,7 +325,6 @@ def download_ca():
     db = load_db()
     ca_data = db.get("settings", {}).get("ca_cert", "")
     if not ca_data.strip(): return "⚠️ Admin chưa nạp Chứng chỉ CA của Termux lên hệ thống! Vui lòng báo Admin nạp vào C-Panel.", 404
-        
     resp = make_response(ca_data)
     resp.headers['Content-Type'] = 'application/x-x509-ca-cert'
     resp.headers['Content-Disposition'] = 'attachment; filename="LVT_PROXY_CA.crt"'
@@ -358,7 +336,6 @@ def generate_pac_file(key):
     with db_lock:
         kd = db.get("keys", {}).get(key)
         now = int(time.time() * 1000)
-        
         if not kd or not kd.get("proxy_host"): return "Trạng thái Key không hợp lệ.", 403
         if kd.get("status") == "banned":
             ban_until = kd.get("ban_until", "permanent")
@@ -369,8 +346,8 @@ def generate_pac_file(key):
         
         pac_script = f"""
         function FindProxyForURL(url, host) {{
-            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn" || host === "mitm.it") {{
-                return "PROXY 127.0.0.1:8080; PROXY {host}:{port}; DIRECT";
+            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn") {{
+                return "PROXY {host}:{port}";
             }}
             return "DIRECT";
         }}
@@ -380,7 +357,7 @@ def generate_pac_file(key):
         return resp
 
 # ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG
+# GIAO DIỆN WEB NGƯỜI DÙNG (THÊM TÍNH NĂNG CHECK PROXY REALTIME)
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
@@ -392,7 +369,82 @@ def user_proxy_portal():
 
     username = session.get('username')
     html = f"""
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LVT - Kích Hoạt Định Tuyến</title><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}{CSS_GLASS}.info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #00ffcc; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; position: relative; }}.step-title {{ color: #00ffcc; font-weight: 900; margin-top: 15px; margin-bottom: 5px; font-size: 15px; border-bottom: 1px solid rgba(0,255,204,0.3); padding-bottom: 5px; text-transform:uppercase; }}.step-text {{ font-size: 13px; color: #ccc; line-height: 1.6; margin: 8px 0; }}.highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 14px; user-select: all; padding: 6px 10px; background: rgba(0,255,204,0.1); border-radius: 5px; word-break: break-all; display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box; }}.cert-btn {{ background: linear-gradient(90deg, #a855f7, #6366f1); color: #fff; text-decoration: none; padding: 12px; border-radius: 8px; display: block; text-align: center; font-weight: 900; margin-top: 20px; transition: 0.3s; text-transform:uppercase; border:none; width:100%; cursor:pointer; }}.cert-btn:hover {{ transform: scale(1.02); box-shadow: 0 0 15px rgba(168,85,247,0.5); }}.inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}.inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}.user-badge {{ position:absolute; top:20px; right:20px; background:rgba(0,255,204,0.1); color:#00ffcc; padding:8px 15px; border-radius:20px; font-weight:bold; font-size:12px; display:flex; align-items:center; gap:10px; border:1px solid rgba(0,255,204,0.3); z-index: 10; }}.logout-btn {{ color:#ff3366; text-decoration:none; background:rgba(255,51,102,0.1); padding:4px 10px; border-radius:15px; border:1px solid rgba(255,51,102,0.3); transition:0.3s; cursor:pointer; }}.logout-btn:hover {{ background:#ff3366; color:#fff; }}.btn-copy-pac {{ background: none; border: none; color: #fff; cursor: pointer; padding: 0 5px; }}</style></head><body><div class="user-badge"><i class="fas fa-user-circle"></i> {escape(username)} <a href="/user_logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Thoát Web</a></div><div class="glass-panel" style="max-width: 550px; width: 100%; margin-top: 50px;"><h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-route"></i> ĐỊNH TUYẾN PROXY LVT</h2><p style="color:#889; font-size:13px; margin-bottom:25px;">Chỉ can thiệp vào OLM. Các trang web khác hoạt động tốc độ cao bình thường.</p><input type="text" id="k_inp" class="inp-neon" placeholder="dán mã key 15 ký tự vào đây..."><button id="btn_activate" class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT</button><div id="proxy-result" class="info-box"><div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px dashed #333; padding-bottom: 10px; margin-bottom: 15px;"><h4 style="color:#00ffcc; margin:0; font-size:16px;">THÔNG TIN KẾT NỐI</h4><button class="logout-btn" style="border-radius: 8px; font-size: 11px;" onclick="logoutKey()"><i class="fas fa-eject"></i> Đăng xuất Key</button></div><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;">👤 Định danh OLM hợp lệ:</div><div class="highlight" style="color:#ffcc00; background:rgba(255,204,0,0.1); justify-content:center;" id="res-olm"></div></div><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-link"></i> Link Cấu Hình Tự Động (PAC URL):</div><div class="highlight" id="res-pac-container"></div><p style="font-size:11px; color:#ff3366; margin-top:5px; margin-bottom:0;"><i>* Copy link này dán vào "URL PAC" trong cài đặt Wifi.</i></p></div><div style="display:flex; gap:10px; margin-bottom:12px; margin-top:15px;"><div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị:</div><div id="res-dev" style="font-size:14px; font-weight:bold; color:#fff;"></div></div><div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-clock"></i> Hạn dùng (EXP):</div><div id="res-exp" style="font-size:14px; font-weight:bold; color:#ff3366;"></div></div></div><a href="/download-ca" class="cert-btn" download><i class="fas fa-shield-alt"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</a><div style="margin-top:25px; border-top: 1px dashed #555; padding-top: 15px;"><h4 style="color:#00ffcc; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT</h4><div class="step-title"><i class="fab fa-android"></i> DÀNH CHO ANDROID</div><p class="step-text"><b>Bước 1:</b> Mở Cài đặt Wifi, ấn vào chữ <b>(i)</b> cạnh Wifi đang dùng.</p><p class="step-text"><b>Bước 2:</b> Tìm phần <b>Proxy</b>, đổi thành <b>Tự động cấu hình (Auto-Config)</b>.</p><p class="step-text"><b>Bước 3:</b> Dán đường link PAC màu xanh ở trên vào ô <b>Địa chỉ web PAC / URL</b> và Lưu lại.</p><p class="step-text"><b>Bước 4:</b> Bấm tải Chứng Chỉ màu tím ở trên. Cài đặt vào máy (Cài đặt -> Chứng chỉ -> Chọn VPN và Ứng dụng).</p><div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div><p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Tự động (Automatic)</b>.</p><p class="step-text"><b>Bước 2:</b> Dán đường link PAC ở trên vào ô <b>URL</b> rồi Lưu.</p><p class="step-text"><b>Bước 3:</b> Bấm nút Tải Chứng Chỉ. Trình duyệt báo đã tải hồ sơ.</p><p class="step-text"><b>Bước 4:</b> Cài đặt -> Đã tải về hồ sơ -> Cài đặt.</p><p class="step-text"><b>Bước 5 (Quan Trọng):</b> Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh.</p></div></div></div><script>let expInterval; setInterval(function() {{ fetch('/api/check_ban_status').then(r => r.json()).then(d => {{ if(d.banned) {{ localStorage.removeItem('lvt_proxy_key'); alert("⚠️ HỆ THỐNG: " + d.reason); window.location.href = "https://google.com"; }} }}).catch(e => {{}}); }}, 10000); window.onload = function() {{ let savedKey = localStorage.getItem('lvt_proxy_key'); if(savedKey) {{ document.getElementById('k_inp').value = savedKey; actKey(true); }} }}; function copyPacUrl(url) {{ navigator.clipboard.writeText(url); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Link PAC!', showConfirmButton: false, timer: 1500, background: '#1a1c26', color: '#fff'}}); }} function logoutKey() {{ localStorage.removeItem('lvt_proxy_key'); document.getElementById('k_inp').value = ''; document.getElementById('proxy-result').style.display = 'none'; if(expInterval) clearInterval(expInterval); Swal.fire({{toast: true, position: 'top-end', icon: 'info', title: 'Đã đăng xuất Key trên máy này!', showConfirmButton: false, timer: 2000, background: '#1a1c26', color: '#fff'}}); }} function actKey(isAuto = false) {{ let k = document.getElementById('k_inp').value.trim().toLowerCase(); if(!k) {{ if(!isAuto) Swal.fire('Lỗi','Vui lòng dán Key!','warning'); return; }} if(!isAuto) {{ document.getElementById('btn_activate').innerHTML = '<i class="fas fa-spinner fa-spin"></i> ĐANG KIỂM TRA...'; }} fetch('/api/proxy/activate', {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{key:k}}) }}).then(r=>r.json()).then(r=>{{ document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT'; if(r.status==='success') {{ localStorage.setItem('lvt_proxy_key', k); document.getElementById('proxy-result').style.display = 'block'; document.getElementById('res-olm').innerText = r.olm; let pacUrl = window.location.origin + "/proxy_config/" + k + ".pac"; document.getElementById('res-pac-container').innerHTML = `<span style="word-break: break-all;">${{pacUrl}}</span> <button class="btn-copy-pac" onclick="copyPacUrl('${{pacUrl}}')" title="Copy"><i class="far fa-copy fa-lg"></i></button>`; document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs; if(expInterval) clearInterval(expInterval); if (r.exp === 'permanent') {{ document.getElementById('res-exp').innerText = 'Vĩnh Viễn'; }} else {{ expInterval = setInterval(() => {{ let rem = r.exp - Date.now(); if(rem <= 0) {{ document.getElementById('res-exp').innerText = 'HẾT HẠN'; clearInterval(expInterval); localStorage.removeItem('lvt_proxy_key'); }} else {{ let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000); document.getElementById('res-exp').innerText = `${{d}}d ${{h}}h ${{m}}m ${{s}}s`; }} }}, 1000); }} if(!isAuto) Swal.fire('Thành Công', 'Đã lưu Key và cấp link cấu hình. Chỉ OLM mới đi qua Proxy, lướt web khác bình thường!', 'success'); }} else {{ localStorage.removeItem('lvt_proxy_key'); document.getElementById('proxy-result').style.display = 'none'; if(!isAuto) Swal.fire('Lỗi', r.msg, 'error'); }} }}).catch(e => {{ document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT'; if(!isAuto) Swal.fire('Lỗi', 'Không kết nối được tới server!', 'error'); }}); }}</script></body></html>
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LVT - Kích Hoạt Định Tuyến</title><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}{CSS_GLASS}.info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #00ffcc; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; position: relative; }}.step-title {{ color: #00ffcc; font-weight: 900; margin-top: 15px; margin-bottom: 5px; font-size: 15px; border-bottom: 1px solid rgba(0,255,204,0.3); padding-bottom: 5px; text-transform:uppercase; }}.step-text {{ font-size: 13px; color: #ccc; line-height: 1.6; margin: 8px 0; }}.highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 14px; user-select: all; padding: 6px 10px; background: rgba(0,255,204,0.1); border-radius: 5px; word-break: break-all; display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box; }}.cert-btn {{ background: linear-gradient(90deg, #a855f7, #6366f1); color: #fff; text-decoration: none; padding: 12px; border-radius: 8px; display: block; text-align: center; font-weight: 900; margin-top: 20px; transition: 0.3s; text-transform:uppercase; border:none; width:100%; cursor:pointer; }}.cert-btn:hover {{ transform: scale(1.02); box-shadow: 0 0 15px rgba(168,85,247,0.5); }}.inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}.inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}.user-badge {{ position:absolute; top:20px; right:20px; background:rgba(0,255,204,0.1); color:#00ffcc; padding:8px 15px; border-radius:20px; font-weight:bold; font-size:12px; display:flex; align-items:center; gap:10px; border:1px solid rgba(0,255,204,0.3); z-index: 10; }}.logout-btn {{ color:#ff3366; text-decoration:none; background:rgba(255,51,102,0.1); padding:4px 10px; border-radius:15px; border:1px solid rgba(255,51,102,0.3); transition:0.3s; cursor:pointer; }}.logout-btn:hover {{ background:#ff3366; color:#fff; }}.btn-copy-pac {{ background: none; border: none; color: #fff; cursor: pointer; padding: 0 5px; }}</style></head><body><div class="user-badge"><i class="fas fa-user-circle"></i> {escape(username)} <a href="/user_logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Thoát Web</a></div><div class="glass-panel" style="max-width: 550px; width: 100%; margin-top: 50px;"><h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-route"></i> ĐỊNH TUYẾN PROXY LVT</h2><p style="color:#889; font-size:13px; margin-bottom:25px;">Chỉ can thiệp vào OLM. Các trang web khác hoạt động tốc độ cao bình thường.</p><input type="text" id="k_inp" class="inp-neon" placeholder="dán mã key 15 ký tự vào đây..."><button id="btn_activate" class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT</button><div id="proxy-result" class="info-box"><div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px dashed #333; padding-bottom: 10px; margin-bottom: 15px;"><h4 style="color:#00ffcc; margin:0; font-size:16px;">THÔNG TIN KẾT NỐI</h4><button class="logout-btn" style="border-radius: 8px; font-size: 11px;" onclick="logoutKey()"><i class="fas fa-eject"></i> Đăng xuất Key</button></div>
+                
+                <div style="margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;">
+                    <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-signal"></i> Trạng thái Proxy trên thiết bị:</div>
+                    <div id="res-proxy-status" style="font-size:14px; font-weight:bold; color:#f59e0b;"><i class="fas fa-spinner fa-spin"></i> Đang chờ cài đặt...</div>
+                </div>
+
+                <div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;">👤 Định danh OLM hợp lệ:</div><div class="highlight" style="color:#ffcc00; background:rgba(255,204,0,0.1); justify-content:center;" id="res-olm"></div></div><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-link"></i> Link Cấu Hình Tự Động (PAC URL):</div><div class="highlight" id="res-pac-container"></div><p style="font-size:11px; color:#ff3366; margin-top:5px; margin-bottom:0;"><i>* Copy link này dán vào "URL PAC" trong cài đặt Wifi.</i></p></div><div style="display:flex; gap:10px; margin-bottom:12px; margin-top:15px;"><div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị:</div><div id="res-dev" style="font-size:14px; font-weight:bold; color:#fff;"></div></div><div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-clock"></i> Hạn dùng (EXP):</div><div id="res-exp" style="font-size:14px; font-weight:bold; color:#ff3366;"></div></div></div><a href="/download-ca" class="cert-btn" download><i class="fas fa-shield-alt"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</a><div style="margin-top:25px; border-top: 1px dashed #555; padding-top: 15px;"><h4 style="color:#00ffcc; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT</h4><div class="step-title"><i class="fab fa-android"></i> DÀNH CHO ANDROID</div><p class="step-text"><b>Bước 1:</b> Mở Cài đặt Wifi, ấn vào chữ <b>(i)</b> cạnh Wifi đang dùng.</p><p class="step-text"><b>Bước 2:</b> Tìm phần <b>Proxy</b>, đổi thành <b>Tự động cấu hình (Auto-Config)</b>.</p><p class="step-text"><b>Bước 3:</b> Dán đường link PAC màu xanh ở trên vào ô <b>Địa chỉ web PAC / URL</b> và Lưu lại.</p><p class="step-text"><b>Bước 4:</b> Bấm tải Chứng Chỉ màu tím ở trên. Cài đặt vào máy (Cài đặt -> Chứng chỉ -> Chọn VPN và Ứng dụng).</p><div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div><p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Tự động (Automatic)</b>.</p><p class="step-text"><b>Bước 2:</b> Dán đường link PAC ở trên vào ô <b>URL</b> rồi Lưu.</p><p class="step-text"><b>Bước 3:</b> Bấm nút Tải Chứng Chỉ. Trình duyệt báo đã tải hồ sơ.</p><p class="step-text"><b>Bước 4:</b> Cài đặt -> Đã tải về hồ sơ -> Cài đặt.</p><p class="step-text"><b>Bước 5 (Quan Trọng):</b> Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh.</p></div></div></div>
+        
+        <script>
+            let expInterval;
+            let proxyChecker;
+
+            setInterval(function() {{ fetch('/api/check_ban_status').then(r => r.json()).then(d => {{ if(d.banned) {{ localStorage.removeItem('lvt_proxy_key'); alert("⚠️ HỆ THỐNG: " + d.reason); window.location.href = "https://google.com"; }} }}).catch(e => {{}}); }}, 10000); 
+            
+            window.onload = function() {{ let savedKey = localStorage.getItem('lvt_proxy_key'); if(savedKey) {{ document.getElementById('k_inp').value = savedKey; actKey(true); }} }}; 
+            
+            function copyPacUrl(url) {{ navigator.clipboard.writeText(url); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Link PAC!', showConfirmButton: false, timer: 1500, background: '#1a1c26', color: '#fff'}}); }} 
+            
+            function logoutKey() {{ localStorage.removeItem('lvt_proxy_key'); document.getElementById('k_inp').value = ''; document.getElementById('proxy-result').style.display = 'none'; if(expInterval) clearInterval(expInterval); if(proxyChecker) clearInterval(proxyChecker); Swal.fire({{toast: true, position: 'top-end', icon: 'info', title: 'Đã đăng xuất Key trên máy này!', showConfirmButton: false, timer: 2000, background: '#1a1c26', color: '#fff'}}); }} 
+            
+            function actKey(isAuto = false) {{ 
+                let k = document.getElementById('k_inp').value.trim().toLowerCase(); 
+                if(!k) {{ if(!isAuto) Swal.fire('Lỗi','Vui lòng dán Key!','warning'); return; }} 
+                if(!isAuto) {{ document.getElementById('btn_activate').innerHTML = '<i class="fas fa-spinner fa-spin"></i> ĐANG KIỂM TRA...'; }} 
+                
+                fetch('/api/proxy/activate', {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{key:k}}) }}).then(r=>r.json()).then(r=>{{ 
+                    document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT'; 
+                    if(r.status==='success') {{ 
+                        localStorage.setItem('lvt_proxy_key', k); 
+                        document.getElementById('proxy-result').style.display = 'block'; 
+                        document.getElementById('res-olm').innerText = r.olm; 
+                        let pacUrl = window.location.origin + "/proxy_config/" + k + ".pac"; 
+                        document.getElementById('res-pac-container').innerHTML = `<span style="word-break: break-all;">${{pacUrl}}</span> <button class="btn-copy-pac" onclick="copyPacUrl('${{pacUrl}}')" title="Copy"><i class="far fa-copy fa-lg"></i></button>`; 
+                        document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs; 
+                        
+                        // Xử lý bộ đếm EXP
+                        if(expInterval) clearInterval(expInterval); 
+                        if (r.exp === 'permanent') {{ document.getElementById('res-exp').innerText = 'Vĩnh Viễn'; 
+                        }} else {{ 
+                            expInterval = setInterval(() => {{ let rem = r.exp - Date.now(); if(rem <= 0) {{ document.getElementById('res-exp').innerText = 'HẾT HẠN'; clearInterval(expInterval); localStorage.removeItem('lvt_proxy_key'); }} else {{ let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000); document.getElementById('res-exp').innerText = `${{d}}d ${{h}}h ${{m}}m ${{s}}s`; }} }}, 1000); 
+                        }} 
+
+                        // [MỚI] Tự động dò tìm Proxy đã được kích hoạt trong Wifi chưa
+                        if(proxyChecker) clearInterval(proxyChecker);
+                        document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang chờ cài đặt vào Wifi...';
+                        document.getElementById('res-proxy-status').style.color = '#f59e0b';
+                        
+                        proxyChecker = setInterval(() => {{
+                            // Bắn lệnh ping bí mật tới olm, nếu proxy hoạt động nó sẽ bắt được
+                            fetch('https://olm.vn/lvt_proxy_ping')
+                            .then(res => res.json())
+                            .then(data => {{
+                                if(data.status === 'ok') {{
+                                    clearInterval(proxyChecker);
+                                    document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-check-circle"></i> ĐÃ KẾT NỐI MẠNG RIÊNG TƯ';
+                                    document.getElementById('res-proxy-status').style.color = '#22c55e';
+                                    Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Tuyệt vời! Proxy đã được kết nối với Wifi của bạn.', showConfirmButton: false, timer: 4000, background: '#1a1c26', color: '#fff'}});
+                                }}
+                            }}).catch(err => {{}});
+                        }}, 3000);
+
+                        if(!isAuto) Swal.fire('Thành Công', 'Đã lưu Key. Hãy copy Link PAC dán vào cấu hình Wifi nhé!', 'success'); 
+                    }} else {{ 
+                        localStorage.removeItem('lvt_proxy_key'); 
+                        document.getElementById('proxy-result').style.display = 'none'; 
+                        if(!isAuto) Swal.fire('Lỗi', r.msg, 'error'); 
+                    }} 
+                }}).catch(e => {{ 
+                    document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> LẤY CẤU HÌNH LIÊN KẾT'; 
+                    if(!isAuto) Swal.fire('Lỗi', 'Không kết nối được tới server!', 'error'); 
+                }}); 
+            }}
+        </script>
+    </body>
+    </html>
     """
     return render_template_string_safe(html)
 
@@ -458,7 +510,7 @@ def admin_login():
             admin_login_attempts[ip] = attempts
             return swal_back("Từ Chối", f"Sai mật khẩu! Bạn còn {5 - attempts['count']} lần thử.", "error")
             
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>C-Panel Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #00ffcc; }}</style></head><body style="background:#0b0f19; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px; background:#131722; border-color:#1e293b;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>C-Panel Admin Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #00ffcc; }}</style></head><body style="background:#0b0f19; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px; background:#131722; border-color:#1e293b;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
     except Exception as e: return f"LỖI: {str(e)}", 200
 
 @app.route('/admin')
@@ -471,9 +523,8 @@ def admin_dashboard():
         keys_items = list(db.get("keys", {}).items())
         banned_ips = list(db.get("banned_ips", []))
         
-        # [NÂNG CẤP]: HIỂN THỊ TÌNH TRẠNG FILE THAY VÌ HIỂN THỊ MÃ NGUỒN DÀI THÒÒNG
         current_script_len = len(db.get("settings", {}).get("custom_script", ""))
-        if current_script_len > 10: script_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Hệ thống đã nạp file Script (Dung lượng: {current_script_len} bytes)</span>'
+        if current_script_len > 10: script_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Script (Dung lượng: {current_script_len} bytes)</span>'
         else: script_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script nào được nạp!</span>'
 
         current_ca_len = len(db.get("settings", {}).get("ca_cert", ""))
@@ -601,13 +652,9 @@ def admin_dashboard():
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_script" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
                                 <p class="text-muted mb-3" style="font-size:12px;">Chỉ cần chọn file Script gốc (đuôi .js hoặc .txt) tải lên đây. Hệ thống sẽ tự động gộp file vào bộ xử lý lõi.</p>
-                                
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">
-                                    {script_status}
-                                </div>
-
+                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{script_status}</div>
                                 <input type="file" name="script_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
-                                <button type="submit" class="btn-primary-custom btn-purple mt-auto"><i class="fas fa-cloud-upload-alt"></i> Nạp File Script Gốc</button>
+                                <button type="submit" class="btn-primary-custom btn-purple mt-auto"><i class="fas fa-cloud-upload-alt"></i> Nạp File Script</button>
                             </form>
                         </div>
                     </div>
@@ -619,13 +666,9 @@ def admin_dashboard():
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_ca" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
                                 <p class="text-muted mb-3" style="font-size:12px;">Vui lòng copy file <code class="text-warning">mitmproxy-ca-cert.pem</code> từ điện thoại Termux ra, sau đó chọn File đó tải thẳng lên đây.</p>
-                                
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">
-                                    {ca_status}
-                                </div>
-
+                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{ca_status}</div>
                                 <input type="file" name="ca_file" class="form-control mb-3 flex-grow-1" accept=".pem,.crt,.cer,.txt" required>
-                                <button type="submit" class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-save"></i> Upload File Chứng Chỉ</button>
+                                <button type="submit" class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-save"></i> Upload Chứng Chỉ</button>
                             </form>
                         </div>
                     </div>
@@ -839,54 +882,35 @@ def admin_bind_olm():
             save_db(db)
     return redirect('/admin')
 
-# [NÂNG CẤP] XỬ LÝ NẠP SCRIPT TỪ FILE UPLOAD
 @app.route('/admin/update_script', methods=['POST'])
 def admin_update_script():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    
-    if 'script_file' not in request.files:
-        return swal_back("Lỗi", "Bạn chưa chọn file Script!", "error")
-    
+    if 'script_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script!", "error")
     file = request.files['script_file']
-    if file.filename == '':
-        return swal_back("Lỗi", "Bạn chưa chọn file Script!", "error")
-        
-    try:
-        script_content = file.read().decode('utf-8')
-    except:
-        return swal_back("Lỗi định dạng", "File không đọc được. Vui lòng đảm bảo file là định dạng text (.js hoặc .txt)", "error")
-        
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script!", "error")
+    try: script_content = file.read().decode('utf-8')
+    except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
     db = load_db()
     with db_lock:
         db.setdefault("settings", {})["custom_script"] = script_content
         save_db(db)
-    return swal_redirect("Thành Công", "Đã nạp file Script mới lên hệ thống thành công!", "success", "/admin")
+    return swal_redirect("Thành Công", "Đã nạp file Script thành công!", "success", "/admin")
 
-# [NÂNG CẤP] XỬ LÝ NẠP CHỨNG CHỈ CA TỪ FILE UPLOAD
 @app.route('/admin/update_ca', methods=['POST'])
 def admin_update_ca():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    
-    if 'ca_file' not in request.files:
-        return swal_back("Lỗi", "Bạn chưa chọn file Chứng chỉ!", "error")
-        
+    if 'ca_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Chứng chỉ!", "error")
     file = request.files['ca_file']
-    if file.filename == '':
-        return swal_back("Lỗi", "Bạn chưa chọn file Chứng chỉ!", "error")
-        
-    try:
-        ca_cert = file.read().decode('utf-8')
-    except:
-        return swal_back("Lỗi định dạng", "File chứng chỉ không hợp lệ. Vui lòng tải đúng file .pem", "error")
-
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Chứng chỉ!", "error")
+    try: ca_cert = file.read().decode('utf-8')
+    except: return swal_back("Lỗi", "File không hợp lệ", "error")
     if not ca_cert.strip().startswith("-----BEGIN CERTIFICATE-----"): 
-        return swal_back("Lỗi Cấu Trúc", "File chứng chỉ không đúng chuẩn CA (Bắt đầu bằng -----BEGIN CERTIFICATE-----).", "error")
-        
+        return swal_back("Lỗi", "File không đúng chuẩn CA Termux", "error")
     db = load_db()
     with db_lock:
         db.setdefault("settings", {})["ca_cert"] = ca_cert.strip()
         save_db(db)
-    return swal_redirect("Thành Công", "Đã lưu file Chứng chỉ CA lên hệ thống!", "success", "/admin")
+    return swal_redirect("Thành Công", "Đã lưu chứng chỉ CA lên hệ thống!", "success", "/admin")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
