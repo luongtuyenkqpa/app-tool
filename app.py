@@ -65,7 +65,7 @@ def telegram_polling():
                         
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để đăng nhập/đăng ký cấu hình Proxy & Script:"
+                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
                             keyboard = {"inline_keyboard": [
                                 [{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]
                             ]}
@@ -83,9 +83,6 @@ def telegram_polling():
 
 threading.Thread(target=telegram_polling, daemon=True).start()
 
-# ========================================================
-# HỆ THỐNG CHỐNG SLEEP/DIE SERVER RENDER (KEEP-AWAKE)
-# ========================================================
 def keep_awake():
     while True:
         time.sleep(14 * 60)
@@ -360,7 +357,7 @@ def serve_custom_script():
     return resp
 
 # ========================================================
-# API TẠO FILE PAC TỰ ĐỘNG (ĐIỀU HƯỚNG CHỈ VÀO OLM MỚI QUA PROXY)
+# [FIX BẢN MỚI] BẺ LÁI PAC: BẮT CẢ MITM.IT QUA TERMUX
 # ========================================================
 @app.route('/proxy_config/<key>.pac')
 def generate_pac_file(key):
@@ -373,10 +370,12 @@ def generate_pac_file(key):
         host = kd.get("proxy_host")
         port = kd.get("proxy_port")
         
+        # [FIX QUAN TRỌNG]: Bắt buộc mitm.it và olm.vn phải chui qua Proxy Termux (127.0.0.1:8080)
+        # Các tên miền khác sẽ đi thẳng.
         pac_script = f"""
         function FindProxyForURL(url, host) {{
-            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn") {{
-                return "PROXY {host}:{port}";
+            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn" || host === "mitm.it") {{
+                return "PROXY 127.0.0.1:8080; PROXY {host}:{port}; DIRECT";
             }}
             return "DIRECT";
         }}
@@ -386,7 +385,7 @@ def generate_pac_file(key):
         return resp
 
 # ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG (THÊM THIẾT BỊ VÀ EXP ĐẾM NGƯỢC)
+# GIAO DIỆN WEB NGƯỜI DÙNG (THIẾT BỊ VÀ EXP ĐẾM NGƯỢC)
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
@@ -581,11 +580,10 @@ def user_proxy_portal():
                 }}).catch(e=>Swal.fire('Lỗi', 'Không thể kết nối đến Máy chủ!', 'error'));
             }}
 
-            // [FIX] Cửa sổ cảnh báo nhắc nhở cài đặt proxy trước khi tải CA. Link gọi đúng http://mitm.it/
             function downloadMitmCert() {{
                 Swal.fire({{
                     title: 'LƯU Ý BẮT BUỘC',
-                    html: '<p style="font-size:14px; color:#ccc;">Bạn <b>PHẢI</b> cài đặt xong cấu hình Proxy vào Wi-Fi (như hướng dẫn bên dưới) thì nút tải chứng chỉ này mới hoạt động.</p><p style="font-size:14px; color:#ff3366;">Nếu chưa cài Proxy vào Wi-Fi, trang tải sẽ báo lỗi.</p>',
+                    html: '<p style="font-size:14px; color:#ccc;">Bạn <b>PHẢI</b> cài đặt xong cấu hình Proxy PAC vào Wi-Fi thì nút tải chứng chỉ này mới hoạt động.</p>',
                     icon: 'warning',
                     showCancelButton: true,
                     confirmButtonColor: '#a855f7',
@@ -610,6 +608,7 @@ def user_proxy_portal():
 def proxy_activate():
     data = request.json or {}
     key = data.get("key", "").strip()
+    client_ip = get_real_ip()
     db = load_db()
     now = int(time.time() * 1000)
     with db_lock:
@@ -626,10 +625,18 @@ def proxy_activate():
         if not kd.get("proxy_host") or not kd.get("proxy_port"):
             return jsonify({"status": "error", "msg": "Lỗi: Admin chưa thiết lập Tên máy chủ cho Key này. Hãy báo Admin cấu hình trước!"})
 
+        # [FIX]: GHI NHẬN THIẾT BỊ THEO IP
+        devices = kd.setdefault("devices", [])
+        if client_ip not in devices:
+            if len(devices) >= kd.get("maxDevices", 1):
+                return jsonify({"status": "error", "msg": "Key này đã đạt giới hạn số lượng thiết bị tối đa!"})
+            devices.append(client_ip)
+
         if kd.get("exp") == "pending":
             kd["exp"] = now + kd.get("durationMs", 0)
             kd["activated"] = True
-            save_db(db)
+            
+        save_db(db)
             
     return jsonify({
         "status": "success", 
@@ -709,7 +716,7 @@ def admin_dashboard():
 
         keys_html += f'''<tr>
         <td>
-            <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px;">{safe_k}</div>
+            <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')" title="Nhấn để sao chép Key">{safe_k} <i class="far fa-copy text-muted small"></i></div>
             <div class="d-flex gap-1 justify-content-center">{vip_badge} {status_badge}</div>
         </td>
         <td>{exp_text}</td>
@@ -941,11 +948,16 @@ def admin_dashboard():
                             <input type="hidden" name="key" id="proxyKeyInput">
                             <p class="text-warning fw-bold mb-2 small"><i class="fas fa-exclamation-triangle"></i> LƯU Ý: Phải Ghim Tên OLM Trước!</p>
                             <h4 id="proxyKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
-                            <p class="text-muted" style="font-size:13px;">Chỉ cần nhập tên Máy Chủ. Cổng Proxy sẽ được hệ thống ngẫu nhiên cấp phát an toàn.</p>
-                            <input type="text" name="host" class="form-control form-control-lg text-center text-success" placeholder="VD: p1.sv.lvt.com" required>
+                            <p class="text-muted" style="font-size:13px;">Bạn có thể tự nhập tên Máy Chủ hoặc ấn nút Random. Cổng sẽ được ngẫu nhiên cấp phát an toàn.</p>
+                            
+                            <div class="input-group mb-3">
+                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success fw-bold" placeholder="VD: p1.sv.lvt.com" required>
+                                <button type="button" class="btn btn-outline-success" onclick="document.getElementById('proxyHostInput').value = 'sv' + Math.floor(Math.random()*999) + '.proxy.com'" title="Random Tên Máy Chủ"><i class="fas fa-random"></i> Random</button>
+                            </div>
+                            
                         </div>
                         <div class="modal-footer p-3">
-                            <button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH VÀ RANDOM CỔNG</button>
+                            <button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH VÀ TẠO CỔNG</button>
                         </div>
                     </form>
                 </div>
@@ -957,6 +969,12 @@ def admin_dashboard():
             function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
             function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
             function openProxyModal(key) {{ document.getElementById('proxyKeyInput').value = key; document.getElementById('proxyKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('proxyModal')).show(); }}
+            
+            // [FIX] Tính năng Copy Key
+            function copyToClipboard(text) {{
+                navigator.clipboard.writeText(text);
+                Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}});
+            }}
         </script>
     </body>
     </html>
