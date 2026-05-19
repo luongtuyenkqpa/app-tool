@@ -65,9 +65,8 @@ def telegram_polling():
                         
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
+                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để đăng nhập/đăng ký cấu hình Proxy & Script:"
                             keyboard = {"inline_keyboard": [
-                                # [FIX] Dùng web_app url để tương thích với Telegram Mini App
                                 [{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]
                             ]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
@@ -99,7 +98,6 @@ threading.Thread(target=keep_awake, daemon=True).start()
 def ping_server():
     return "OK", 200
 
-# [FIX] Tránh lỗi 404 cho các nút bấm Telegram Mini App cũ đang bị kẹt
 @app.route('/telegram_mini_app')
 def old_mini_app_redirect():
     return redirect('/')
@@ -536,7 +534,7 @@ def user_proxy_portal():
                     <div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div>
                     <p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Tự động (Automatic)</b>.</p>
                     <p class="step-text"><b>Bước 2:</b> Dán đường link PAC màu xanh ở trên vào ô <b>URL</b> rồi Lưu.</p>
-                    <p class="step-text"><b>Bước 3:</b> Bấm nút Tải Chứng Chỉ. Safari báo đã tải hồ sơ.</p>
+                    <p class="step-text"><b>Bước 3:</b> Bấm nút Tải Chứng Chỉ ở trên. Safari báo đã tải hồ sơ.</p>
                     <p class="step-text"><b>Bước 4:</b> Cài đặt -> Đã tải về hồ sơ -> Cài đặt.</p>
                     <p class="step-text"><b>Bước 5 (Bắt buộc):</b> Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh.</p>
                 </div>
@@ -560,10 +558,8 @@ def user_proxy_portal():
                         let pacUrl = window.location.origin + "/proxy_config/" + k + ".pac";
                         document.getElementById('res-pac').innerText = pacUrl;
 
-                        // [MỚI] Hiển thị Thiết bị
                         document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs;
 
-                        // [MỚI] Đồng hồ đếm ngược EXP
                         if(expInterval) clearInterval(expInterval);
                         if (r.exp === 'permanent') {{
                             document.getElementById('res-exp').innerText = 'Vĩnh Viễn';
@@ -585,7 +581,7 @@ def user_proxy_portal():
                 }}).catch(e=>Swal.fire('Lỗi', 'Không thể kết nối đến Máy chủ!', 'error'));
             }}
 
-            // [FIX] Cửa sổ cảnh báo nhắc nhở cài đặt proxy trước khi tải CA
+            // [FIX] Cửa sổ cảnh báo nhắc nhở cài đặt proxy trước khi tải CA. Link gọi đúng http://mitm.it/
             function downloadMitmCert() {{
                 Swal.fire({{
                     title: 'LƯU Ý BẮT BUỘC',
@@ -600,8 +596,7 @@ def user_proxy_portal():
                     color: '#fff'
                 }}).then((result) => {{
                     if (result.isConfirmed) {{
-                        // Chuyển thẳng đến trang chứng chỉ chuẩn của Proxy
-                        window.open('http://mitm.it/cert/pem', '_blank');
+                        window.open('http://mitm.it/', '_blank');
                     }}
                 }});
             }}
@@ -636,7 +631,6 @@ def proxy_activate():
             kd["activated"] = True
             save_db(db)
             
-    # [BỔ SUNG] Trả về thông tin thời gian exp và số lượng thiết bị
     return jsonify({
         "status": "success", 
         "host": kd["proxy_host"], 
@@ -648,7 +642,7 @@ def proxy_activate():
     })
 
 # ========================================================
-# GIAO DIỆN WEB ADMIN (PC C-PANEL) - TRANG TÁCH BIỆT HOÀN TOÀN
+# GIAO DIỆN WEB ADMIN (PC C-PANEL) - ĐÃ LÀM MỚI UI HOÀN TOÀN
 # ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
@@ -678,7 +672,7 @@ def admin_login():
             admin_login_attempts[ip] = attempts
             return swal_back("Từ Chối", f"Sai mật khẩu! Bạn còn {5 - attempts['count']} lần thử.", "error")
             
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>C-Panel Proxy Admin</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #00ffcc; }}</style></head><body style="background:#05050a; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>C-Panel Admin Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #00ffcc; }}</style></head><body style="background:#0b0f19; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px; background:#131722; border-color:#1e293b;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
     except Exception as e: return f"LỖI: {str(e)}", 200
 
 @app.route('/admin')
@@ -697,116 +691,275 @@ def admin_dashboard():
     for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
         st = data.get('status', 'active')
         is_banned = (st == 'banned')
-        status_badge = '<span class="badge bg-success">Hoạt động</span>' if not is_banned else '<span class="badge bg-danger">BỊ TRẢM</span>'
-        vip_badge = '<span class="badge bg-warning text-dark fw-bold">VIP PRO</span>' if data.get('vip', False) else '<span class="badge bg-secondary">THƯỜNG</span>'
+        status_badge = '<span class="badge badge-custom text-bg-success"><i class="fas fa-check-circle"></i> Sống</span>' if not is_banned else '<span class="badge badge-custom text-bg-danger"><i class="fas fa-times-circle"></i> Trảm</span>'
+        vip_badge = '<span class="badge badge-custom" style="background:#f59e0b; color:#000;"><i class="fas fa-crown"></i> VIP</span>' if data.get('vip', False) else '<span class="badge badge-custom bg-secondary">Thường</span>'
         
         is_expired = False
-        if data.get('exp') == 'pending': exp_text = '<span class="text-info fw-bold">Chưa K.Hoạt</span>'
+        if data.get('exp') == 'pending': exp_text = '<span class="badge badge-custom bg-info text-dark">Chưa kích hoạt</span>'
         elif data.get('exp') == 'permanent': exp_text = '<span class="text-success fw-bold">Vĩnh Viễn</span>'
         else:
             is_expired = now_ms > data.get('exp', 0)
             exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-light"}">{time.strftime("%d/%m/%y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
         
-        if is_expired and not is_banned: status_badge = '<span class="badge bg-secondary">HẾT HẠN</span>'
+        if is_expired and not is_banned: status_badge = '<span class="badge badge-custom bg-secondary">Hết hạn</span>'
         
         safe_k = escape(str(k))
         bound_olm = escape(data.get('bound_olm', ''))
-        proxy_info = f"{data.get('proxy_host')}:{data.get('proxy_port')}" if data.get('proxy_host') else "Chưa gán máy chủ"
+        proxy_info = f"{data.get('proxy_host')}:{data.get('proxy_port')}" if data.get('proxy_host') else "Trống"
 
-        keys_html += f'''<tr class="align-middle text-nowrap">
-        <td><strong class="text-info font-monospace" style="font-size:16px;">{safe_k}</strong><br>{vip_badge} {status_badge}</td>
-        <td style="font-size:14px;">{exp_text}</td>
-        <td style="font-size:14px;"><span class="text-warning fw-bold">{bound_olm or '⚠️ Bắt buộc ghim OLM'}</span><br><span class="text-success font-monospace fw-bold">{proxy_info}</span></td>
-        <td style="font-size:14px;"><span class="badge bg-info text-dark">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
-        <td><div class="d-flex flex-wrap gap-2 justify-content-center">
-        <button class="btn btn-warning btn-sm fw-bold text-dark" style="font-size:12px;" onclick="openBindModal('{safe_k}', '{bound_olm}')"><i class="fas fa-link"></i> Ghim</button>
-        <button class="btn btn-primary btn-sm fw-bold text-white" style="font-size:12px;" onclick="openProxyModal('{safe_k}')"><i class="fas fa-network-wired"></i> Gán Proxy</button>
-        <button class="btn btn-info btn-sm fw-bold text-dark" style="font-size:12px;" onclick="openAddTimeModal('{safe_k}')"><i class="fas fa-clock"></i> C.Giờ</button>
-        <a href="/admin/action/delete/{safe_k}" class="btn btn-danger btn-sm" onclick="return confirm('Bạn có chắc chắn muốn xóa vĩnh viễn Key này?')" style="font-size:12px;"><i class="fas fa-trash"></i></a>
-        </div></td></tr>'''
+        keys_html += f'''<tr>
+        <td>
+            <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px;">{safe_k}</div>
+            <div class="d-flex gap-1 justify-content-center">{vip_badge} {status_badge}</div>
+        </td>
+        <td>{exp_text}</td>
+        <td class="text-start ps-4">
+            <div class="mb-1"><span class="text-muted small">OLM:</span> <span class="text-warning fw-bold">{bound_olm or '⚠️ Chưa ghim'}</span></div>
+            <div><span class="text-muted small">Host:</span> <span class="text-success font-monospace fw-bold">{proxy_info}</span></div>
+        </td>
+        <td><span class="badge bg-dark border border-secondary p-2 fs-6">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
+        <td>
+            <div class="d-flex flex-wrap gap-2 justify-content-center">
+                <button class="action-btn" onclick="openBindModal('{safe_k}', '{bound_olm}')" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
+                <button class="action-btn" onclick="openProxyModal('{safe_k}')" title="Gắn Proxy Host"><i class="fas fa-network-wired text-primary"></i></button>
+                <button class="action-btn" onclick="openAddTimeModal('{safe_k}')" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
+                <a href="/admin/action/delete/{safe_k}" class="action-btn action-btn-danger" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
+            </div>
+        </td>
+        </tr>'''
 
-    blacklist_rows = "".join([f'<li class="list-group-item bg-transparent text-light border-secondary d-flex justify-content-between font-monospace align-items-center py-2">{escape(ip)} <a href="/admin/unban_ip/{escape(ip)}" class="btn btn-sm btn-danger px-3 rounded-pill fw-bold">Gỡ</a></li>' for ip in banned_ips])
+    blacklist_rows = "".join([f'<li class="list-group-item d-flex justify-content-between align-items-center"><span class="font-monospace text-danger">{escape(ip)}</span> <a href="/admin/unban_ip/{escape(ip)}" class="action-btn action-btn-danger px-3">Gỡ</a></li>' for ip in banned_ips])
 
     return f'''
-    <!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>C-Panel Proxy LVT</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #0b0d14; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }} .card {{ background: rgba(26,28,38,0.8); border: 1px solid rgba(255,255,255,0.05); box-shadow: 0 5px 15px rgba(0,0,0,0.5); }} h5{{font-weight:900; letter-spacing: 1px; text-transform: uppercase;}} .form-control, .form-select {{ background: rgba(0,0,0,0.5) !important; color: #00ffcc !important; border: 1px solid #333 !important; font-weight:bold; }} .form-control:focus {{ border-color: #00ffcc !important; box-shadow: 0 0 5px rgba(0,255,204,0.3) !important; }}</style></head><body class="p-3 p-md-4">
-    <div class="container-fluid">
-        <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-            <h2 class="fw-bold m-0" style="color:#00ffcc; text-shadow: 0 0 15px rgba(0,255,204,0.5);"><i class="fas fa-server"></i> C-PANEL PROXY LVT</h2>
-            <a href="/logout" class="btn btn-outline-danger fw-bold rounded-pill px-4"><i class="fas fa-power-off"></i> Thoát C-Panel</a>
+    <!DOCTYPE html><html lang="vi" data-bs-theme="dark">
+    <head>
+        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>LVT C-Panel Dashboard</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+            body {{ background: #0b0f19; font-family: 'Inter', sans-serif; color: #e2e8f0; }}
+            .topbar {{ background: #131722; border-bottom: 1px solid #1e293b; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }}
+            .topbar-brand {{ font-size: 20px; font-weight: 800; color: #38bdf8; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }}
+            .card {{ background: #131722; border: 1px solid #1e293b; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }}
+            .card-header {{ background: rgba(255,255,255,0.02); border-bottom: 1px solid #1e293b; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }}
+            .card-body {{ padding: 20px; }}
+            .form-control, .form-select {{ background: #0b0f19 !important; border: 1px solid #334155 !important; color: #f8fafc !important; border-radius: 8px; padding: 10px 15px; font-size: 14px; transition: 0.2s; }}
+            .form-control:focus, .form-select:focus {{ border-color: #38bdf8 !important; box-shadow: 0 0 0 3px rgba(56,189,248,0.1) !important; outline: none; }}
+            .btn-primary-custom {{ background: linear-gradient(135deg, #38bdf8, #3b82f6); border: none; color: #fff; font-weight: 700; padding: 12px 20px; border-radius: 8px; transition: 0.3s; text-transform: uppercase; font-size: 14px; letter-spacing: 0.5px; width: 100%; cursor:pointer; }}
+            .btn-primary-custom:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(56,189,248,0.3); }}
+            .btn-purple {{ background: linear-gradient(135deg, #a855f7, #6366f1); }}
+            .btn-purple:hover {{ box-shadow: 0 4px 12px rgba(168,85,247,0.3); }}
+            .btn-success-custom {{ background: linear-gradient(135deg, #22c55e, #10b981); color:#000; }}
+            .table {{ color: #cbd5e1; font-size: 14px; margin-bottom: 0; }}
+            .table thead th {{ background: #0f172a; border-bottom: 1px solid #1e293b; color: #94a3b8; font-weight: 600; padding: 15px; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }}
+            .table tbody td {{ border-bottom: 1px solid #1e293b; padding: 15px; vertical-align: middle; }}
+            .table-hover tbody tr:hover {{ background-color: rgba(255,255,255,0.02); }}
+            .badge-custom {{ padding: 6px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; display: inline-flex; align-items: center; gap: 4px; }}
+            .action-btn {{ background: rgba(255,255,255,0.05); color: #e2e8f0; border: 1px solid #334155; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; cursor: pointer; }}
+            .action-btn:hover {{ background: rgba(255,255,255,0.1); border-color: #475569; color: #fff; }}
+            .action-btn-danger {{ color: #f87171; border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.05); }}
+            .action-btn-danger:hover {{ background: #f87171; color: #fff; border-color: #f87171; }}
+            .list-group-item {{ background: transparent; border-color: #1e293b; color: #cbd5e1; padding: 12px 15px; }}
+            .modal-content {{ background: #131722; border: 1px solid #334155; border-radius: 12px; }}
+            .modal-header {{ border-bottom: 1px solid #1e293b; }}
+            .modal-footer {{ border-top: 1px solid #1e293b; }}
+        </style>
+    </head>
+    <body>
+        <div class="topbar">
+            <div class="topbar-brand"><i class="fas fa-server"></i> LVT C-PANEL</div>
+            <a href="/logout" class="btn btn-outline-danger btn-sm fw-bold px-3 py-2" style="border-radius: 8px;"><i class="fas fa-sign-out-alt"></i> Đăng xuất</a>
         </div>
         
-        <div class="row g-4 mb-4">
-            <div class="col-md-5 col-lg-4">
-                <div class="card p-4 h-100" style="border-top: 4px solid #22c55e;">
-                    <h5 style="color:#22c55e; margin-bottom:20px;"><i class="fas fa-magic"></i> TẠO KEY PROXY (AUTO 15 KÝ TỰ)</h5>
-                    <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
-                        <div class="col-6"><label class="text-muted small fw-bold">Số lượng tạo</label><input type="number" name="quantity" class="form-control" value="1" placeholder="Số lượng" required></div>
-                        <div class="col-6"><label class="text-muted small fw-bold">Số máy cho phép</label><input type="number" name="devices" class="form-control" value="1" placeholder="Số thiết bị" required></div>
-                        <div class="col-6"><label class="text-muted small fw-bold">Thời gian</label><input type="number" name="duration" class="form-control" value="1" required></div>
-                        <div class="col-6"><label class="text-muted small fw-bold">Đơn vị</label><select name="type" class="form-select"><option value="minute">Phút</option><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh Viễn</option></select></div>
-                        <div class="col-12 mt-4"><div class="form-check form-switch fs-5"><input class="form-check-input" type="checkbox" name="is_vip" id="vipSwitch"><label class="form-check-label text-warning fw-bold ms-2" for="vipSwitch">BẬT CHẾ ĐỘ VIP PRO</label></div></div>
-                        <div class="col-12 mt-3"><button type="submit" class="btn fw-bold w-100 text-dark py-2" style="background:linear-gradient(90deg, #22c55e, #10b981); font-size:16px;"><i class="fas fa-cogs"></i> SẢN XUẤT KEY</button></div>
-                    </form>
-                </div>
-            </div>
-
-            <div class="col-md-7 col-lg-8">
-                <div class="card p-4 h-100" style="border-top: 4px solid #a855f7;">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 style="color:#a855f7; margin:0;"><i class="fas fa-laptop-code"></i> NẠP SCRIPT VIOLENTMONKEY GỐC TÙY CHỈNH</h5>
-                        <span class="badge bg-secondary">API Auto Inject Proxy</span>
+        <div class="container-fluid py-4 px-lg-5">
+            <div class="row g-4 mb-4">
+                <div class="col-xl-4 col-lg-5">
+                    <div class="card h-100">
+                        <div class="card-header text-success"><i class="fas fa-magic"></i> Tạo Key Proxy</div>
+                        <div class="card-body">
+                            <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
+                                <div class="col-6">
+                                    <label class="text-muted small fw-bold mb-1">Số lượng tạo</label>
+                                    <input type="number" name="quantity" class="form-control" value="1" required>
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-muted small fw-bold mb-1">Số thiết bị / Key</label>
+                                    <input type="number" name="devices" class="form-control" value="1" required>
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-muted small fw-bold mb-1">Độ dài thời gian</label>
+                                    <input type="number" name="duration" class="form-control" value="1" required>
+                                </div>
+                                <div class="col-6">
+                                    <label class="text-muted small fw-bold mb-1">Đơn vị thời gian</label>
+                                    <select name="type" class="form-select">
+                                        <option value="minute">Phút</option><option value="hour">Giờ</option>
+                                        <option value="day" selected>Ngày</option><option value="month">Tháng</option>
+                                        <option value="permanent">Vĩnh Viễn</option>
+                                    </select>
+                                </div>
+                                <div class="col-12 mt-3">
+                                    <div class="form-check form-switch fs-6 p-3 rounded" style="background: rgba(255,255,255,0.02); border: 1px solid #1e293b;">
+                                        <input class="form-check-input ms-0 mt-1" type="checkbox" name="is_vip" id="vipSwitch" style="width:40px;height:20px;">
+                                        <label class="form-check-label text-warning fw-bold ms-3" for="vipSwitch" style="line-height:24px;">BẬT TÍNH NĂNG VIP PRO</label>
+                                    </div>
+                                </div>
+                                <div class="col-12 mt-4">
+                                    <button type="submit" class="btn-primary-custom btn-success-custom"><i class="fas fa-cogs"></i> Sản xuất Key ngay</button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
-                    <form action="/admin/update_script" method="POST" class="h-100 d-flex flex-column">{csrf_input}
-                        <p class="text-muted" style="font-size:13px; line-height:1.5;">Dán toàn bộ mã nguồn Script chức năng Violentmonkey vào đây. Hệ thống Proxy sẽ tự động tiêm Script này vào trang web OLM.vn khi người dùng kết nối thành công mà không cần cài extension.</p>
-                        <textarea name="script_content" class="form-control mb-3 flex-grow-1" style="font-family:Consolas, monospace; font-size:13px; min-height: 200px; background:#000 !important; color:#0f0 !important;" required placeholder="// ==UserScript==...">{current_script}</textarea>
-                        <button type="submit" class="btn fw-bold text-white mt-auto py-2" style="background:linear-gradient(90deg, #a855f7, #6366f1); font-size:15px;"><i class="fas fa-cloud-upload-alt"></i> LƯU MÃ NGUỒN VÀ XUẤT BẢN LÊN HỆ THỐNG PROXY</button>
+                </div>
+
+                <div class="col-xl-8 col-lg-7">
+                    <div class="card h-100">
+                        <div class="card-header text-info" style="color: #a855f7 !important;"><i class="fas fa-code"></i> Nạp Script ViolentMonkey Tiêm Tự Động</div>
+                        <div class="card-body d-flex flex-column">
+                            <form action="/admin/update_script" method="POST" class="h-100 d-flex flex-column">{csrf_input}
+                                <p class="text-muted mb-3" style="font-size:13px; line-height:1.6;">Dán mã nguồn Script chức năng Violentmonkey vào đây. Hệ thống Proxy sẽ tự động Inject trực tiếp vào web OLM.vn của máy khách (Hỗ trợ Bypass Anti-Cheat mới nhất).</p>
+                                <textarea name="script_content" class="form-control flex-grow-1 mb-3" style="font-family: 'Consolas', monospace; font-size: 13px; background: #07090e !important; color: #10b981 !important; resize: none; min-height: 200px;" placeholder="// ==UserScript==...">{current_script}</textarea>
+                                <button type="submit" class="btn-primary-custom btn-purple mt-auto"><i class="fas fa-cloud-upload-alt"></i> Cập Nhật Lên Máy Chủ Proxy</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header text-danger"><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen)</div>
+                        <div class="card-body">
+                            <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">{csrf_input}
+                                <input type="text" name="ip" class="form-control" style="max-width:300px;" placeholder="Nhập IP cần khoá..." required>
+                                <button type="submit" class="action-btn action-btn-danger"><i class="fas fa-ban"></i> Chặn Cửa</button>
+                            </form>
+                            <ul class="list-group" style="max-height:150px; overflow-y:auto;">
+                                {blacklist_rows or '<li class="list-group-item text-center text-muted border-0 py-4"><i class="fas fa-check-circle fs-4 mb-2 d-block"></i> Không có IP nào bị khoá.</li>'}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-5">
+                <div class="card-header text-primary d-flex justify-content-between align-items-center">
+                    <div><i class="fas fa-database"></i> Quản Lý Kho Key Cấp Phát</div>
+                    <div class="input-group" style="width:300px;">
+                        <span class="input-group-text bg-transparent border-end-0" style="border-color:#1e293b; color:#64748b;"><i class="fas fa-search"></i></span>
+                        <input type="text" class="form-control border-start-0 ps-0" placeholder="Tìm kiếm nhanh..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');" style="box-shadow:none !important;">
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
+                        <table class="table table-hover text-center align-middle mb-0">
+                            <thead style="position: sticky; top: 0; z-index: 1;">
+                                <tr>
+                                    <th>Cụm Key Kích Hoạt</th>
+                                    <th>Thời Hạn (Hết Hạn Mất Cấu Hình)</th>
+                                    <th class="text-start ps-4">Thông tin cấu hình Proxy</th>
+                                    <th>Thiết bị</th>
+                                    <th>Thao Tác Quản Trị</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {keys_html or '<tr><td colspan="5" class="py-5 text-muted">Chưa có dữ liệu.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <form action="/admin/bind_olm" method="POST">{csrf_input}
+                        <div class="modal-header">
+                            <h5 class="modal-title fw-bold text-warning"><i class="fas fa-user-tag"></i> GHIM ĐỊNH DANH OLM</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body p-4 text-center">
+                            <input type="hidden" name="key" id="bindKeyInput">
+                            <p class="text-muted mb-2">Đang thiết lập ghim tên OLM cho Key:</p>
+                            <h4 id="bindKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
+                            <input type="text" name="olm_name" id="bindOlmInput" class="form-control form-control-lg text-center" placeholder="Nhập tên tài khoản OLM của khách..." required>
+                        </div>
+                        <div class="modal-footer p-3">
+                            <button class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706); color:#000;">LƯU ĐỊNH DANH</button>
+                        </div>
                     </form>
                 </div>
             </div>
         </div>
-        
-        <div class="row g-4 mb-4">
-            <div class="col-12">
-                <div class="card p-4" style="border-top: 4px solid #ef4444;">
-                    <h5 class="text-danger mb-3"><i class="fas fa-shield-virus"></i> CHẶN IP XẤU (FIREWALL)</h5>
-                    <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">{csrf_input}<input type="text" name="ip" class="form-control" placeholder="Nhập địa chỉ IP cần chặn đứt..." required><button type="submit" class="btn btn-danger fw-bold px-4"><i class="fas fa-ban"></i> Chặn IP</button></form>
-                    <ul class="list-group list-group-flush" style="max-height:200px; overflow-y:auto; border:1px solid rgba(255,255,255,0.1); border-radius:10px;">{blacklist_rows or '<li class="list-group-item bg-transparent text-muted text-center py-3">Hệ thống sạch sẽ, không có IP xấu.</li>'}</ul>
+
+        <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <form action="/admin/add_time" method="POST">{csrf_input}
+                        <div class="modal-header">
+                            <h5 class="modal-title fw-bold text-info"><i class="fas fa-clock"></i> CỘNG THÊM THỜI GIAN</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body p-4 text-center">
+                            <input type="hidden" name="key" id="addTimeKeyInput">
+                            <p class="text-muted mb-2">Đang thao tác cho Key:</p>
+                            <h4 id="addTimeKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
+                            <div class="row g-2">
+                                <div class="col-8">
+                                    <input type="number" name="time_val" class="form-control form-control-lg text-center" placeholder="Số lượng (VD: 30)" required>
+                                </div>
+                                <div class="col-4">
+                                    <select name="time_unit" class="form-select form-select-lg">
+                                        <option value="minutes">Phút</option><option value="hours">Giờ</option>
+                                        <option value="days" selected>Ngày</option><option value="months">Tháng</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer p-3">
+                            <button class="btn-primary-custom w-100">XÁC NHẬN CỘNG GIỜ</button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>
 
-        <div class="card p-4" style="border-top: 4px solid #0099ff;">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h5 class="text-primary m-0"><i class="fas fa-database"></i> KHO QUẢN LÝ KEY PROXY</h5>
-                <div class="input-group" style="width:300px;">
-                    <span class="input-group-text bg-dark border-secondary text-info"><i class="fas fa-search"></i></span>
-                    <input type="text" class="form-control border-secondary" placeholder="Tìm kiếm Key hoặc Tên OLM..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');">
+        <div class="modal fade" id="proxyModal" tabindex="-1" data-bs-theme="dark">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <form action="/admin/setup_proxy" method="POST">{csrf_input}
+                        <div class="modal-header">
+                            <h5 class="modal-title fw-bold text-primary"><i class="fas fa-network-wired"></i> GẮN SERVER PROXY TƯ NHÂN</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body p-4 text-center">
+                            <input type="hidden" name="key" id="proxyKeyInput">
+                            <p class="text-warning fw-bold mb-2 small"><i class="fas fa-exclamation-triangle"></i> LƯU Ý: Phải Ghim Tên OLM Trước!</p>
+                            <h4 id="proxyKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
+                            <p class="text-muted" style="font-size:13px;">Chỉ cần nhập tên Máy Chủ. Cổng Proxy sẽ được hệ thống ngẫu nhiên cấp phát an toàn.</p>
+                            <input type="text" name="host" class="form-control form-control-lg text-center text-success" placeholder="VD: p1.sv.lvt.com" required>
+                        </div>
+                        <div class="modal-footer p-3">
+                            <button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH VÀ RANDOM CỔNG</button>
+                        </div>
+                    </form>
                 </div>
             </div>
-            <div class="table-responsive" style="max-height: 600px; overflow-y:auto; border: 1px solid rgba(255,255,255,0.1); border-radius:10px;">
-                <table class="table table-dark table-hover table-striped text-center align-middle mb-0">
-                    <thead style="position: sticky; top: 0; background: #1a1c26; z-index: 1;"><tr><th>🔑 Cụm Key 15 Ký Tự</th><th>⏳ Thời hạn cấp phép</th><th>🎯 Thiết lập Proxy Server</th><th>📱 Thiết bị</th><th>⚙️ Thao tác nhanh</th></tr></thead>
-                    <tbody>
-                        {keys_html}
-                    </tbody>
-                </table>
-            </div>
         </div>
-    </div>
-    
-    <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:#111;border:1px solid #ffcc00; box-shadow: 0 0 30px rgba(255,204,0,0.3);"><form action="/admin/bind_olm" method="POST">{csrf_input}<div class="modal-header border-secondary"><h5 class="modal-title text-warning fw-bold"><i class="fas fa-user-tag"></i> GHIM ĐỊNH DANH OLM</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="bindKeyInput"><p class="text-muted mb-2">Đang thao tác ghim tên OLM cho Key:</p><h4 id="bindKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4><input type="text" name="olm_name" id="bindOlmInput" class="form-control form-control-lg text-center fw-bold" placeholder="Nhập tên tài khoản OLM của khách..." required></div><div class="modal-footer border-secondary p-3"><button class="btn btn-warning w-100 fw-bold text-dark py-2 fs-5">CHỐT LƯU ĐỊNH DANH</button></div></form></div></div></div>
-    
-    <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:#111;border:1px solid #00ffcc; box-shadow: 0 0 30px rgba(0,255,204,0.3);"><form action="/admin/add_time" method="POST">{csrf_input}<div class="modal-header border-secondary"><h5 class="modal-title text-info fw-bold"><i class="fas fa-clock"></i> BƠM THỜI GIAN</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="addTimeKeyInput"><p class="text-muted mb-2">Đang bơm giờ cho Key:</p><h4 id="addTimeKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4><input type="number" name="time_val" class="form-control form-control-lg text-center fw-bold mb-3" placeholder="Nhập số lượng (VD: 30)" required><select name="time_unit" class="form-select form-select-lg text-center fw-bold"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option></select></div><div class="modal-footer border-secondary p-3"><button class="btn btn-info w-100 fw-bold text-dark py-2 fs-5">XÁC NHẬN CỘNG GIỜ</button></div></form></div></div></div>
-    
-    <div class="modal fade" id="proxyModal" tabindex="-1" data-bs-theme="dark"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:#111;border:1px solid #a855f7; box-shadow: 0 0 30px rgba(168,85,247,0.3);"><form action="/admin/setup_proxy" method="POST">{csrf_input}<div class="modal-header border-secondary"><h5 class="modal-title fw-bold" style="color:#a855f7;"><i class="fas fa-network-wired"></i> GÁN MÁY CHỦ PROXY ĐỘC LẬP</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="proxyKeyInput"><p class="text-warning fw-bold mb-2 small"><i class="fas fa-exclamation-triangle"></i> LƯU Ý: Phải Ghim OLM trước mới được Gán Host!</p><h4 id="proxyKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4><p class="text-muted" style="font-size:13px;">Chỉ cần nhập tên Máy Chủ. Cổng Proxy sẽ được Hệ thống Auto Random.</p><input type="text" name="host" class="form-control form-control-lg text-center fw-bold text-success" placeholder="VD: p1.sv.lvt.com" required></div><div class="modal-footer border-secondary p-3"><button class="btn fw-bold w-100 text-white py-2 fs-5" style="background:linear-gradient(90deg, #a855f7, #6366f1);">LƯU VÀ RANDOM CỔNG</button></div></form></div></div></div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
-        function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
-        function openProxyModal(key) {{ document.getElementById('proxyKeyInput').value = key; document.getElementById('proxyKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('proxyModal')).show(); }}
-    </script>
-    </body></html>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+        <script>
+            function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
+            function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
+            function openProxyModal(key) {{ document.getElementById('proxyKeyInput').value = key; document.getElementById('proxyKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('proxyModal')).show(); }}
+        </script>
+    </body>
+    </html>
     '''
 
 @app.route('/admin/create', methods=['POST'])
@@ -836,7 +989,7 @@ def admin_setup_proxy():
     with db_lock:
         if key in db.get("keys", {}):
             if not db["keys"][key].get("bound_olm"):
-                return swal_back("Lỗi Thiết Lập", "Key này chưa được ghim tài khoản OLM. Hãy bấm nút 'Ghim OLM' trước khi gán Proxy!", "error")
+                return swal_back("Lỗi Thiết Lập", "Key này chưa được ghim tài khoản OLM. Hãy bấm nút 'Ghim' trước khi gán Proxy!", "error")
             db["keys"][key]["proxy_host"] = host
             db["keys"][key]["proxy_port"] = random.randint(10000, 65000)
             save_db(db)
@@ -884,7 +1037,7 @@ def admin_update_script():
     with db_lock:
         db.setdefault("settings", {})["custom_script"] = script_content
         save_db(db)
-    return swal_redirect("Thành Công", "Đã lưu và xuất bản Script Gốc. Proxy sẽ tự động gọi mã nguồn mới nhất này để cấp cho khách!", "success", "/admin")
+    return swal_redirect("Thành Công", "Đã lưu và xuất bản Script Gốc. Máy chủ Proxy sẽ tự động kéo file này về!", "success", "/admin")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
