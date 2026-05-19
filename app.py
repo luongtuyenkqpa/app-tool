@@ -153,7 +153,6 @@ def load_db():
                 data.setdefault("settings", {})
                 
                 if "secret_key" not in data["settings"]: data["settings"]["secret_key"] = secrets.token_hex(32)
-                if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "custom_script" not in data["settings"]: data["settings"]["custom_script"] = ""
                 if "ca_cert" not in data["settings"]: data["settings"]["ca_cert"] = ""
                 if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
@@ -168,7 +167,7 @@ def load_db():
                     data["keys"][k].setdefault("bound_olm", "") 
                     data["keys"][k].setdefault("vip", False)
                     data["keys"][k].setdefault("proxy_host", "")
-                    data["keys"][k].setdefault("proxy_port", 8080) # [FIX] Đưa mặc định về 8080
+                    data["keys"][k].setdefault("proxy_port", 8080)
                     data["keys"][k].setdefault("ban_until", 0)
                     data["keys"][k].setdefault("status", "active")
 
@@ -276,7 +275,7 @@ def user_logout():
     return redirect('/')
 
 # ========================================================
-# KICK USER & GIAO DỊCH SCRIPT
+# KICK USER NẾU BỊ BAN (API CHECK)
 # ========================================================
 @app.route('/api/check_ban_status')
 def check_ban_status():
@@ -330,9 +329,6 @@ def download_ca():
     resp.headers['Content-Disposition'] = 'attachment; filename="LVT_PROXY_CA.crt"'
     return resp
 
-# ========================================================
-# [BẢN NÂNG CẤP ĐỈNH CAO]: ĐA LUỒNG PAC FILE & ÉP CỔNG 8080
-# ========================================================
 @app.route('/proxy_config/<key>.pac')
 def generate_pac_file(key):
     db = load_db()
@@ -345,12 +341,12 @@ def generate_pac_file(key):
             if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): return "Key đã bị khóa.", 403
             
         host = kd.get("proxy_host")
+        port = kd.get("proxy_port")
         
-        # [QUAN TRỌNG] Cố định Port 8080 cho Termux và thử 3 luồng IP tránh chặn cục bộ
         pac_script = f"""
         function FindProxyForURL(url, host) {{
             if (shExpMatch(host, "*.olm.vn") || host === "olm.vn" || host === "mitm.it") {{
-                return "PROXY 127.0.0.1:8080; PROXY localhost:8080; PROXY {host}:8080; DIRECT";
+                return "PROXY {host}:{port}; PROXY 127.0.0.1:8080; DIRECT";
             }}
             return "DIRECT";
         }}
@@ -360,7 +356,7 @@ def generate_pac_file(key):
         return resp
 
 # ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG (CHECK PROXY BẰNG GIAO THỨC HTTP CHUẨN)
+# GIAO DIỆN WEB NGƯỜI DÙNG - ĐÃ FIX CHECK PING HTTPS SIÊU CHUẨN
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
@@ -376,7 +372,7 @@ def user_proxy_portal():
                 
                 <div style="margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;">
                     <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-signal"></i> Trạng thái Proxy trên thiết bị:</div>
-                    <div id="res-proxy-status" style="font-size:14px; font-weight:bold; color:#f59e0b;"><i class="fas fa-spinner fa-spin"></i> Đang chờ cài đặt...</div>
+                    <div id="res-proxy-status" style="font-size:14px; font-weight:bold; color:#f59e0b;"><i class="fas fa-spinner fa-spin"></i> Đang chờ cài đặt vào Wifi...</div>
                 </div>
 
                 <div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;">👤 Định danh OLM hợp lệ:</div><div class="highlight" style="color:#ffcc00; background:rgba(255,204,0,0.1); justify-content:center;" id="res-olm"></div></div><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-link"></i> Link Cấu Hình Tự Động (PAC URL):</div><div class="highlight" id="res-pac-container"></div><p style="font-size:11px; color:#ff3366; margin-top:5px; margin-bottom:0;"><i>* Copy link này dán vào "URL PAC" trong cài đặt Wifi.</i></p></div><div style="display:flex; gap:10px; margin-bottom:12px; margin-top:15px;"><div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị:</div><div id="res-dev" style="font-size:14px; font-weight:bold; color:#fff;"></div></div><div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-clock"></i> Hạn dùng (EXP):</div><div id="res-exp" style="font-size:14px; font-weight:bold; color:#ff3366;"></div></div></div><a href="/download-ca" class="cert-btn" download><i class="fas fa-shield-alt"></i> TẢI CHỨNG CHỈ BẢO MẬT (CA)</a><div style="margin-top:25px; border-top: 1px dashed #555; padding-top: 15px;"><h4 style="color:#00ffcc; text-align:center; margin-top:0;">HƯỚNG DẪN CÀI ĐẶT</h4><div class="step-title"><i class="fab fa-android"></i> DÀNH CHO ANDROID</div><p class="step-text"><b>Bước 1:</b> Mở Cài đặt Wifi, ấn vào chữ <b>(i)</b> cạnh Wifi đang dùng.</p><p class="step-text"><b>Bước 2:</b> Tìm phần <b>Proxy</b>, đổi thành <b>Tự động cấu hình (Auto-Config)</b>.</p><p class="step-text"><b>Bước 3:</b> Dán đường link PAC màu xanh ở trên vào ô <b>Địa chỉ web PAC / URL</b> và Lưu lại.</p><p class="step-text"><b>Bước 4:</b> Bấm tải Chứng Chỉ màu tím ở trên. Cài đặt vào máy (Cài đặt -> Chứng chỉ -> Chọn VPN và Ứng dụng).</p><div class="step-title"><i class="fab fa-apple"></i> DÀNH CHO iOS (IPHONE/IPAD)</div><p class="step-text"><b>Bước 1:</b> Cài đặt Wifi -> Bấm chữ <b>(i)</b> -> Định cấu hình Proxy -> Đổi thành <b>Tự động (Automatic)</b>.</p><p class="step-text"><b>Bước 2:</b> Dán đường link PAC ở trên vào ô <b>URL</b> rồi Lưu.</p><p class="step-text"><b>Bước 3:</b> Bấm nút Tải Chứng Chỉ. Trình duyệt báo đã tải hồ sơ.</p><p class="step-text"><b>Bước 4:</b> Cài đặt -> Đã tải về hồ sơ -> Cài đặt.</p><p class="step-text"><b>Bước 5 (Quan Trọng):</b> Cài đặt chung -> Giới thiệu -> Cài đặt tin cậy chứng chỉ -> Gạt nút xanh.</p></div></div></div>
@@ -414,18 +410,21 @@ def user_proxy_portal():
                             expInterval = setInterval(() => {{ let rem = r.exp - Date.now(); if(rem <= 0) {{ document.getElementById('res-exp').innerText = 'HẾT HẠN'; clearInterval(expInterval); localStorage.removeItem('lvt_proxy_key'); }} else {{ let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000); document.getElementById('res-exp').innerText = `${{d}}d ${{h}}h ${{m}}m ${{s}}s`; }} }}, 1000); 
                         }} 
 
-                        // [SỬA LẠI PING HTTP] Tránh lỗi chứng chỉ bảo mật của Chrome khi dò mạng nội bộ
+                        // [NÂNG CẤP HTTPS] Check qua mạng HTTPS chuẩn để qua mặt tường lửa trình duyệt
                         if(proxyChecker) clearInterval(proxyChecker);
                         document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang chờ cài đặt vào Wifi...';
                         document.getElementById('res-proxy-status').style.color = '#f59e0b';
                         
                         proxyChecker = setInterval(() => {{
-                            fetch('http://olm.vn/lvt_proxy_ping', {{mode: 'no-cors'}})
-                            .then(res => {{
-                                clearInterval(proxyChecker);
-                                document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-check-circle"></i> ĐÃ KẾT NỐI MẠNG RIÊNG TƯ';
-                                document.getElementById('res-proxy-status').style.color = '#22c55e';
-                                Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Tuyệt vời! Proxy đã được kết nối với Wifi của bạn.', showConfirmButton: false, timer: 4000, background: '#1a1c26', color: '#fff'}});
+                            fetch('https://olm.vn/lvt_proxy_ping')
+                            .then(res => res.json())
+                            .then(data => {{
+                                if(data.status === 'ok') {{
+                                    clearInterval(proxyChecker);
+                                    document.getElementById('res-proxy-status').innerHTML = '<i class="fas fa-check-circle"></i> ĐÃ KẾT NỐI MẠNG RIÊNG TƯ';
+                                    document.getElementById('res-proxy-status').style.color = '#22c55e';
+                                    Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Tuyệt vời! Proxy đã được kết nối.', showConfirmButton: false, timer: 4000, background: '#1a1c26', color: '#fff'}});
+                                }}
                             }}).catch(err => {{}});
                         }}, 3000);
 
@@ -463,9 +462,8 @@ def proxy_activate():
         if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: return jsonify({"status": "error", "msg": "Key đã hết hạn sử dụng!"})
         if not kd.get("bound_olm"): return jsonify({"status": "error", "msg": "Lỗi: Key chưa ghim Tên OLM. Không thể tạo Proxy!"})
         
-        # [FIX] Đưa mặc định lấy port 8080 cho ổn định Termux
         if not kd.get("proxy_host"): return jsonify({"status": "error", "msg": "Lỗi: Admin chưa gán Host cho Key này!"})
-        kd["proxy_port"] = 8080 
+        kd["proxy_port"] = 8080 # [FIX] LUÔN ÉP PORT 8080 CỦA TERMUX 
 
         devices = kd.setdefault("devices", [])
         if client_ip not in devices:
@@ -756,10 +754,10 @@ def admin_dashboard():
                         <div class="modal-body p-4 text-center">
                             <input type="hidden" name="key" id="proxyKeyInput">
                             <h4 id="proxyKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
-                            <p class="text-muted small">Cổng mặc định luôn là 8080 dành cho Termux.</p>
+                            <p class="text-muted small">Nhập IP mạng LAN của máy sếp (VD: 192.168.1.5). Tuyệt đối không dùng chữ linh tinh.</p>
                             <div class="input-group mb-3">
-                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success" placeholder="Nhập IP LAN (VD: 192.168.1.x)" required>
-                                <button type="button" class="btn btn-outline-success px-3" onclick="document.getElementById('proxyHostInput').value = '192.168.1.' + Math.floor(Math.random()*255)" title="Random Tên"><i class="fas fa-random"></i></button>
+                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success" placeholder="VD: 192.168.1.5" required>
+                                <button type="button" class="btn btn-outline-success px-3" onclick="document.getElementById('proxyHostInput').value = '192.168.1.' + Math.floor(Math.random()*255)" title="Random IP Cục Bộ"><i class="fas fa-random"></i></button>
                             </div>
                         </div>
                         <div class="modal-footer p-3"><button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH</button></div>
@@ -829,7 +827,7 @@ def admin_setup_proxy():
             if not db["keys"][key].get("bound_olm"):
                 return swal_back("Lỗi Thiết Lập", "Key này chưa được ghim tài khoản OLM. Hãy bấm nút 'Ghim' trước khi gán Proxy!", "error")
             db["keys"][key]["proxy_host"] = host
-            db["keys"][key]["proxy_port"] = 8080 # LUÔN CỐ ĐỊNH 8080
+            db["keys"][key]["proxy_port"] = 8080
             save_db(db)
     return redirect('/admin')
 
