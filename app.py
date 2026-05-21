@@ -63,8 +63,8 @@ def telegram_polling():
                         user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG KÍCH HOẠT KEY TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Trang Web bên dưới để tiến hành kích hoạt Key của bạn:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT KEY", "web_app": {"url": f"{WEB_URL}/"}}]]}
+                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -156,6 +156,7 @@ def load_db():
                 if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "custom_script" not in data["settings"]: data["settings"]["custom_script"] = ""
                 if "vm_loader_script" not in data["settings"]: data["settings"]["vm_loader_script"] = ""
+                if "vm_loader_version" not in data["settings"]: data["settings"]["vm_loader_version"] = 0
                 if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 
                 if "admin" not in data["users"]:
@@ -167,6 +168,8 @@ def load_db():
                     data["keys"][k].setdefault("maxDevices", 1)
                     data["keys"][k].setdefault("bound_olm", "") 
                     data["keys"][k].setdefault("vip", False)
+                    data["keys"][k].setdefault("proxy_host", "")
+                    data["keys"][k].setdefault("proxy_port", 8080)
                     data["keys"][k].setdefault("ban_until", 0)
                     data["keys"][k].setdefault("status", "active")
 
@@ -216,9 +219,6 @@ threading.Thread(target=garbage_collector, daemon=True).start()
 
 def get_real_ip(): return request.remote_addr or "Unknown_IP"
 
-def log_admin_action(db, msg):
-    pass
-
 @app.before_request
 def firewall_and_csrf():
     try:
@@ -241,40 +241,6 @@ def firewall_and_csrf():
 def add_security_headers(response):
     response.headers['X-Frame-Options'] = 'SAMEORIGIN' 
     return response
-
-# ========================================================
-# ĐĂNG KÝ / ĐĂNG NHẬP NGƯỜI DÙNG (GIỮ NGUYÊN BACKEND)
-# ========================================================
-@app.route('/register', methods=['POST'])
-def user_register():
-    username = request.form.get('username', '').strip().lower()
-    pwd = request.form.get('password', '').strip()
-    if not username or not pwd: return swal_back("Lỗi", "Vui lòng nhập đủ thông tin!", "warning")
-    db = load_db()
-    with db_lock:
-        if username in db["users"]: return swal_back("Lỗi", "Tài khoản này đã tồn tại!", "error")
-        db["users"][username] = {"password_hash": hash_pwd(pwd), "role": "user", "created_at": int(time.time() * 1000)}
-        save_db(db)
-    return swal_redirect("Thành công", "Đăng ký thành công! Vui lòng tiến hành Đăng Nhập.", "success", "/")
-
-@app.route('/login', methods=['POST'])
-def user_login():
-    username = request.form.get('username', '').strip().lower()
-    pwd = request.form.get('password', '').strip()
-    db = load_db()
-    u_data = db.get("users", {}).get(username)
-    if u_data and u_data.get("password_hash") == hash_pwd(pwd):
-        session['username'] = username
-        session['role'] = u_data.get('role', 'user')
-        session['csrf_token'] = secrets.token_hex(16)
-        if session['role'] == 'admin': return redirect('/admin') 
-        return redirect('/')
-    return swal_back("Từ chối", "Sai tài khoản hoặc mật khẩu!", "error")
-
-@app.route('/user_logout')
-def user_logout():
-    session.clear()
-    return redirect('/')
 
 # ========================================================
 # KICK USER & GIAO DỊCH SCRIPT
@@ -308,8 +274,8 @@ def serve_custom_script():
             .then(r => r.json())
             .then(d => {{
                 if(d.banned) {{
-                    localStorage.removeItem('lvt_proxy_key');
-                    alert("⚠️ HỆ THỐNG: " + d.reason);
+                    localStorage.removeItem('lvt_proxy_key'); // Xóa key lưu ẩn
+                    alert("⚠️ LVT HỆ THỐNG: " + d.reason);
                     window.location.href = "https://google.com";
                 }}
             }}).catch(e => {{}});
@@ -320,99 +286,145 @@ def serve_custom_script():
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
-@app.route('/download-loader')
-def download_loader():
+@app.route('/download_vm_loader')
+def download_vm_loader():
     db = load_db()
-    loader_data = db.get("settings", {}).get("vm_loader_script", "")
-    if not loader_data.strip(): 
-        return "⚠️ Admin chưa nạp file Script Violentmonkey Loader lên hệ thống!", 404
-    resp = make_response(loader_data)
+    script_data = db.get("settings", {}).get("vm_loader_script", "")
+    if not script_data.strip(): return "⚠️ Admin chưa nạp Script Violentmonkey Loader lên hệ thống!", 404
+    resp = make_response(script_data)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
-    resp.headers['Content-Disposition'] = 'attachment; filename="violentmonkey_loader.user.js"'
+    resp.headers['Content-Disposition'] = 'attachment; filename="Violentmonkey_Script.user.js"'
     return resp
 
 # ========================================================
-# GIAO DIỆN WEB NGƯỜI DÙNG CHỈ CÒN ĐĂNG NHẬP / KÍCH HOẠT KEY
+# [FIX] ĐỊNH TUYẾN PAC ÉP ĐÚNG IP, BỎ 127.0.0.1
+# ========================================================
+@app.route('/proxy_config/<key>.pac')
+def generate_pac_file(key):
+    db = load_db()
+    with db_lock:
+        kd = db.get("keys", {}).get(key)
+        now = int(time.time() * 1000)
+        if not kd: return "Trạng thái Key không hợp lệ.", 403
+        if kd.get("status") == "banned":
+            ban_until = kd.get("ban_until", "permanent")
+            if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): return "Key đã bị khóa.", 403
+            
+        host = kd.get("proxy_host") or "127.0.0.1" # Dự phòng code cũ không lỗi
+        port = kd.get("proxy_port", 8080)
+        
+        pac_script = f"""
+        function FindProxyForURL(url, host) {{
+            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn" || host === "mitm.it") {{
+                return "PROXY {host}:{port}";
+            }}
+            return "DIRECT";
+        }}
+        """
+        resp = make_response(pac_script)
+        resp.headers['Content-Type'] = 'application/x-ns-proxy-autoconfig'
+        return resp
+
+# ========================================================
+# GIAO DIỆN WEB NGƯỜI DÙNG CHỈ CÓ KÍCH HOẠT KEY
 # ========================================================
 @app.route('/')
 def user_proxy_portal():
     html = f"""
-    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LVT - Kích Hoạt Hệ Thống</title><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}{CSS_GLASS}.info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #00ffcc; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; }}.highlight {{ color: #00ffcc; font-weight: bold; font-family: monospace; font-size: 14px; padding: 6px 10px; background: rgba(0,255,204,0.1); border-radius: 5px; word-break: break-all; display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box; margin-bottom: 10px; }}.inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}.inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}</style></head><body><div class="glass-panel" style="max-width: 500px; width: 100%;"><h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-key"></i> KÍCH HOẠT KEY HỆ THỐNG</h2><p style="color:#889; font-size:13px; margin-bottom:25px;">Vui lòng nhập mã Key gồm đúng 15 ký tự để nhận cấu hình & Script.</p><input type="text" id="k_inp" class="inp-neon" placeholder="dán mã key 15 ký tự vào đây..." maxlength="15"><button id="btn_activate" class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> KÍCH HOẠT NGAY</button><div id="proxy-result" class="info-box"><h4 style="color:#00ffcc; margin-top:0; margin-bottom:15px; font-size:16px; text-align:center; border-bottom:1px solid rgba(0,255,204,0.2); padding-bottom:10px;">THÔNG TIN KÍCH HOẠT</h4><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;">🔑 Mã Key đã dùng:</div><div class="highlight" id="res-key" style="color:#fff;"></div></div><div style="margin-bottom:12px;"><div style="color:#889; font-size:12px; margin-bottom:4px;">👤 Tài khoản OLM:</div><div class="highlight" style="color:#ffcc00;" id="res-olm"></div></div><div style="display:flex; gap:10px;"><div style="flex:1;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị:</div><div id="res-dev" class="highlight" style="justify-content:center;"></div></div><div style="flex:1;"><div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-clock"></i> Hạn dùng:</div><div id="res-exp" class="highlight" style="color:#ff3366; justify-content:center;"></div></div></div><p style="font-size:12px; color:#00ffcc; text-align:center; margin-top:15px; margin-bottom:0;"><i class="fas fa-download"></i> Hệ thống đang tự động tải file Script Loader xuống...</p></div></div><script>
+    <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LVT - Kích Hoạt Key</title><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');body {{ background: #05050a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction:column; }}{CSS_GLASS}.info-box {{ background: rgba(0,0,0,0.6); border: 1px dashed #00ffcc; padding: 20px; border-radius: 10px; margin-top: 20px; display: none; text-align: left; }}.inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 15px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; font-family: monospace; font-size: 16px; text-align: center; font-weight:bold; box-sizing:border-box; text-transform:lowercase; }}.inp-neon:focus {{ border-color: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.2); }}</style></head><body>
+    <div class="glass-panel" style="max-width: 450px; width: 100%;">
+        <h2 class="text-neon mb-2" style="margin-top:0;"><i class="fas fa-key"></i> KÍCH HOẠT KEY</h2>
+        <p style="color:#889; font-size:13px; margin-bottom:25px; line-height:1.5;">Vui lòng nhập Key định danh chuẩn gồm 15 ký tự.</p>
+        <input type="text" id="k_inp" class="inp-neon" placeholder="Nhập key 15 ký tự vào đây..." maxlength="15">
+        <button id="btn_activate" class="btn-neon" onclick="actKey()"><i class="fas fa-bolt"></i> KÍCH HOẠT NGAY</button>
+        
+        <div id="proxy-result" class="info-box">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px dashed #333; padding-bottom: 10px; margin-bottom: 15px;">
+                <h4 style="color:#00ffcc; margin:0; font-size:16px;">THÔNG TIN KEY</h4>
+            </div>
+            
+            <div style="margin-bottom:12px; text-align:center;">
+                <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-key"></i> Key của bạn:</div>
+                <div id="res-key" style="font-size:16px; font-weight:bold; color:#00ffcc; font-family: monospace; letter-spacing: 1px;"></div>
+            </div>
+
+            <div style="display:flex; gap:10px; margin-bottom:12px; margin-top:15px;">
+                <div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;">
+                    <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-mobile-alt"></i> Thiết bị:</div>
+                    <div id="res-dev" style="font-size:14px; font-weight:bold; color:#fff;"></div>
+                </div>
+                <div style="flex:1; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; text-align:center;">
+                    <div style="color:#889; font-size:12px; margin-bottom:4px;"><i class="fas fa-clock"></i> Hạn dùng (EXP):</div>
+                    <div id="res-exp" style="font-size:14px; font-weight:bold; color:#ff3366;"></div>
+                </div>
+            </div>
+            <a href="/download_vm_loader" class="btn-neon" style="background: linear-gradient(90deg, #a855f7, #6366f1); margin-top: 15px; display: block; text-decoration: none; text-align: center;"><i class="fas fa-download"></i> TẢI LẠI SCRIPT VIOLENTMONKEY</a>
+        </div>
+    </div>
+    
+    <script>
         let expInterval;
-        function actKey() {
-            let k = document.getElementById('k_inp').value.trim().toLowerCase();
-            if(!k) { Swal.fire({title:'Lỗi', text:'Vui lòng nhập mã Key!', icon:'warning', background:'#11111A', color:'#fff'}); return; }
-            if(k.length !== 15) { Swal.fire({title:'Lỗi', text:'Mã hiệu lực phải có độ dài đúng 15 ký tự!', icon:'error', background:'#11111A', color:'#fff'}); return; }
+        function actKey() {{ 
+            let k = document.getElementById('k_inp').value.trim().toLowerCase(); 
+            if(k.length !== 15) {{ 
+                Swal.fire('Lỗi', 'Mã Key phải có đủ đúng 15 ký tự!', 'warning'); 
+                return; 
+            }} 
+            document.getElementById('btn_activate').innerHTML = '<i class="fas fa-spinner fa-spin"></i> ĐANG KIỂM TRA...'; 
             
-            document.getElementById('btn_activate').innerHTML = '<i class="fas fa-spinner fa-spin"></i> ĐANG XỬ LÝ...';
-            
-            fetch('/api/proxy/activate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:k}) }).then(r=>r.json()).then(r=>{
-                document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> KÍCH HOẠT NGAY';
-                if(r.status==='success') {
-                    Swal.fire({
-                        title: '💥 THÀNH CÔNG 💥',
-                        text: 'Bạn đã kích hoạt key thành công!',
-                        icon: 'success',
-                        background: '#11111A',
-                        color: '#fff',
-                        confirmButtonColor: '#00ffcc',
-                        timer: 3000
-                    });
+            fetch('/api/proxy/activate', {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{key:k}}) }}).then(r=>r.json()).then(r=>{{ 
+                document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> KÍCH HOẠT NGAY'; 
+                if(r.status==='success') {{ 
+                    Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Bạn đã kích hoạt key thành công!', showConfirmButton: false, timer: 3000, background: '#1a1c26', color: '#00ffcc'}});
+                    document.getElementById('proxy-result').style.display = 'block'; 
+                    document.getElementById('res-key').innerText = k; 
+                    document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs; 
                     
-                    document.getElementById('proxy-result').style.display = 'block';
-                    document.getElementById('res-key').innerText = k;
-                    document.getElementById('res-olm').innerText = r.olm;
-                    document.getElementById('res-dev').innerText = r.devices + ' / ' + r.max_devs;
-                    
-                    if(expInterval) clearInterval(expInterval);
-                    if (r.exp === 'permanent') {
-                        document.getElementById('res-exp').innerText = 'Vĩnh Viễn';
-                    } else {
-                        expInterval = setInterval(() => {
-                            let rem = r.exp - Date.now();
-                            if(rem <= 0) {
-                                document.getElementById('res-exp').innerText = 'HẾT HẠN';
-                                clearInterval(expInterval);
-                            } else {
-                                let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000);
-                                document.getElementById('res-exp').innerText = `${d}d ${h}h ${m}m ${s}s`;
-                            }
-                        }, 1000);
-                    }
-                    
-                    // Kích hoạt tự động tải xuống file loader script
-                    setTimeout(() => { window.location.href = '/download-loader'; }, 1500);
-                } else {
-                    Swal.fire({title:'Thất bại', text: r.msg, icon:'error', background:'#11111A', color:'#fff'});
-                }
-            }).catch(e => {
-                document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> KÍCH HOẠT NGAY';
-                Swal.fire({title:'Lỗi', text:'Không kết nối được tới máy chủ!', icon:'error', background:'#11111A', color:'#fff'});
-            });
-        }
-    </script></body></html>
+                    if(expInterval) clearInterval(expInterval); 
+                    if (r.exp === 'permanent') {{ document.getElementById('res-exp').innerText = 'Vĩnh Viễn'; 
+                    }} else {{ 
+                        expInterval = setInterval(() => {{ let rem = r.exp - Date.now(); if(rem <= 0) {{ document.getElementById('res-exp').innerText = 'HẾT HẠN'; clearInterval(expInterval); }} else {{ let d = Math.floor(rem/86400000), h = Math.floor((rem%86400000)/3600000), m = Math.floor((rem%3600000)/60000), s = Math.floor((rem%60000)/1000); document.getElementById('res-exp').innerText = `${{d}}d ${{h}}h ${{m}}m ${{s}}s`; }} }}, 1000); 
+                    }} 
+
+                    let savedVer = localStorage.getItem('vm_ver_' + k);
+                    if(savedVer !== String(r.vm_version)) {{
+                        localStorage.setItem('vm_ver_' + k, String(r.vm_version));
+                        window.location.href = '/download_vm_loader';
+                    }}
+
+                }} else {{ 
+                    document.getElementById('proxy-result').style.display = 'none'; 
+                    Swal.fire('Lỗi', r.msg, 'error'); 
+                }} 
+            }}).catch(e => {{ 
+                document.getElementById('btn_activate').innerHTML = '<i class="fas fa-bolt"></i> KÍCH HOẠT NGAY'; 
+                Swal.fire('Lỗi', 'Không kết nối được tới server!', 'error'); 
+            }}); 
+        }}
+    </script>
+    </body>
+    </html>
     """
     return render_template_string_safe(html)
 
 @app.route('/api/proxy/activate', methods=['POST'])
 def proxy_activate():
     data = request.json or {}
-    key = data.get("key", "").strip().lower()
+    key = data.get("key", "").strip()
     if len(key) != 15:
-        return jsonify({"status": "error", "msg": "Độ dài Key không hợp lệ! Phải đúng 15 ký tự."})
+        return jsonify({"status": "error", "msg": "Mã Key phải có đúng 15 ký tự!"})
         
     client_ip = get_real_ip()
     db = load_db()
     now = int(time.time() * 1000)
     with db_lock:
-        if key not in db.get("keys", {}): return jsonify({"status": "error", "msg": "Mã Key không tồn tại hệ thống!"})
+        if key not in db.get("keys", {}): return jsonify({"status": "error", "msg": "Mã Key không tồn tại hoặc sai định dạng!"})
         kd = db["keys"][key]
         if kd.get("status") == "banned":
             ban_until = kd.get("ban_until", "permanent")
             if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): return jsonify({"status": "error", "msg": "Key của bạn đang bị Admin khóa!"})
             else: kd["status"] = "active"
         if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: return jsonify({"status": "error", "msg": "Key đã hết hạn sử dụng!"})
-        if not kd.get("bound_olm"): return jsonify({"status": "error", "msg": "Lỗi: Key chưa ghim Tên OLM. Không thể kích hoạt!"})
 
         devices = kd.setdefault("devices", [])
         if client_ip not in devices:
@@ -424,8 +436,9 @@ def proxy_activate():
             kd["activated"] = True
             
         save_db(db)
+        vm_ver = db.get("settings", {}).get("vm_loader_version", 0)
             
-    return jsonify({"status": "success", "olm": kd["bound_olm"], "exp": kd["exp"], "devices": len(kd.get("devices", [])), "max_devs": kd.get("maxDevices", 1)})
+    return jsonify({"status": "success", "exp": kd["exp"], "devices": len(kd.get("devices", [])), "max_devs": kd.get("maxDevices", 1), "vm_version": vm_ver})
 
 # ========================================================
 # GIAO DIỆN WEB ADMIN (PC C-PANEL)
@@ -450,8 +463,6 @@ def admin_login():
                 session['role'] = 'admin'
                 session['csrf_token'] = secrets.token_hex(16)
                 admin_login_attempts.pop(ip, None) 
-                with db_lock: log_admin_action(db, f"Đăng nhập C-Panel PC: {ip}")
-                save_db(db)
                 return redirect('/admin')
             attempts['count'] += 1
             attempts['time'] = now
@@ -472,12 +483,12 @@ def admin_dashboard():
         banned_ips = list(db.get("banned_ips", []))
         
         current_script_len = len(db.get("settings", {}).get("custom_script", ""))
-        if current_script_len > 10: script_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Script ({current_script_len} bytes)</span>'
-        else: script_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script nào được nạp!</span>'
+        if current_script_len > 10: script_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Tiêm (Dung lượng: {current_script_len} bytes)</span>'
+        else: script_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script Tiêm nào được nạp!</span>'
 
-        current_loader_len = len(db.get("settings", {}).get("vm_loader_script", ""))
-        if current_loader_len > 10: loader_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Violenmonkey Loader ({current_loader_len} bytes)</span>'
-        else: loader_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa nạp Violentmonkey Loader!</span>'
+        current_vm_len = len(db.get("settings", {}).get("vm_loader_script", ""))
+        if current_vm_len > 10: vm_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Violentmonkey (Dung lượng: {current_vm_len} bytes)</span>'
+        else: vm_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script Violentmonkey!</span>'
 
     now_ms = int(time.time() * 1000)
     keys_html = ''
@@ -517,8 +528,8 @@ def admin_dashboard():
             <div class="d-flex gap-1 justify-content-center">{vip_badge} {status_badge}</div>
         </td>
         <td>{exp_text}</td>
-        <td class="text-start ps-4">
-            <div class="mb-1"><span class="text-muted small">Định danh OLM:</span> <span class="text-warning fw-bold">{bound_olm or '⚠️ Chưa ghim'}</span></div>
+        <td class="text-center">
+            <span class="text-warning fw-bold">{bound_olm or '⚠️ Chưa ghim OLM'}</span>
         </td>
         <td><span class="badge bg-dark border border-secondary p-2 fs-6">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
         <td>
@@ -577,7 +588,7 @@ def admin_dashboard():
             <div class="row g-4 mb-4">
                 <div class="col-xl-4 col-lg-5">
                     <div class="card h-100" style="border-top: 4px solid #22c55e;">
-                        <div class="card-header text-success"><i class="fas fa-magic"></i> Tạo Key Hệ Thống</div>
+                        <div class="card-header text-success"><i class="fas fa-magic"></i> Tạo Key</div>
                         <div class="card-body">
                             <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Số lượng tạo</label><input type="number" name="quantity" class="form-control" value="1" required></div>
@@ -596,10 +607,10 @@ def admin_dashboard():
                         <div class="card-header text-info" style="color: #a855f7 !important;"><i class="fas fa-code"></i> Nạp Script Tiêm OLM</div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_script" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:12px;">Chọn file Script gốc (.js hoặc .txt) tải lên đây. Hệ thống tự động gộp file vào bộ xử lý core.</p>
+                                <p class="text-muted mb-3" style="font-size:12px;">Chọn file Script Tiêm gốc tải lên đây.</p>
                                 <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{script_status}</div>
                                 <input type="file" name="script_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
-                                <button type="submit" class="btn-primary-custom btn-purple mt-auto"><i class="fas fa-cloud-upload-alt"></i> Nạp File Script</button>
+                                <button type="submit" class="btn-primary-custom btn-purple mt-auto"><i class="fas fa-cloud-upload-alt"></i> Nạp File Script Tiêm</button>
                             </form>
                         </div>
                     </div>
@@ -607,13 +618,13 @@ def admin_dashboard():
 
                 <div class="col-xl-4 col-lg-12">
                     <div class="card h-100" style="border-top: 4px solid #f59e0b;">
-                        <div class="card-header text-warning"><i class="fas fa-file-code"></i> Nạp Script Violentmonkey Loader</div>
+                        <div class="card-header text-warning"><i class="fas fa-certificate"></i> Nạp Script Violentmonkey Loader</div>
                         <div class="card-body d-flex flex-column">
-                            <form action="/admin/update_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:12px;">Tải file cấu hình loader extension (.user.js) lên đây. Khách kích hoạt thành công sẽ tự động tải file này về.</p>
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{loader_status}</div>
-                                <input type="file" name="loader_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
-                                <button type="submit" class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-save"></i> Tải Lên Loader</button>
+                            <form action="/admin/update_vm_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
+                                <p class="text-muted mb-3" style="font-size:12px;">Tải file Violentmonkey Script chuẩn lên đây. Khi user kích hoạt key sẽ tự động tải file này về một lần duy nhất.</p>
+                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{vm_status}</div>
+                                <input type="file" name="vm_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt,.user.js" required>
+                                <button type="submit" class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-save"></i> Upload Script</button>
                             </form>
                         </div>
                     </div>
@@ -649,7 +660,7 @@ def admin_dashboard():
                     <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
                         <table class="table table-hover text-center align-middle mb-0">
                             <thead style="position: sticky; top: 0; z-index: 1;">
-                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th class="text-start ps-4">Thông tin OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
+                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
                                 {keys_html or '<tr><td colspan="5" class="py-5 text-muted">Chưa có dữ liệu.</td></tr>'}
@@ -704,7 +715,7 @@ def admin_dashboard():
                                 <div class="col-6"><input type="number" name="time_val" class="form-control form-control-lg text-center" placeholder="Thời gian"></div>
                                 <div class="col-6"><select name="time_unit" class="form-select form-select-lg"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days">Ngày</option><option value="months">Tháng</option><option value="permanent" selected>Vĩnh Viễn</option></select></div>
                             </div>
-                            <p class="text-danger small mt-3">* Khách đang dùng sẽ lập tức bị đá văng khỏi hệ thống.</p>
+                            <p class="text-danger small mt-3">* Khách đang xài sẽ lập tức bị đá văng khỏi hệ thống.</p>
                         </div>
                         <div class="modal-footer p-3"><button type="submit" class="btn-primary-custom action-btn-danger w-100 border-0">XÁC NHẬN KHÓA</button></div>
                     </form>
@@ -735,7 +746,7 @@ def create_key():
     with db_lock:
         for _ in range(qty):
             nk = generate_proxy_key()
-            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "vip": vip, "status": "active", "bound_olm": "", "ban_until": 0}
+            db["keys"][nk] = {"exp": "pending", "maxDevices": md, "devices": [], "vip": vip, "status": "active", "bound_olm": "", "proxy_host": "", "proxy_port": 8080, "ban_until": 0}
             if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"minute":60000, "hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
             else: db["keys"][nk]["exp"] = "permanent"
         save_db(db)
@@ -804,21 +815,22 @@ def admin_update_script():
     with db_lock:
         db.setdefault("settings", {})["custom_script"] = script_content
         save_db(db)
-    return swal_redirect("Thành Công", "Đã nạp file Script thành công!", "success", "/admin")
+    return swal_redirect("Thành Công", "Đã nạp file Script Tiêm thành công!", "success", "/admin")
 
-@app.route('/admin/update_loader', methods=['POST'])
-def admin_update_loader():
+@app.route('/admin/update_vm_loader', methods=['POST'])
+def admin_update_vm_loader():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'loader_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script Loader!", "error")
-    file = request.files['loader_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file!", "error")
-    try: loader_content = file.read().decode('utf-8')
+    if 'vm_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script!", "error")
+    file = request.files['vm_file']
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script!", "error")
+    try: script_content = file.read().decode('utf-8')
     except: return swal_back("Lỗi", "File không hợp lệ", "error")
     db = load_db()
     with db_lock:
-        db.setdefault("settings", {})["vm_loader_script"] = loader_content
+        db.setdefault("settings", {})["vm_loader_script"] = script_content
+        db["settings"]["vm_loader_version"] = int(time.time() * 1000)
         save_db(db)
-    return swal_redirect("Thành Công", "Đã lưu script Violentmonkey Loader lên hệ thống!", "success", "/admin")
+    return swal_redirect("Thành Công", "Đã lưu Script Violentmonkey Loader lên hệ thống!", "success", "/admin")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
