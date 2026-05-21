@@ -156,8 +156,8 @@ def load_db():
                 if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
                 if "custom_script" not in data["settings"]: data["settings"]["custom_script"] = ""
                 if "vip_script" not in data["settings"]: data["settings"]["vip_script"] = ""
-                if "vm_loader_script" not in data["settings"]: data["settings"]["vm_loader_script"] = ""
-                if "vm_loader_version" not in data["settings"]: data["settings"]["vm_loader_version"] = 0
+                if "vm_original_script" not in data["settings"]: data["settings"]["vm_original_script"] = ""
+                if "vm_maintenance_until" not in data["settings"]: data["settings"]["vm_maintenance_until"] = 0
                 if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 
                 if "admin" not in data["users"]:
@@ -287,14 +287,26 @@ def serve_custom_script():
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
-@app.route('/download_vm_loader')
-def download_vm_loader():
+# ========================================================
+# HỆ THỐNG SCRIPT VIOLENTMONKEY KÉO CODE
+# ========================================================
+@app.route('/api/vm_payload')
+def get_vm_payload():
     db = load_db()
-    script_data = db.get("settings", {}).get("vm_loader_script", "")
-    if not script_data.strip(): return "⚠️ Admin chưa nạp Script Violentmonkey Loader lên hệ thống!", 404
-    resp = make_response(script_data)
+    now = int(time.time() * 1000)
+    m_until = db.get("settings", {}).get("vm_maintenance_until", 0)
+    
+    # KHI ĐANG BẢO TRÌ SẼ BÁO LỖI ALERTS VÀ KHÔNG TRẢ VỀ CODE GỐC
+    if m_until > now:
+        mins = (m_until - now) // 60000 + 1
+        alert_code = f'alert("⚠️ HỆ THỐNG THÔNG BÁO:\\n\\nScript Violentmonkey đang được bảo trì để cập nhật chức năng mới.\\nVui lòng chờ và quay lại sau khoảng {mins} phút nữa!");'
+        resp = make_response(alert_code)
+        resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+        return resp
+        
+    script = db.get("settings", {}).get("vm_original_script", "")
+    resp = make_response(script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
-    resp.headers['Content-Disposition'] = 'attachment; filename="Violentmonkey_Script.user.js"'
     return resp
 
 # ========================================================
@@ -448,11 +460,21 @@ def admin_dashboard():
         if current_vip_len > 10: vip_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Lõi VIP ({current_vip_len} bytes)</span>'
         else: vip_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa nạp Lõi VIP!</span>'
 
-        current_vm_len = len(db.get("settings", {}).get("vm_loader_script", ""))
-        if current_vm_len > 10: vm_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Loader ({current_vm_len} bytes)</span>'
-        else: vm_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có VM Loader!</span>'
+        current_vm_orig_len = len(db.get("settings", {}).get("vm_original_script", ""))
+        if current_vm_orig_len > 10: vm_orig_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Bản Gốc ({current_vm_orig_len} bytes)</span>'
+        else: vm_orig_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Bản Gốc!</span>'
+        
+        # Lấy trạng thái Bảo Trì
+        m_until = db.get("settings", {}).get("vm_maintenance_until", 0)
 
     now_ms = int(time.time() * 1000)
+    
+    if m_until > now_ms:
+        mins = (m_until - now_ms) // 60000 + 1
+        maintenance_status = f'<div class="alert alert-warning py-1 px-2 mt-2 mb-0 small text-center fw-bold"><i class="fas fa-tools"></i> Đang bảo trì (còn {mins}p)</div>'
+    else:
+        maintenance_status = f'<div class="alert alert-success py-1 px-2 mt-2 mb-0 small text-center fw-bold"><i class="fas fa-check"></i> Hoạt động bình thường</div>'
+
     keys_html = ''
     for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
         st = data.get('status', 'active')
@@ -596,13 +618,32 @@ def admin_dashboard():
 
                 <div class="col-xl-3 col-lg-6">
                     <div class="card h-100" style="border-top: 4px solid #f59e0b;">
-                        <div class="card-header text-warning"><i class="fas fa-certificate"></i> Nạp File VM Loader</div>
+                        <div class="card-header text-warning"><i class="fas fa-file-code"></i> Quản Lý Script Violentmonkey Gốc</div>
                         <div class="card-body d-flex flex-column">
-                            <form action="/admin/update_vm_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:12px;">Violentmonkey Script cho khách tải về máy.</p>
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{vm_status}</div>
-                                <input type="file" name="vm_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt,.user.js" required>
-                                <button type="submit" class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-save"></i> Upload File</button>
+                            <form action="/admin/update_vm_original" method="POST" enctype="multipart/form-data" class="mb-3" onsubmit="setTimeout(()=>window.location.reload(), 1500);">{csrf_input}
+                                <div class="mb-2 p-2 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">
+                                    {vm_orig_status}
+                                    {maintenance_status}
+                                </div>
+                                <input type="file" name="vm_original_file" class="form-control mb-2 form-control-sm" accept=".js,.txt" required>
+                                <button type="submit" class="btn-primary-custom btn-sm py-2" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-download"></i> Nạp File Gốc & Tải Loader Auto</button>
+                            </form>
+                            
+                            <hr class="border-secondary my-1">
+                            
+                            <form action="/admin/set_vm_maintenance" method="POST" class="mt-2">{csrf_input}
+                                <label class="small text-muted fw-bold mb-1">Cài đặt Bảo Trì (Chặn Loader):</label>
+                                <div class="input-group input-group-sm mb-2">
+                                    <input type="number" name="m_val" class="form-control bg-dark text-light border-secondary" placeholder="Thời gian..." required>
+                                    <select name="m_unit" class="form-select bg-dark text-light border-secondary">
+                                        <option value="minutes">Phút</option>
+                                        <option value="hours">Giờ</option>
+                                    </select>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button type="submit" name="action" value="start" class="btn btn-warning btn-sm fw-bold w-50"><i class="fas fa-play"></i> Bật Bảo Trì</button>
+                                    <button type="submit" name="action" value="stop" class="btn btn-secondary btn-sm fw-bold w-50" formnovalidate><i class="fas fa-stop"></i> Tắt Bảo Trì</button>
+                                </div>
                             </form>
                         </div>
                     </div>
@@ -839,20 +880,66 @@ def admin_update_vip_script():
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp file Script Lõi VIP thành công!", "success", "/admin")
 
-@app.route('/admin/update_vm_loader', methods=['POST'])
-def admin_update_vm_loader():
+@app.route('/admin/set_vm_maintenance', methods=['POST'])
+def admin_set_vm_maintenance():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'vm_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script!", "error")
-    file = request.files['vm_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script!", "error")
-    try: script_content = file.read().decode('utf-8')
-    except: return swal_back("Lỗi", "File không hợp lệ", "error")
+    action = request.form.get('action')
     db = load_db()
     with db_lock:
-        db.setdefault("settings", {})["vm_loader_script"] = script_content
-        db["settings"]["vm_loader_version"] = int(time.time() * 1000)
+        if action == 'stop':
+            db.setdefault("settings", {})["vm_maintenance_until"] = 0
+        else:
+            val = safe_int(request.form.get('m_val', 0))
+            unit = request.form.get('m_unit', 'minutes')
+            ms_to_add = val * {"minutes": 60000, "hours": 3600000}.get(unit, 60000)
+            db.setdefault("settings", {})["vm_maintenance_until"] = int(time.time() * 1000) + ms_to_add
         save_db(db)
-    return swal_redirect("Thành Công", "Đã lưu Script VM Loader lên hệ thống!", "success", "/admin")
+    return redirect('/admin')
+
+@app.route('/admin/update_vm_original', methods=['POST'])
+def admin_update_vm_original():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    if 'vm_original_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script Gốc!", "error")
+    file = request.files['vm_original_file']
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file!", "error")
+    try: script_content = file.read().decode('utf-8')
+    except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
+    
+    db = load_db()
+    with db_lock:
+        db.setdefault("settings", {})["vm_original_script"] = script_content
+        save_db(db)
+        
+    loader_code = f"""// ==UserScript==
+// @name         LVT Violentmonkey Auto Loader
+// @namespace    lvt_loader
+// @version      {int(time.time())}
+// @description  Tự động kéo Script Gốc từ Server
+// @match        *://*.olm.vn/*
+// @match        *://olm.vn/*
+// @grant        GM_xmlhttpRequest
+// @connect      *
+// ==/UserScript==
+
+(function() {{
+    'use strict';
+    GM_xmlhttpRequest({{
+        method: 'GET',
+        url: '{WEB_URL}/api/vm_payload?t=' + Date.now(),
+        onload: function(res) {{
+            try {{
+                eval(res.responseText);
+            }} catch(e) {{
+                console.error("LVT Loader Error:", e);
+            }}
+        }}
+    }});
+}})();"""
+    
+    resp = make_response(loader_code)
+    resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename="LVT_Loader_Auto.user.js"'
+    return resp
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
