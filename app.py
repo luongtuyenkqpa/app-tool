@@ -153,9 +153,8 @@ def load_db():
                 data.setdefault("settings", {})
                 
                 if "secret_key" not in data["settings"]: data["settings"]["secret_key"] = secrets.token_hex(32)
-                if "maintenance_until" not in data["settings"]: data["settings"]["maintenance_until"] = 0
-                if "custom_script" not in data["settings"]: data["settings"]["custom_script"] = ""
-                if "vm_loader_script" not in data["settings"]: data["settings"]["vm_loader_script"] = ""
+                if "script_tiem" not in data["settings"]: data["settings"]["script_tiem"] = ""
+                if "vm_loader" not in data["settings"]: data["settings"]["vm_loader"] = ""
                 if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 
                 if "admin" not in data["users"]:
@@ -265,7 +264,7 @@ def check_ban_status():
 @app.route('/api/get_script')
 def serve_custom_script():
     db = load_db()
-    user_script = db.get("settings", {}).get("custom_script", "")
+    user_script = db.get("settings", {}).get("script_tiem", "")
     kick_payload = f"""
     (function() {{
         setInterval(function() {{
@@ -284,6 +283,109 @@ def serve_custom_script():
     resp = make_response(kick_payload + "\n" + user_script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
+
+# ========================================================
+# HỆ THỐNG SCRIPT VIOLENTMONKEY KÉO CODE
+# ========================================================
+@app.route('/api/vm_payload')
+def get_vm_payload():
+    db = load_db()
+    script = db.get("settings", {}).get("vm_loader", "")
+    resp = make_response(script)
+    resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+    return resp
+
+# ========================================================
+# [FIX] ĐỊNH TUYẾN PAC ÉP ĐÚNG IP, BỎ 127.0.0.1
+# ========================================================
+@app.route('/proxy_config/<key>.pac')
+def generate_pac_file(key):
+    db = load_db()
+    with db_lock:
+        kd = db.get("keys", {}).get(key)
+        now = int(time.time() * 1000)
+        if not kd: return "Trạng thái Key không hợp lệ.", 403
+        if kd.get("status") == "banned":
+            ban_until = kd.get("ban_until", "permanent")
+            if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): return "Key đã bị khóa.", 403
+            
+        host = kd.get("proxy_host") or "127.0.0.1" 
+        port = kd.get("proxy_port", 8080)
+        
+        pac_script = f"""
+        function FindProxyForURL(url, host) {{
+            if (shExpMatch(host, "*.olm.vn") || host === "olm.vn" || host === "mitm.it") {{
+                return "PROXY {host}:{port}";
+            }}
+            return "DIRECT";
+        }}
+        """
+        resp = make_response(pac_script)
+        resp.headers['Content-Type'] = 'application/x-ns-proxy-autoconfig'
+        return resp
+
+# ========================================================
+# TRANG CHỦ CHUYỂN HƯỚNG VÀ API VERIFY LÕI HACK
+# ========================================================
+@app.route('/')
+def user_proxy_portal():
+    return redirect('/admin_login')
+
+@app.route('/api/verify_core', methods=['POST'])
+def api_verify_core():
+    data = request.json or {}
+    key = data.get('key', '').strip()
+    current_olm = data.get('olm_name', '').strip()
+    client_ip = get_real_ip()
+    
+    db = load_db()
+    now = int(time.time() * 1000)
+    with db_lock:
+        if key not in db.get("keys", {}): return jsonify({"status": "error", "msg": "Mã Key không tồn tại hoặc sai định dạng!"})
+        kd = db["keys"][key]
+        
+        if kd.get("status") == "banned":
+            ban_until = kd.get("ban_until", "permanent")
+            if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): 
+                return jsonify({"status": "banned", "msg": "Key của bạn đang bị Admin khóa!"})
+            else: kd["status"] = "active"
+            
+        if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: 
+            return jsonify({"status": "error", "msg": "Key đã hết hạn sử dụng!"})
+
+        devices = kd.setdefault("devices", [])
+        if client_ip not in devices:
+            if len(devices) >= kd.get("maxDevices", 1): 
+                return jsonify({"status": "error", "msg": "Key này đã vượt quá số lượng thiết bị cho phép!"})
+            devices.append(client_ip)
+
+        if kd.get("exp") == "pending":
+            kd["exp"] = now + kd.get("durationMs", 0)
+            kd["activated"] = True
+            
+        bound_olm = kd.get("bound_olm", "")
+        if bound_olm and current_olm and bound_olm.lower() != current_olm.lower():
+            kd["status"] = "banned"
+            kd["ban_until"] = "permanent"
+            save_db(db)
+            return jsonify({
+                "status": "banned", 
+                "msg": f"⚠️ CẢNH BÁO BẢO MẬT: Phát hiện sai tài khoản OLM! (Bạn đang dùng: {current_olm}, Key được ghim cho: {bound_olm}). Key của bạn đã bị Hệ thống khóa vĩnh viễn!"
+            })
+            
+        save_db(db)
+        
+        is_vip = kd.get("vip", False)
+        core_code = db.get("settings", {}).get("script_tiem", "")
+            
+        return jsonify({
+            "status": "ok", 
+            "is_vip": is_vip, 
+            "core": core_code,
+            "exp": kd["exp"],
+            "devices": len(devices),
+            "max_devs": kd.get("maxDevices", 1)
+        })
 
 # ========================================================
 # GIAO DIỆN WEB ADMIN (PC C-PANEL)
@@ -327,13 +429,13 @@ def admin_dashboard():
         keys_items = list(db.get("keys", {}).items())
         banned_ips = list(db.get("banned_ips", []))
         
-        current_script_len = len(db.get("settings", {}).get("custom_script", ""))
-        if current_script_len > 10: script_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Tiêm ({current_script_len} bytes)</span>'
-        else: script_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa nạp File Tiêm!</span>'
+        current_tiem_len = len(db.get("settings", {}).get("script_tiem", ""))
+        if current_tiem_len > 10: tiem_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Tiêm (Dung lượng: {current_tiem_len} bytes)</span>'
+        else: tiem_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script Tiêm!</span>'
 
-        current_vm_len = len(db.get("settings", {}).get("vm_loader_script", ""))
-        if current_vm_len > 10: vm_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp ({current_vm_len} bytes)</span>'
-        else: vm_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa nạp Loader!</span>'
+        current_loader_len = len(db.get("settings", {}).get("vm_loader", ""))
+        if current_loader_len > 10: loader_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Script (Dung lượng: {current_loader_len} bytes)</span>'
+        else: loader_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script Violentmonkey!</span>'
 
     now_ms = int(time.time() * 1000)
     keys_html = ''
@@ -366,7 +468,6 @@ def admin_dashboard():
         
         safe_k = escape(str(k))
         bound_olm = escape(data.get('bound_olm', ''))
-        proxy_info = f"{data.get('proxy_host')}:{data.get('proxy_port')}" if data.get('proxy_host') else "Trống"
 
         keys_html += f'''<tr>
         <td>
@@ -374,16 +475,16 @@ def admin_dashboard():
             <div class="d-flex gap-1 justify-content-center">{vip_badge} {status_badge}</div>
         </td>
         <td>{exp_text}</td>
-        <td class="text-start ps-4">
-            <div class="mb-1"><span class="text-muted small">OLM:</span> <span class="text-warning fw-bold">{bound_olm or '⚠️ Chưa ghim'}</span></div>
-            <div><span class="text-muted small">Host:</span> <span class="text-success font-monospace fw-bold">{proxy_info}</span></div>
+        <td class="text-center">
+            <span class="text-warning fw-bold">{bound_olm or '⚠️ Chưa ghim OLM'}</span>
         </td>
         <td><span class="badge bg-dark border border-secondary p-2 fs-6">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
         <td>
             <div class="d-flex flex-wrap gap-2 justify-content-center">
                 <button class="action-btn" onclick="openBindModal('{safe_k}', '{bound_olm}')" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
-                <button class="action-btn" onclick="openProxyModal('{safe_k}')" title="Gắn Proxy Host"><i class="fas fa-network-wired text-primary"></i></button>
                 <button class="action-btn" onclick="openAddTimeModal('{safe_k}')" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
+                <a href="/admin/action/reset_dev/{safe_k}" class="action-btn text-primary" onclick="return confirm('Bạn có chắc chắn muốn Xóa sạch lịch sử thiết bị của Key này?')" title="Reset Thiết Bị"><i class="fas fa-sync-alt"></i></a>
+                <button class="action-btn text-success" onclick="openMaxDevModal('{safe_k}', '{data.get('maxDevices', 1)}')" title="Tùy Chỉnh Giới Hạn Thiết Bị"><i class="fas fa-mobile-alt"></i></button>
                 {ban_btn}
                 <a href="/admin/action/delete/{safe_k}" class="action-btn text-muted" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
             </div>
@@ -434,43 +535,45 @@ def admin_dashboard():
         
         <div class="container-fluid py-4 px-lg-5">
             <div class="row g-4 mb-4">
-                <div class="col-xl-4 col-lg-5">
+                <div class="col-xl-4 col-lg-12">
                     <div class="card h-100" style="border-top: 4px solid #22c55e;">
-                        <div class="card-header text-success"><i class="fas fa-magic"></i> Tạo Key Proxy</div>
+                        <div class="card-header text-success"><i class="fas fa-magic"></i> Tạo Key</div>
                         <div class="card-body">
                             <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
-                                <div class="col-6"><label class="text-muted small fw-bold mb-1">Số lượng tạo</label><input type="number" name="quantity" class="form-control" value="1" required></div>
+                                <div class="col-6"><label class="text-muted small fw-bold mb-1">Số lượng</label><input type="number" name="quantity" class="form-control" value="1" required></div>
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Số máy/Key</label><input type="number" name="devices" class="form-control" value="1" required></div>
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Độ dài TG</label><input type="number" name="duration" class="form-control" value="1" required></div>
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Đơn vị</label><select name="type" class="form-select"><option value="minute">Phút</option><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh Viễn</option></select></div>
                                 <div class="col-12 mt-3"><div class="form-check form-switch fs-6 p-3 rounded" style="background: rgba(255,255,255,0.02); border: 1px solid #1e293b;"><input class="form-check-input ms-0 mt-1" type="checkbox" name="is_vip"><label class="text-warning fw-bold ms-3" style="line-height:24px;">VIP PRO</label></div></div>
-                                <div class="col-12 mt-4"><button type="submit" class="btn-primary-custom btn-success-custom"><i class="fas fa-cogs"></i> Sản xuất Key</button></div>
+                                <div class="col-12 mt-4"><button type="submit" class="btn-primary-custom btn-success-custom"><i class="fas fa-cogs"></i> Sản xuất</button></div>
                             </form>
                         </div>
                     </div>
                 </div>
 
-                <div class="col-xl-4 col-lg-7">
+                <div class="col-xl-4 col-lg-6">
                     <div class="card h-100" style="border-top: 4px solid #a855f7;">
-                        <div class="card-header text-info" style="color: #a855f7 !important;"><i class="fas fa-code"></i> Nạp Script Tiêm OLM</div>
+                        <div class="card-header" style="color: #a855f7;"><i class="fas fa-code"></i> NẠP SCRIPT TIÊM OLM</div>
                         <div class="card-body d-flex flex-column">
-                            <form action="/admin/update_script" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{script_status}</div>
+                            <form action="/admin/update_script_tiem" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
+                                <p class="text-muted mb-3" style="font-size:13px;">Chọn file Script Tiêm gốc tải lên đây.</p>
+                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{tiem_status}</div>
                                 <input type="file" name="script_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
-                                <button type="submit" class="btn-primary-custom btn-purple mt-auto"><i class="fas fa-cloud-upload-alt"></i> Nạp File Script Tiêm</button>
+                                <button type="submit" class="btn-primary-custom mt-auto btn-purple"><i class="fas fa-cloud-upload-alt"></i> NẠP FILE SCRIPT TIÊM</button>
                             </form>
                         </div>
                     </div>
                 </div>
 
-                <div class="col-xl-4 col-lg-12">
+                <div class="col-xl-4 col-lg-6">
                     <div class="card h-100" style="border-top: 4px solid #f59e0b;">
-                        <div class="card-header text-warning"><i class="fas fa-file-code"></i> Nạp Violentmonkey Loader</div>
+                        <div class="card-header text-warning"><i class="fas fa-certificate"></i> NẠP SCRIPT VIOLENTMONKEY LOADER</div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_vm_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{vm_status}</div>
-                                <input type="file" name="vm_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
-                                <button type="submit" class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-save"></i> NẠP FILE VIOLENTMONKEY LOADER</button>
+                                <p class="text-muted mb-3" style="font-size:13px;">Tải file Violentmonkey Script chuẩn lên đây. Khi user kích hoạt key sẽ tự động tải file này về một lần duy nhất.</p>
+                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{loader_status}</div>
+                                <input type="file" name="loader_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
+                                <button type="submit" class="btn-primary-custom mt-auto" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-cloud-upload-alt"></i> NẠP SCRIPT LOADER</button>
                             </form>
                         </div>
                     </div>
@@ -479,8 +582,8 @@ def admin_dashboard():
 
             <div class="row g-4 mb-4">
                 <div class="col-12">
-                    <div class="card" style="border-top: 4px solid #f87171;">
-                        <div class="card-header text-danger"><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen)</div>
+                    <div class="card" style="border-top: 4px solid #a855f7;">
+                        <div class="card-header" style="color: #a855f7 !important;"><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen IP)</div>
                         <div class="card-body">
                             <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">{csrf_input}
                                 <input type="text" name="ip" class="form-control" style="max-width:300px;" placeholder="Nhập IP cần khoá..." required>
@@ -506,7 +609,7 @@ def admin_dashboard():
                     <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
                         <table class="table table-hover text-center align-middle mb-0">
                             <thead style="position: sticky; top: 0; z-index: 1;">
-                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th class="text-start ps-4">Thông tin cấu hình Proxy</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
+                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
                                 {keys_html or '<tr><td colspan="5" class="py-5 text-muted">Chưa có dữ liệu.</td></tr>'}
@@ -521,11 +624,11 @@ def admin_dashboard():
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
                     <form action="/admin/bind_olm" method="POST">{csrf_input}
-                        <div class="modal-header"><h5 class="modal-title fw-bold text-warning"><i class="fas fa-user-tag"></i> GHIM OLM</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                        <div class="modal-header"><h5 class="modal-title fw-bold text-warning"><i class="fas fa-user-tag"></i> GHIM TÀI KHOẢN OLM</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
                         <div class="modal-body p-4 text-center">
                             <input type="hidden" name="key" id="bindKeyInput">
                             <h4 id="bindKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
-                            <input type="text" name="olm_name" id="bindOlmInput" class="form-control form-control-lg text-center" placeholder="Nhập tên OLM..." required>
+                            <input type="text" name="olm_name" id="bindOlmInput" class="form-control form-control-lg text-center" placeholder="Nhập tên tài khoản OLM cần ghim..." required>
                         </div>
                         <div class="modal-footer p-3"><button class="btn-primary-custom" style="background: linear-gradient(135deg, #f59e0b, #d97706); color:#000;">LƯU ĐỊNH DANH</button></div>
                     </form>
@@ -549,20 +652,18 @@ def admin_dashboard():
             </div>
         </div>
 
-        <div class="modal fade" id="proxyModal" tabindex="-1" data-bs-theme="dark">
+        <div class="modal fade" id="maxDevModal" tabindex="-1" data-bs-theme="dark">
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
-                    <form action="/admin/setup_proxy" method="POST">{csrf_input}
-                        <div class="modal-header"><h5 class="modal-title fw-bold text-primary"><i class="fas fa-network-wired"></i> GẮN SERVER PROXY</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                    <form action="/admin/edit_max_dev" method="POST">{csrf_input}
+                        <div class="modal-header"><h5 class="modal-title fw-bold text-success"><i class="fas fa-mobile-alt"></i> TÙY CHỈNH GIỚI HẠN THIẾT BỊ</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
                         <div class="modal-body p-4 text-center">
-                            <input type="hidden" name="key" id="proxyKeyInput">
-                            <h4 id="proxyKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
-                            <div class="input-group mb-3">
-                                <input type="text" name="host" id="proxyHostInput" class="form-control form-control-lg text-center text-success" placeholder="VD: 192.168.1.5" required>
-                                <button type="button" class="btn btn-outline-success px-3" onclick="document.getElementById('proxyHostInput').value = '192.168.1.' + Math.floor(Math.random()*255)" title="Random IP Cục Bộ"><i class="fas fa-random"></i></button>
-                            </div>
+                            <input type="hidden" name="key" id="maxDevKeyInput">
+                            <h4 id="maxDevKeyDisplay" class="text-info font-monospace d-block mb-4 fw-bold"></h4>
+                            <p class="text-muted small">Nhập số lượng thiết bị Tối Đa cho phép kết nối trên Key này.</p>
+                            <input type="number" name="max_dev" id="maxDevInput" class="form-control form-control-lg text-center" placeholder="Nhập số thiết bị..." required min="1">
                         </div>
-                        <div class="modal-footer p-3"><button class="btn-primary-custom btn-purple w-100">LƯU CẤU HÌNH</button></div>
+                        <div class="modal-footer p-3"><button class="btn-primary-custom btn-success-custom w-100">CẬP NHẬT THIẾT BỊ</button></div>
                     </form>
                 </div>
             </div>
@@ -592,7 +693,7 @@ def admin_dashboard():
         <script>
             function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
             function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
-            function openProxyModal(key) {{ document.getElementById('proxyKeyInput').value = key; document.getElementById('proxyKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('proxyModal')).show(); }}
+            function openMaxDevModal(key, max) {{ document.getElementById('maxDevKeyInput').value = key; document.getElementById('maxDevKeyDisplay').innerText = key; document.getElementById('maxDevInput').value = max; new bootstrap.Modal(document.getElementById('maxDevModal')).show(); }}
             function openBanModal(key) {{ document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('banModal')).show(); }}
             function copyToClipboard(text) {{ navigator.clipboard.writeText(text); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}}); }}
         </script>
@@ -618,19 +719,6 @@ def create_key():
         save_db(db)
     return redirect('/admin')
 
-@app.route('/admin/setup_proxy', methods=['POST'])
-def admin_setup_proxy():
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    key = request.form.get('key', '').strip()
-    host = request.form.get('host', '').strip()
-    db = load_db()
-    with db_lock:
-        if key in db.get("keys", {}):
-            db["keys"][key]["proxy_host"] = host
-            db["keys"][key]["proxy_port"] = 8080
-            save_db(db)
-    return redirect('/admin')
-
 @app.route('/admin/add_time', methods=['POST'])
 def admin_add_time():
     if session.get('role') != 'admin': return redirect('/admin_login')
@@ -648,6 +736,18 @@ def admin_add_time():
             if kd.get("exp") == "pending": kd["durationMs"] = kd.get("durationMs", 0) + ms_to_add
             else:
                 kd["exp"] = max(kd.get("exp", now), now) + ms_to_add
+            save_db(db)
+    return redirect('/admin')
+
+@app.route('/admin/edit_max_dev', methods=['POST'])
+def admin_edit_max_dev():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    key = request.form.get('key', '').strip()
+    max_dev = safe_int(request.form.get('max_dev'), 1)
+    db = load_db()
+    with db_lock:
+        if key in db.get("keys", {}):
+            db["keys"][key]["maxDevices"] = max_dev
             save_db(db)
     return redirect('/admin')
 
@@ -682,50 +782,33 @@ def admin_bind_olm():
             save_db(db)
     return redirect('/admin')
 
-@app.route('/admin/update_script', methods=['POST'])
-def admin_update_script():
+@app.route('/admin/update_script_tiem', methods=['POST'])
+def admin_update_script_tiem():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'script_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script!", "error")
+    if 'script_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script Tiêm!", "error")
     file = request.files['script_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script!", "error")
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script Tiêm!", "error")
     try: script_content = file.read().decode('utf-8')
     except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
     db = load_db()
     with db_lock:
-        db.setdefault("settings", {})["custom_script"] = script_content
+        db.setdefault("settings", {})["script_tiem"] = script_content
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp file Script Tiêm thành công!", "success", "/admin")
 
 @app.route('/admin/update_vm_loader', methods=['POST'])
 def admin_update_vm_loader():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'vm_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script!", "error")
-    file = request.files['vm_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script!", "error")
+    if 'loader_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script Loader!", "error")
+    file = request.files['loader_file']
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script Loader!", "error")
     try: script_content = file.read().decode('utf-8')
-    except: return swal_back("Lỗi", "File không hợp lệ", "error")
+    except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
     db = load_db()
     with db_lock:
-        db.setdefault("settings", {})["vm_loader_script"] = script_content
+        db.setdefault("settings", {})["vm_loader"] = script_content
         save_db(db)
-    
-    # Tạo mã loader tự động trỏ về server
-    loader_js = f"""// ==UserScript==
-// @name         LVT Violentmonkey Loader
-// @match        *://olm.vn/*
-// @grant        GM_xmlhttpRequest
-// ==/UserScript==
-fetch('{WEB_URL}/api/get_vm_loader_code').then(r=>r.text()).then(c=>eval(c));"""
-    
-    resp = make_response(loader_js)
-    resp.headers['Content-Type'] = 'application/javascript'
-    resp.headers['Content-Disposition'] = 'attachment; filename="Violentmonkey_Loader.user.js"'
-    return resp
-
-@app.route('/api/get_vm_loader_code')
-def get_vm_loader_code():
-    db = load_db()
-    return db.get("settings", {}).get("vm_loader_script", "")
+    return swal_redirect("Thành Công", "Đã nạp file Script Violentmonkey Loader thành công!", "success", "/admin")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
@@ -760,6 +843,8 @@ def key_actions(action, key):
             elif action == 'unban':
                 db["keys"][key]['status'] = 'active'
                 db["keys"][key]['ban_until'] = 0
+            elif action == 'reset_dev':
+                db["keys"][key]['devices'] = []
             save_db(db)
     return redirect('/admin')
 
