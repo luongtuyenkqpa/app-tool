@@ -1,4 +1,4 @@
-import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string, copy, traceback
+Import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string, copy, traceback
 import urllib.parse
 from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session, abort
@@ -155,6 +155,7 @@ def load_db():
                 if "secret_key" not in data["settings"]: data["settings"]["secret_key"] = secrets.token_hex(32)
                 if "script_tiem" not in data["settings"]: data["settings"]["script_tiem"] = ""
                 if "vm_loader" not in data["settings"]: data["settings"]["vm_loader"] = ""
+                if "app_webview_code" not in data["settings"]: data["settings"]["app_webview_code"] = ""
                 if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 
                 if "admin" not in data["users"]:
@@ -293,6 +294,17 @@ def get_vm_payload():
     script = db.get("settings", {}).get("vm_loader", "")
     resp = make_response(script)
     resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+    return resp
+
+# ========================================================
+# ĐƯỜNG DẪN MỚI CỦA APP WEBVIEW
+# ========================================================
+@app.route('/webview')
+def serve_webview_app():
+    db = load_db()
+    html_content = db.get("settings", {}).get("app_webview_code", "<h1>Hệ thống chưa được nạp giao diện WebView. Vui lòng liên hệ Admin!</h1>")
+    resp = make_response(html_content)
+    resp.headers['Content-Type'] = 'text/html; charset=utf-8'
     return resp
 
 # ========================================================
@@ -437,6 +449,10 @@ def admin_dashboard():
         if current_loader_len > 10: loader_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Script (Dung lượng: {current_loader_len} bytes)</span>'
         else: loader_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script Violentmonkey!</span>'
 
+        current_webview_len = len(db.get("settings", {}).get("app_webview_code", ""))
+        if current_webview_len > 10: webview_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Giao Diện ({current_webview_len} bytes)</span>'
+        else: webview_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Giao Diện App!</span>'
+
     now_ms = int(time.time() * 1000)
     keys_html = ''
     for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
@@ -574,6 +590,20 @@ def admin_dashboard():
                                 <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{loader_status}</div>
                                 <input type="file" name="loader_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
                                 <button type="submit" class="btn-primary-custom mt-auto" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-cloud-upload-alt"></i> NẠP SCRIPT LOADER</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-xl-4 col-lg-6">
+                    <div class="card h-100" style="border-top: 4px solid #00ffcc;">
+                        <div class="card-header text-info"><i class="fas fa-mobile-alt"></i> NẠP GIAO DIỆN WEBVIEW APP</div>
+                        <div class="card-body d-flex flex-column">
+                            <form action="/admin/update_webview" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
+                                <p class="text-muted mb-3" style="font-size:13px;">Tải file HTML/JS giao diện App lên đây. App Android sẽ tự động kéo giao diện này về hiển thị.</p>
+                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{webview_status}</div>
+                                <input type="file" name="webview_file" class="form-control mb-3 flex-grow-1" accept=".html,.js,.txt" required>
+                                <button type="submit" class="btn-primary-custom mt-auto" style="background: linear-gradient(135deg, #00ffcc, #0099ff); color:#000;"><i class="fas fa-cloud-upload-alt"></i> NẠP GIAO DIỆN APP</button>
                             </form>
                         </div>
                     </div>
@@ -809,6 +839,20 @@ def admin_update_vm_loader():
         db.setdefault("settings", {})["vm_loader"] = script_content
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp file Script Violentmonkey Loader thành công!", "success", "/admin")
+
+@app.route('/admin/update_webview', methods=['POST'])
+def admin_update_webview():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    if 'webview_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Giao diện WebView!", "error")
+    file = request.files['webview_file']
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Giao diện WebView!", "error")
+    try: script_content = file.read().decode('utf-8')
+    except: return swal_back("Lỗi", "File không hợp lệ (.html/.txt)", "error")
+    db = load_db()
+    with db_lock:
+        db.setdefault("settings", {})["app_webview_code"] = script_content
+        save_db(db)
+    return swal_redirect("Thành Công", "Đã nạp file Giao diện WebView thành công!", "success", "/admin")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
