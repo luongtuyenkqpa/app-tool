@@ -1,4 +1,4 @@
-Import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string, copy, traceback
+import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string, copy, traceback
 import urllib.parse
 from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session, abort
