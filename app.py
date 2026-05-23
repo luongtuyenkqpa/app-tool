@@ -1,7 +1,7 @@
 import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string, copy, traceback
 import urllib.parse
 from html import escape
-from flask import Flask, request, jsonify, redirect, make_response, session, abort
+from flask import Flask, request, jsonify, redirect, make_response, session, abort, send_file
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -90,7 +90,7 @@ def handle_exception(e):
     if isinstance(e, HTTPException): return e
     return "Hệ thống đang bảo trì.", 500
 
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 # Tăng giới hạn tải lên để chứa file .pak (500MB)
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = True      
@@ -297,6 +297,16 @@ def get_vm_payload():
     return resp
 
 # ========================================================
+# [TÍNH NĂNG MỚI] ĐƯỜNG DẪN TẢI FILE PAK CHO SKETCHWARE
+# ========================================================
+@app.route('/api/download_pak')
+def download_pak():
+    pak_path = './uploaded.pak'
+    if not os.path.exists(pak_path):
+        return "File không tồn tại trên hệ thống", 404
+    return send_file(pak_path, as_attachment=True, download_name='data.pak')
+
+# ========================================================
 # ĐƯỜNG DẪN MỚI CỦA APP WEBVIEW
 # ========================================================
 @app.route('/webview')
@@ -453,6 +463,14 @@ def admin_dashboard():
         if current_webview_len > 10: webview_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Giao Diện ({current_webview_len} bytes)</span>'
         else: webview_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Giao Diện App!</span>'
 
+        # [TÍNH NĂNG MỚI] CHECK FILE PAK
+        pak_path = './uploaded.pak'
+        if os.path.exists(pak_path):
+            pak_size = os.path.getsize(pak_path)
+            pak_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File .PAK ({pak_size} bytes)</span>'
+        else:
+            pak_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có File .PAK!</span>'
+
     now_ms = int(time.time() * 1000)
     keys_html = ''
     for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
@@ -608,6 +626,22 @@ def admin_dashboard():
                         </div>
                     </div>
                 </div>
+
+                <!-- [TÍNH NĂNG MỚI] GIAO DIỆN NẠP FILE PAK -->
+                <div class="col-xl-4 col-lg-6">
+                    <div class="card h-100" style="border-top: 4px solid #ef4444;">
+                        <div class="card-header text-danger"><i class="fas fa-file-archive"></i> NẠP FILE .PAK (DATA)</div>
+                        <div class="card-body d-flex flex-column">
+                            <form action="/admin/update_pak" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
+                                <p class="text-muted mb-3" style="font-size:13px;">Tải file .pak gốc lên đây. Hệ thống sẽ lưu trữ và cung cấp link tải cho App Android.</p>
+                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{pak_status}</div>
+                                <input type="file" name="pak_file" class="form-control mb-3 flex-grow-1" accept=".pak" required>
+                                <button type="submit" class="btn-primary-custom mt-auto" style="background: linear-gradient(135deg, #ef4444, #dc2626); color:#fff;"><i class="fas fa-cloud-upload-alt"></i> NẠP FILE .PAK</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
             </div>
 
             <div class="row g-4 mb-4">
@@ -853,6 +887,22 @@ def admin_update_webview():
         db.setdefault("settings", {})["app_webview_code"] = script_content
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp file Giao diện WebView thành công!", "success", "/admin")
+
+# ========================================================
+# [TÍNH NĂNG MỚI] ROUTE XỬ LÝ NẠP FILE PAK TỪ ADMIN
+# ========================================================
+@app.route('/admin/update_pak', methods=['POST'])
+def admin_update_pak():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    if 'pak_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
+    file = request.files['pak_file']
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
+    try:
+        # Lưu đè file .pak thẳng vào thư mục chứa code của server
+        file.save('./uploaded.pak')
+    except Exception as e:
+        return swal_back("Lỗi", f"Không thể lưu file: {str(e)}", "error")
+    return swal_redirect("Thành Công", "Đã nạp file .PAK thành công!", "success", "/admin")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
