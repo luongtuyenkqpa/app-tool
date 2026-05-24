@@ -255,7 +255,8 @@ def check_ban_status():
             if v.get("status") == "banned":
                 ban_until = v.get("ban_until", "permanent")
                 if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now):
-                    return jsonify({"banned": True, "reason": "Key của bạn đã bị Admin khóa. Bạn đã bị kick khỏi hệ thống!"})
+                    # [VÁ LỖI NÂNG CẤP] Trả về chính xác thời gian ban_time cho App
+                    return jsonify({"banned": True, "reason": "Key của bạn đã bị Admin khóa. Bạn đã bị kick khỏi hệ thống!", "ban_time": ban_until})
                 else:
                     v["status"] = "active"
                     save_db(db)
@@ -355,13 +356,23 @@ def user_proxy_portal():
 
 @app.route('/api/verify_core', methods=['POST'])
 def api_verify_core():
+    client_ip = get_real_ip()
+    now = int(time.time() * 1000)
+
+    # [VÁ LỖ HỔNG BẢO MẬT] Chống Brute-force/Spam Key (Chặn dò mã key)
+    with api_rate_lock:
+        reqs = api_rate_cache.get(client_ip, [])
+        reqs = [t for t in reqs if now - t < 60000] # Chỉ tính trong 1 phút
+        if len(reqs) >= 30: # Cấm trên 30 request/phút
+            return jsonify({"status": "error", "msg": "Phát hiện lạm dụng API (Spam)! Vui lòng thử lại sau 1 phút."})
+        reqs.append(now)
+        api_rate_cache[client_ip] = reqs
+
     data = request.json or {}
     key = data.get('key', '').strip()
     current_olm = data.get('olm_name', '').strip()
-    client_ip = get_real_ip()
     
     db = load_db()
-    now = int(time.time() * 1000)
     with db_lock:
         if key not in db.get("keys", {}): return jsonify({"status": "error", "msg": "Mã Key không tồn tại hoặc sai định dạng!"})
         kd = db["keys"][key]
@@ -369,7 +380,13 @@ def api_verify_core():
         if kd.get("status") == "banned":
             ban_until = kd.get("ban_until", "permanent")
             if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): 
-                return jsonify({"status": "banned", "msg": "Key của bạn đang bị Admin khóa!"})
+                # [VÁ LỖI NÂNG CẤP] Trả về chính xác thời gian ban_time và server_time cho App
+                return jsonify({
+                    "status": "banned", 
+                    "msg": "Key của bạn đang bị Admin khóa!", 
+                    "ban_time": ban_until,
+                    "server_time": now
+                })
             else: kd["status"] = "active"
             
         if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: 
@@ -392,7 +409,8 @@ def api_verify_core():
             save_db(db)
             return jsonify({
                 "status": "banned", 
-                "msg": f"⚠️ CẢNH BÁO BẢO MẬT: Phát hiện sai tài khoản OLM! (Bạn đang dùng: {current_olm}, Key được ghim cho: {bound_olm}). Key của bạn đã bị Hệ thống khóa vĩnh viễn!"
+                "msg": f"⚠️ CẢNH BÁO BẢO MẬT: Phát hiện sai tài khoản OLM! (Bạn đang dùng: {current_olm}, Key được ghim cho: {bound_olm}). Key của bạn đã bị Hệ thống khóa vĩnh viễn!",
+                "ban_time": "permanent"
             })
             
         save_db(db)
@@ -406,7 +424,8 @@ def api_verify_core():
             "core": core_code,
             "exp": kd["exp"],
             "devices": len(devices),
-            "max_devs": kd.get("maxDevices", 1)
+            "max_devs": kd.get("maxDevices", 1),
+            "server_time": now # [VÁ LỖ HỔNG BẢO MẬT] Trả về thời gian thực của Server để chống Hack Time bên Client
         })
 
 # ========================================================
@@ -627,7 +646,6 @@ def admin_dashboard():
                     </div>
                 </div>
 
-                <!-- [TÍNH NĂNG MỚI] GIAO DIỆN NẠP FILE PAK -->
                 <div class="col-xl-4 col-lg-6">
                     <div class="card h-100" style="border-top: 4px solid #ef4444;">
                         <div class="card-header text-danger"><i class="fas fa-file-archive"></i> NẠP FILE .PAK (DATA)</div>
