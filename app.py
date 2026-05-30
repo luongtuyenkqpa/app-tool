@@ -63,8 +63,9 @@ def telegram_polling():
                         user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
                         if text.startswith("/start"):
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
+                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nHệ thống sẽ tự động gửi các thông báo quản trị về đây."
+                            # SỬA LẠI THÀNH MỞ TRANG WEB ADMIN CHUẨN
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG QUẢN TRỊ ADMIN", "url": f"{WEB_URL}/admin"}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -98,6 +99,8 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 DB_FILE = './database.json'
 DB_BACKUP = './database.backup.json'
+# FIX LỖI LƯU FILE PAK TRÊN CLOUD BẰNG ĐƯỜNG DẪN TUYỆT ĐỐI
+PAK_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploaded.pak')
 
 db_lock = threading.RLock()
 api_rate_lock = threading.Lock()
@@ -255,7 +258,6 @@ def check_ban_status():
             if v.get("status") == "banned":
                 ban_until = v.get("ban_until", "permanent")
                 if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now):
-                    # [VÁ LỖI NÂNG CẤP] Trả về chính xác thời gian ban_time cho App
                     return jsonify({"banned": True, "reason": "Key của bạn đã bị Admin khóa. Bạn đã bị kick khỏi hệ thống!", "ban_time": ban_until})
                 else:
                     v["status"] = "active"
@@ -298,14 +300,13 @@ def get_vm_payload():
     return resp
 
 # ========================================================
-# [TÍNH NĂNG MỚI] ĐƯỜNG DẪN TẢI FILE PAK CHO SKETCHWARE
+# ĐƯỜNG DẪN TẢI FILE PAK CHO SKETCHWARE CẬP NHẬT
 # ========================================================
 @app.route('/api/download_pak')
 def download_pak():
-    pak_path = './uploaded.pak'
-    if not os.path.exists(pak_path):
+    if not os.path.exists(PAK_FILE_PATH):
         return "File không tồn tại trên hệ thống", 404
-    return send_file(pak_path, as_attachment=True, download_name='data.pak')
+    return send_file(PAK_FILE_PATH, as_attachment=True, download_name='data.pak')
 
 # ========================================================
 # ĐƯỜNG DẪN MỚI CỦA APP WEBVIEW
@@ -319,7 +320,7 @@ def serve_webview_app():
     return resp
 
 # ========================================================
-# [FIX] ĐỊNH TUYẾN PAC ÉP ĐÚNG IP, BỎ 127.0.0.1
+# ĐỊNH TUYẾN PAC ÉP ĐÚNG IP, BỎ 127.0.0.1
 # ========================================================
 @app.route('/proxy_config/<key>.pac')
 def generate_pac_file(key):
@@ -359,11 +360,10 @@ def api_verify_core():
     client_ip = get_real_ip()
     now = int(time.time() * 1000)
 
-    # [VÁ LỖ HỔNG BẢO MẬT] Chống Brute-force/Spam Key (Chặn dò mã key)
     with api_rate_lock:
         reqs = api_rate_cache.get(client_ip, [])
-        reqs = [t for t in reqs if now - t < 60000] # Chỉ tính trong 1 phút
-        if len(reqs) >= 30: # Cấm trên 30 request/phút
+        reqs = [t for t in reqs if now - t < 60000]
+        if len(reqs) >= 30:
             return jsonify({"status": "error", "msg": "Phát hiện lạm dụng API (Spam)! Vui lòng thử lại sau 1 phút."})
         reqs.append(now)
         api_rate_cache[client_ip] = reqs
@@ -380,7 +380,6 @@ def api_verify_core():
         if kd.get("status") == "banned":
             ban_until = kd.get("ban_until", "permanent")
             if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): 
-                # [VÁ LỖI NÂNG CẤP] Trả về chính xác thời gian ban_time và server_time cho App
                 return jsonify({
                     "status": "banned", 
                     "msg": "Key của bạn đang bị Admin khóa!", 
@@ -390,11 +389,13 @@ def api_verify_core():
             else: kd["status"] = "active"
             
         if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: 
+            send_telegram_alert(f"⚠️ <b>CẢNH BÁO: KEY ĐÃ HẾT HẠN</b>\n🔑 Key: <code>{key}</code>\n🌐 IP: {client_ip}\n👤 OLM: {current_olm}")
             return jsonify({"status": "error", "msg": "Key đã hết hạn sử dụng!"})
 
         devices = kd.setdefault("devices", [])
         if client_ip not in devices:
             if len(devices) >= kd.get("maxDevices", 1): 
+                send_telegram_alert(f"📱 <b>CẢNH BÁO: QUÁ SỐ LƯỢNG THIẾT BỊ</b>\n🔑 Key: <code>{key}</code>\n🌐 IP Khách: {client_ip}\n🛑 Đang có: {len(devices)}/{kd.get('maxDevices', 1)}")
                 return jsonify({"status": "error", "msg": "Key này đã vượt quá số lượng thiết bị cho phép!"})
             devices.append(client_ip)
 
@@ -407,6 +408,7 @@ def api_verify_core():
             kd["status"] = "banned"
             kd["ban_until"] = "permanent"
             save_db(db)
+            send_telegram_alert(f"🚨 <b>BẢO MẬT: SAI OLM ĐỊNH DANH (AUTO BAN)</b>\n🔑 Key: <code>{key}</code>\n🌐 IP: {client_ip}\n🎯 OLM Gốc: {bound_olm}\n❌ OLM Nhập: {current_olm}")
             return jsonify({
                 "status": "banned", 
                 "msg": f"⚠️ CẢNH BÁO BẢO MẬT: Phát hiện sai tài khoản OLM! (Bạn đang dùng: {current_olm}, Key được ghim cho: {bound_olm}). Key của bạn đã bị Hệ thống khóa vĩnh viễn!",
@@ -417,6 +419,9 @@ def api_verify_core():
         
         is_vip = kd.get("vip", False)
         core_code = db.get("settings", {}).get("script_tiem", "")
+        
+        # BÁO CÁO LƯU TRUY CẬP ĐĂNG NHẬP THÀNH CÔNG VỀ TELEGRAM
+        send_telegram_alert(f"✅ <b>ĐĂNG NHẬP KEY THÀNH CÔNG</b>\n🔑 Key: <code>{key}</code>\n🌐 IP Khách: {client_ip}\n👤 OLM: {current_olm}\n📱 Thiết bị: {len(devices)}/{kd.get('maxDevices', 1)}")
             
         return jsonify({
             "status": "ok", 
@@ -425,7 +430,7 @@ def api_verify_core():
             "exp": kd["exp"],
             "devices": len(devices),
             "max_devs": kd.get("maxDevices", 1),
-            "server_time": now # [VÁ LỖ HỔNG BẢO MẬT] Trả về thời gian thực của Server để chống Hack Time bên Client
+            "server_time": now
         })
 
 # ========================================================
@@ -482,10 +487,9 @@ def admin_dashboard():
         if current_webview_len > 10: webview_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Giao Diện ({current_webview_len} bytes)</span>'
         else: webview_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Giao Diện App!</span>'
 
-        # [TÍNH NĂNG MỚI] CHECK FILE PAK
-        pak_path = './uploaded.pak'
-        if os.path.exists(pak_path):
-            pak_size = os.path.getsize(pak_path)
+        # CẬP NHẬT KIỂM TRA FILE PAK BẰNG ĐƯỜNG DẪN TUYỆT ĐỐI
+        if os.path.exists(PAK_FILE_PATH):
+            pak_size = os.path.getsize(PAK_FILE_PATH)
             pak_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File .PAK ({pak_size} bytes)</span>'
         else:
             pak_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có File .PAK!</span>'
@@ -799,6 +803,8 @@ def create_key():
             if t != 'permanent': db["keys"][nk]["durationMs"] = dur * {"minute":60000, "hour":3600000, "day":86400000, "month":2592000000}.get(t, 60000)
             else: db["keys"][nk]["exp"] = "permanent"
         save_db(db)
+    # BÁO CÁO TẠO KEY MỚI VỀ TELEGRAM
+    send_telegram_alert(f"🆕 <b>TẠO KEY MỚI</b>\n📦 Số lượng: {qty}\n⏳ Thời hạn: {dur} {t}\n📱 Số máy/Key: {md}\n👑 VIP: {'Có' if vip else 'Không'}")
     return redirect('/admin')
 
 @app.route('/admin/add_time', methods=['POST'])
@@ -849,6 +855,8 @@ def admin_custom_ban():
                 ms_to_add = t_val * {"minutes": 60000, "hours": 3600000, "days": 86400000, "months": 2592000000}.get(t_unit, 0)
                 kd["ban_until"] = int(time.time() * 1000) + ms_to_add
             save_db(db)
+            # BÁO CÁO ADMIN ĐÃ BAN KEY
+            send_telegram_alert(f"🔨 <b>ADMIN KHÓA KEY (BAN)</b>\n🔑 Key: <code>{key}</code>\n⏳ Hạn khóa: {t_val} {t_unit}")
     return redirect('/admin')
 
 @app.route('/admin/bind_olm', methods=['POST'])
@@ -907,7 +915,7 @@ def admin_update_webview():
     return swal_redirect("Thành Công", "Đã nạp file Giao diện WebView thành công!", "success", "/admin")
 
 # ========================================================
-# [TÍNH NĂNG MỚI] ROUTE XỬ LÝ NẠP FILE PAK TỪ ADMIN
+# [CẬP NHẬT] ROUTE XỬ LÝ NẠP FILE PAK TỪ ADMIN KHÔNG LỖI
 # ========================================================
 @app.route('/admin/update_pak', methods=['POST'])
 def admin_update_pak():
@@ -916,8 +924,8 @@ def admin_update_pak():
     file = request.files['pak_file']
     if file.filename == '': return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
     try:
-        # Lưu đè file .pak thẳng vào thư mục chứa code của server
-        file.save('./uploaded.pak')
+        # LƯU BẰNG ĐƯỜNG DẪN TUYỆT ĐỐI CHỐNG LỖI MẤT KẾT NỐI SERVER
+        file.save(PAK_FILE_PATH)
     except Exception as e:
         return swal_back("Lỗi", f"Không thể lưu file: {str(e)}", "error")
     return swal_redirect("Thành Công", "Đã nạp file .PAK thành công!", "success", "/admin")
