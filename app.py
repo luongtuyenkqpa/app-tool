@@ -1,4 +1,4 @@
-import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string, copy, traceback, ssl
+import os, json, time, random, hashlib, threading, requests, shutil, base64, secrets, hmac, string, copy, traceback, ssl, re
 import urllib.parse
 from html import escape
 from flask import Flask, request, jsonify, redirect, make_response, session, abort, send_file
@@ -46,7 +46,7 @@ def send_telegram_event(event_type, data):
             elif event_type == "limit":
                 msg = f"📵 <b>CẢNH BÁO: VƯỢT QUÁ THIẾT BỊ</b> 📵\n\n🔑 Key: <code>{data.get('key')}</code>\n🌐 IP Đăng nhập: {data.get('ip')}"
             elif event_type == "login":
-                msg = f"✅ <b>ĐĂNG NHẬP THÀNH CÔNG</b> ✅\n\n🔑 Key: <code>{data.get('key')}</code>\n🌐 IP Khách: {data.get('ip')}\n📱 Tên Máy: {data.get('device_name', 'Không xác định')}\n🤖 Phiên bản Android: {data.get('android_version', 'Không xác định')}"
+                msg = f"✅ <b>ĐĂNG NHẬP THÀNH CÔNG</b> ✅\n\n🔑 Key: <code>{data.get('key')}</code>\n🌐 IP Khách: {data.get('ip')}\n📱 Tên Máy: {data.get('device_name')}\n🤖 Phiên bản: {data.get('android_version')}"
             
             if not msg: return
             
@@ -88,7 +88,15 @@ def telegram_polling():
                         text = msg.get("text", "").strip()
                         msg_id = msg.get("message_id")
                         user_first_name = msg.get("from", {}).get("first_name", "Khách hàng")
+                        
                         if text.startswith("/start"):
+                            # [NÂNG CẤP BẢO MẬT] Lọc block tự động các tài khoản bot/hacker có tên ký tự Nga, Ả Rập
+                            if re.search(r'[\u0400-\u04FF\u0500-\u052F\u0600-\u06FF\u0750-\u077F]', user_first_name):
+                                try:
+                                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
+                                except: pass
+                                continue # Phớt lờ bot, không gửi tin nhắn chào mừng
+
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
                             keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
@@ -117,6 +125,7 @@ def handle_exception(e):
     if isinstance(e, HTTPException): return e
     return "Hệ thống đang bảo trì.", 500
 
+# Thiết lập cho phép nạp file cực lớn (500MB)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -399,9 +408,19 @@ def api_verify_core():
     key = data.get('key', '').strip()
     current_olm = data.get('olm_name', '').strip()
     
-    # Bắt thông tin máy từ App đẩy lên
-    device_name = data.get('device_name', 'Không rõ máy')
-    android_version = data.get('android_version', 'Không rõ bản Android')
+    device_name = data.get('device_name', '')
+    android_version = data.get('android_version', '')
+    
+    # [NÂNG CẤP BẢO MẬT] Quét thiết bị thật qua luồng User-Agent thay vì phụ thuộc app
+    ua_string = request.headers.get('User-Agent', '')
+    
+    if not android_version or android_version == 'Không rõ bản Android':
+        a_match = re.search(r'Android\s+([0-9\.]+)', ua_string)
+        android_version = f"Android {a_match.group(1)}" if a_match else "Không xác định"
+        
+    if not device_name or device_name == 'Không rõ máy':
+        d_match = re.search(r'Android\s+[0-9\.]+;\s+([^;]+)\s+Build', ua_string)
+        device_name = d_match.group(1).strip() if d_match else "Không xác định"
     
     db = load_db()
     with db_lock:
@@ -449,12 +468,12 @@ def api_verify_core():
             
         save_db(db)
         
-        # Báo đăng nhập thành công về Telegram
+        # Báo đăng nhập thành công về Telegram với thông tin thiết bị thật
         send_telegram_event('login', {'key': key, 'ip': client_ip, 'device_name': device_name, 'android_version': android_version})
         
         is_vip = kd.get("vip", False)
         core_code = db.get("settings", {}).get("script_tiem", "")
-        note_msg = kd.get("note", "") # Tích hợp ghi chú vào API trả về
+        note_msg = kd.get("note", "") 
             
         return jsonify({
             "status": "ok", 
@@ -992,14 +1011,8 @@ def admin_update_pak():
     if file.filename == '': return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
     
     try:
-        # [VÁ LỖI NGHẼN LINK] Tải lên từng khối nhỏ 8192 bytes để tránh quá tải Server
-        chunk_size = 8192
-        with open('./uploaded.pak', 'wb') as f:
-            while True:
-                chunk = file.stream.read(chunk_size)
-                if len(chunk) == 0:
-                    break
-                f.write(chunk)
+        # [VÁ LỖI NGHẼN LINK] Dùng hàm Native lưu thẳng xuống ổ đĩa siêu tốc thay vì dùng vòng lặp dễ timeout
+        file.save('./uploaded.pak')
     except Exception as e:
         return swal_back("Lỗi", f"Không thể lưu file: {str(e)}", "error")
         
