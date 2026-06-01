@@ -99,7 +99,7 @@ def telegram_polling():
 
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"} khai Vị}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -350,6 +350,44 @@ def download_pak():
 def serve_webview_app():
     db = load_db()
     html_content = db.get("settings", {}).get("app_webview_code", "<h1>Hệ thống chưa được nạp giao diện WebView. Vui lòng liên hệ Admin!</h1>")
+    
+    # [TỐI ƯU THÔNG BÁO GHI CHÚ CHO WEBVIEW] Tự động quét tham số ?key= để hiển thị thông báo bằng hiệu ứng Cyber-Neon
+    key = request.args.get('key', '').strip()
+    if key and key in db.get("keys", {}):
+        kd = db["keys"][key]
+        note_msg = kd.get("note", "").strip()
+        if note_msg:
+            # Mã hóa chuỗi an toàn bảo vệ cấu trúc JavaScript Template Literals
+            note_js_webview = note_msg.replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n').replace('\r', '')
+            cyber_note_script = f"""
+            <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+            <script>
+            document.addEventListener("DOMContentLoaded", function() {{
+                setTimeout(function() {{
+                    Swal.fire({{
+                        title: '🚀 THÔNG BÁO HỆ THỐNG',
+                        text: `{note_js_webview}`,
+                        icon: 'info',
+                        background: '#131722',
+                        color: '#00ffcc',
+                        confirmButtonColor: '#00ffcc',
+                        confirmButtonText: 'XÁC NHẬN',
+                        customClass: {{
+                            popup: 'border-neon-swal'
+                        }}
+                    }});
+                    let style = document.createElement('style');
+                    style.innerHTML = '.border-neon-swal {{ border: 2px solid rgba(0, 255, 204, 0.6) !important; box-shadow: 0 0 15px rgba(0, 255, 204, 0.4) !important; }}';
+                    document.head.appendChild(style);
+                }}, 500);
+            }});
+            </script>
+            """
+            if "</body>" in html_content:
+                html_content = html_content.replace("</body>", f"{cyber_note_script}</body>")
+            else:
+                html_content += cyber_note_script
+
     resp = make_response(html_content)
     resp.headers['Content-Type'] = 'text/html; charset=utf-8'
     return resp
@@ -554,6 +592,9 @@ def admin_dashboard():
         ban_until = data.get("ban_until", 0)
         note = escape(data.get("note", ""))
         
+        # [SỬA LỖI ĐƠN NHÁY/XUỐNG DÒNG] Định dạng chuỗi an toàn tuyệt đối khi nhúng vào sự kiện inline onclick của HTML
+        note_js_safe = note.replace("'", "\\'").replace('"', '&quot;').replace("\n", "\\n").replace("\r", "")
+        
         if st == "banned":
             if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now_ms): is_banned = True
             else: is_banned = False; data["status"] = "active" 
@@ -592,7 +633,7 @@ def admin_dashboard():
         <td><span class="badge bg-dark border border-secondary p-2 fs-6">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
         <td>
             <div class="d-flex flex-wrap gap-2 justify-content-center">
-                <button class="action-btn text-light" style="background: #0284c7;" onclick="openNoteModal('{safe_k}', '{note}')" title="Ghi Chú Key"><i class="fas fa-sticky-note"></i></button>
+                <button class="action-btn text-light" style="background: #0284c7;" onclick="openNoteModal('{safe_k}', '{note_js_safe}')" title="Ghi Chú Key"><i class="fas fa-sticky-note"></i></button>
                 <button class="action-btn" onclick="openBindModal('{safe_k}', '{bound_olm}')" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
                 <button class="action-btn" onclick="openAddTimeModal('{safe_k}')" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
                 <a href="/admin/action/reset_dev/{safe_k}" class="action-btn text-primary" onclick="return confirm('Bạn có chắc chắn muốn Xóa sạch lịch sử thiết bị của Key này?')" title="Reset Thiết Bị"><i class="fas fa-sync-alt"></i></a>
@@ -1011,7 +1052,7 @@ def admin_update_pak():
     if file.filename == '': return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
     
     try:
-        # [VÁ LỖI NGHẼN LINK] Dùng hàm Native lưu thẳng xuống ổ đĩa siêu tốc thay vì dùng vòng lặp dễ timeout
+        # [VÁ LỖI NGHÊN LINK] Dùng hàm Native lưu thẳng xuống ổ đĩa siêu tốc thay vì dùng vòng lặp dễ timeout
         file.save('./uploaded.pak')
     except Exception as e:
         return swal_back("Lỗi", f"Không thể lưu file: {str(e)}", "error")
