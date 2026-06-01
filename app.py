@@ -99,7 +99,7 @@ def telegram_polling():
 
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"} khai Vị}]]}
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -120,10 +120,11 @@ def ping_server(): return "OK", 200
 @app.route('/telegram_mini_app')
 def old_mini_app_redirect(): return redirect('/')
 
+# [NÂNG CẤP] Chỉnh sửa giao diện Lỗi Máy chủ thành thông báo Server Upgrading Siêu Đẹp
 @app.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, HTTPException): return e
-    return "Hệ thống đang bảo trì.", 500
+    return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Server Updating</title><style>body {{ background: #05050A; color: #00ffcc; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin: 0; }} .loader {{ border: 5px solid rgba(0, 255, 204, 0.2); border-top: 5px solid #00ffcc; border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; margin-bottom: 20px; box-shadow: 0 0 15px rgba(0, 255, 204, 0.5); }} @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }} h2 {{ text-shadow: 0 0 10px rgba(0, 255, 204, 0.5); letter-spacing: 1px; }}</style></head><body><div class="loader"></div><h2>Đang update online server vui lòng đợi...</h2></body></html>""", 500
 
 # Thiết lập cho phép nạp file cực lớn (500MB)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
@@ -193,6 +194,7 @@ def load_db():
                 if "vm_loader" not in data["settings"]: data["settings"]["vm_loader"] = ""
                 if "app_webview_code" not in data["settings"]: data["settings"]["app_webview_code"] = ""
                 if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
+                if "webview_maintenance" not in data["settings"]: data["settings"]["webview_maintenance"] = False # Cấu hình bảo trì webview
                 
                 if "admin" not in data["users"]:
                     data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin"}
@@ -349,45 +351,13 @@ def download_pak():
 @app.route('/webview')
 def serve_webview_app():
     db = load_db()
-    html_content = db.get("settings", {}).get("app_webview_code", "<h1>Hệ thống chưa được nạp giao diện WebView. Vui lòng liên hệ Admin!</h1>")
+    is_maintenance = db.get("settings", {}).get("webview_maintenance", False)
     
-    # [TỐI ƯU THÔNG BÁO GHI CHÚ CHO WEBVIEW] Tự động quét tham số ?key= để hiển thị thông báo bằng hiệu ứng Cyber-Neon
-    key = request.args.get('key', '').strip()
-    if key and key in db.get("keys", {}):
-        kd = db["keys"][key]
-        note_msg = kd.get("note", "").strip()
-        if note_msg:
-            # Mã hóa chuỗi an toàn bảo vệ cấu trúc JavaScript Template Literals
-            note_js_webview = note_msg.replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n').replace('\r', '')
-            cyber_note_script = f"""
-            <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-            <script>
-            document.addEventListener("DOMContentLoaded", function() {{
-                setTimeout(function() {{
-                    Swal.fire({{
-                        title: '🚀 THÔNG BÁO HỆ THỐNG',
-                        text: `{note_js_webview}`,
-                        icon: 'info',
-                        background: '#131722',
-                        color: '#00ffcc',
-                        confirmButtonColor: '#00ffcc',
-                        confirmButtonText: 'XÁC NHẬN',
-                        customClass: {{
-                            popup: 'border-neon-swal'
-                        }}
-                    }});
-                    let style = document.createElement('style');
-                    style.innerHTML = '.border-neon-swal {{ border: 2px solid rgba(0, 255, 204, 0.6) !important; box-shadow: 0 0 15px rgba(0, 255, 204, 0.4) !important; }}';
-                    document.head.appendChild(style);
-                }}, 500);
-            }});
-            </script>
-            """
-            if "</body>" in html_content:
-                html_content = html_content.replace("</body>", f"{cyber_note_script}</body>")
-            else:
-                html_content += cyber_note_script
-
+    if is_maintenance:
+        html_content = f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>App Maintenance</title><style>body {{ background: #05050A; color: #bd00ff; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin: 0; }} .pulse {{ width: 70px; height: 70px; background: #bd00ff; border-radius: 50%; animation: pulse-anim 2s infinite; margin-bottom: 20px; box-shadow: 0 0 20px rgba(189, 0, 255, 0.6); }} @keyframes pulse-anim {{ 0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(189, 0, 255, 0.7); }} 70% {{ transform: scale(1); box-shadow: 0 0 0 20px rgba(189, 0, 255, 0); }} 100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(189, 0, 255, 0); }} }} h2 {{ text-shadow: 0 0 10px rgba(189, 0, 255, 0.5); letter-spacing: 1px; }} p {{ color: #a1a1aa; font-size: 14px; margin-top: 5px; }}</style></head><body><div class="pulse"></div><h2>Đang update online app</h2><p>Hệ thống đang được nâng cấp, vui lòng quay lại sau!</p></body></html>"""
+    else:
+        html_content = db.get("settings", {}).get("app_webview_code", "<h1>Hệ thống chưa được nạp giao diện WebView. Vui lòng liên hệ Admin!</h1>")
+        
     resp = make_response(html_content)
     resp.headers['Content-Type'] = 'text/html; charset=utf-8'
     return resp
@@ -584,6 +554,12 @@ def admin_dashboard():
             pak_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File .PAK ({pak_size} bytes)</span>'
         else:
             pak_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có File .PAK!</span>'
+            
+        # UI cho nút bật/tắt bảo trì webview
+        is_maintenance = db.get("settings", {}).get("webview_maintenance", False)
+        maint_btn_text = "TẮT BẢO TRÌ WEBVIEW" if is_maintenance else "BẬT BẢO TRÌ WEBVIEW"
+        maint_btn_class = "btn-danger" if is_maintenance else "btn-success"
+        maint_status_badge = '<span class="badge bg-danger ms-2">Đang Bảo Trì</span>' if is_maintenance else '<span class="badge bg-success ms-2">Online</span>'
 
     now_ms = int(time.time() * 1000)
     keys_html = ''
@@ -591,9 +567,6 @@ def admin_dashboard():
         st = data.get('status', 'active')
         ban_until = data.get("ban_until", 0)
         note = escape(data.get("note", ""))
-        
-        # [SỬA LỖI ĐƠN NHÁY/XUỐNG DÒNG] Định dạng chuỗi an toàn tuyệt đối khi nhúng vào sự kiện inline onclick của HTML
-        note_js_safe = note.replace("'", "\\'").replace('"', '&quot;').replace("\n", "\\n").replace("\r", "")
         
         if st == "banned":
             if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now_ms): is_banned = True
@@ -633,7 +606,7 @@ def admin_dashboard():
         <td><span class="badge bg-dark border border-secondary p-2 fs-6">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
         <td>
             <div class="d-flex flex-wrap gap-2 justify-content-center">
-                <button class="action-btn text-light" style="background: #0284c7;" onclick="openNoteModal('{safe_k}', '{note_js_safe}')" title="Ghi Chú Key"><i class="fas fa-sticky-note"></i></button>
+                <button class="action-btn text-light" style="background: #0284c7;" onclick="openNoteModal('{safe_k}', '{note}')" title="Ghi Chú Key"><i class="fas fa-sticky-note"></i></button>
                 <button class="action-btn" onclick="openBindModal('{safe_k}', '{bound_olm}')" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
                 <button class="action-btn" onclick="openAddTimeModal('{safe_k}')" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
                 <a href="/admin/action/reset_dev/{safe_k}" class="action-btn text-primary" onclick="return confirm('Bạn có chắc chắn muốn Xóa sạch lịch sử thiết bị của Key này?')" title="Reset Thiết Bị"><i class="fas fa-sync-alt"></i></a>
@@ -660,7 +633,7 @@ def admin_dashboard():
             .topbar {{ background: #131722; border-bottom: 1px solid #1e293b; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }}
             .topbar-brand {{ font-size: 20px; font-weight: 800; color: #38bdf8; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }}
             .card {{ background: #131722; border: 1px solid #1e293b; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }}
-            .card-header {{ background: rgba(255,255,255,0.02); border-bottom: 1px solid #1e293b; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }}
+            .card-header {{ background: rgba(255,255,255,0.02); border-bottom: 1px solid #1e293b; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
             .card-body {{ padding: 20px; }}
             .form-control, .form-select {{ background: #0b0f19 !important; border: 1px solid #334155 !important; color: #f8fafc !important; border-radius: 8px; padding: 10px 15px; font-size: 14px; transition: 0.2s; }}
             .form-control:focus, .form-select:focus {{ border-color: #38bdf8 !important; box-shadow: 0 0 0 3px rgba(56,189,248,0.1) !important; outline: none; }}
@@ -690,7 +663,7 @@ def admin_dashboard():
             <div class="row g-4 mb-4">
                 <div class="col-xl-4 col-lg-12">
                     <div class="card h-100" style="border-top: 4px solid #22c55e;">
-                        <div class="card-header text-success"><i class="fas fa-magic"></i> Tạo Key</div>
+                        <div class="card-header text-success"><div><i class="fas fa-magic"></i> Tạo Key</div></div>
                         <div class="card-body">
                             <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Số lượng</label><input type="number" name="quantity" class="form-control" value="1" required></div>
@@ -706,7 +679,7 @@ def admin_dashboard():
 
                 <div class="col-xl-4 col-lg-6">
                     <div class="card h-100" style="border-top: 4px solid #a855f7;">
-                        <div class="card-header" style="color: #a855f7;"><i class="fas fa-code"></i> NẠP SCRIPT TIÊM OLM</div>
+                        <div class="card-header" style="color: #a855f7;"><div><i class="fas fa-code"></i> NẠP SCRIPT TIÊM OLM</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_script_tiem" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
                                 <p class="text-muted mb-3" style="font-size:13px;">Chọn file Script Tiêm gốc tải lên đây.</p>
@@ -720,7 +693,7 @@ def admin_dashboard():
 
                 <div class="col-xl-4 col-lg-6">
                     <div class="card h-100" style="border-top: 4px solid #f59e0b;">
-                        <div class="card-header text-warning"><i class="fas fa-certificate"></i> NẠP SCRIPT VIOLENTMONKEY LOADER</div>
+                        <div class="card-header text-warning"><div><i class="fas fa-certificate"></i> NẠP SCRIPT VIOLENTMONKEY LOADER</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_vm_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
                                 <p class="text-muted mb-3" style="font-size:13px;">Tải file Violentmonkey Script chuẩn lên đây. Khi user kích hoạt key sẽ tự động tải file này về một lần duy nhất.</p>
@@ -734,8 +707,14 @@ def admin_dashboard():
                 
                 <div class="col-xl-4 col-lg-6">
                     <div class="card h-100" style="border-top: 4px solid #00ffcc;">
-                        <div class="card-header text-info"><i class="fas fa-mobile-alt"></i> NẠP GIAO DIỆN WEBVIEW APP</div>
+                        <div class="card-header text-info">
+                            <div><i class="fas fa-mobile-alt"></i> NẠP GIAO DIỆN WEBVIEW APP</div>
+                            <div>{maint_status_badge}</div>
+                        </div>
                         <div class="card-body d-flex flex-column">
+                            <form action="/admin/toggle_maintenance" method="POST" class="mb-3">{csrf_input}
+                                <button type="submit" class="btn {maint_btn_class} w-100 fw-bold btn-sm py-2"><i class="fas fa-tools"></i> {maint_btn_text}</button>
+                            </form>
                             <form action="/admin/update_webview" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
                                 <p class="text-muted mb-3" style="font-size:13px;">Tải file HTML/JS giao diện App lên đây. App Android sẽ tự động kéo giao diện này về hiển thị.</p>
                                 <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{webview_status}</div>
@@ -748,7 +727,7 @@ def admin_dashboard():
 
                 <div class="col-xl-4 col-lg-6">
                     <div class="card h-100" style="border-top: 4px solid #ef4444;">
-                        <div class="card-header text-danger"><i class="fas fa-file-archive"></i> NẠP FILE .PAK (DATA)</div>
+                        <div class="card-header text-danger"><div><i class="fas fa-file-archive"></i> NẠP FILE .PAK (DATA)</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_pak" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
                                 <p class="text-muted mb-3" style="font-size:13px;">Tải file .pak gốc lên đây. Hệ thống sẽ lưu trữ và cung cấp link tải cho App Android.</p>
@@ -765,7 +744,7 @@ def admin_dashboard():
             <div class="row g-4 mb-4">
                 <div class="col-12">
                     <div class="card" style="border-top: 4px solid #a855f7;">
-                        <div class="card-header" style="color: #a855f7 !important;"><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen IP)</div>
+                        <div class="card-header" style="color: #a855f7 !important;"><div><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen IP)</div></div>
                         <div class="card-body">
                             <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">{csrf_input}
                                 <input type="text" name="ip" class="form-control" style="max-width:300px;" placeholder="Nhập IP cần khoá..." required>
@@ -900,6 +879,17 @@ def admin_dashboard():
     </body>
     </html>
     '''
+
+# [NÂNG CẤP] Route dùng để Bật/Tắt chế độ bảo trì Webview trực tiếp từ Admin
+@app.route('/admin/toggle_maintenance', methods=['POST'])
+def admin_toggle_maintenance():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    db = load_db()
+    with db_lock:
+        current_status = db.setdefault("settings", {}).get("webview_maintenance", False)
+        db["settings"]["webview_maintenance"] = not current_status
+        save_db(db)
+    return redirect('/admin')
 
 @app.route('/admin/create', methods=['POST'])
 def create_key():
@@ -1052,7 +1042,7 @@ def admin_update_pak():
     if file.filename == '': return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
     
     try:
-        # [VÁ LỖI NGHÊN LINK] Dùng hàm Native lưu thẳng xuống ổ đĩa siêu tốc thay vì dùng vòng lặp dễ timeout
+        # [VÁ LỖI NGHẼN LINK] Dùng hàm Native lưu thẳng xuống ổ đĩa siêu tốc thay vì dùng vòng lặp dễ timeout
         file.save('./uploaded.pak')
     except Exception as e:
         return swal_back("Lỗi", f"Không thể lưu file: {str(e)}", "error")
