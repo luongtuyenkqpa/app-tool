@@ -290,7 +290,8 @@ def check_ban_status():
     now = int(time.time() * 1000)
     if ip in db.get("banned_ips", []): return jsonify({"banned": True, "reason": "IP của bạn đã bị Firewall chặn đứt."})
     for k, v in db.get("keys", {}).items():
-        if ip in v.get("devices", []):
+        # [CẬP NHẬT FIX THIẾT BỊ] Duy trì khả năng phát hiện ban theo IP bằng list connected_ips
+        if ip in v.get("devices", []) or ip in v.get("connected_ips", []):
             if v.get("status") == "banned":
                 ban_until = v.get("ban_until", "permanent")
                 if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now):
@@ -451,12 +452,33 @@ def api_verify_core():
             send_telegram_event('expired', {'key': key, 'ip': client_ip})
             return jsonify({"status": "error", "msg": "Key đã hết hạn sử dụng!"})
 
+        # --- BẮT ĐẦU ĐOẠN FIX LỖI THIẾT BỊ ---
         devices = kd.setdefault("devices", [])
-        if client_ip not in devices:
+        
+        # 1. Lưu IP vào list dự phòng để tính năng Ban/Kick của Admin không bị lỗi
+        connected_ips = kd.setdefault("connected_ips", [])
+        if client_ip not in connected_ips:
+            connected_ips.append(client_ip)
+            if len(connected_ips) > 10: connected_ips.pop(0)
+
+        # 2. Tạo định danh Máy + Hệ Điều Hành thay vì dựa vào IP (Chống nhảy IP mạng 4G)
+        device_identifier = data.get('device_id', '') or data.get('uuid', '')
+        if not device_identifier:
+            device_identifier = f"{device_name} - {android_version}"
+            
+        # 3. Tự động dọn dẹp các IP mạng dạng số cũ để nhường slot lưu cho hệ thống Định Danh mới
+        for item in list(devices):
+            if ('.' in item and len(item.split('.')) == 4) or (':' in item):
+                try: devices.remove(item)
+                except: pass
+                
+        # 4. Kiểm tra logic thiết bị (Sử dụng Device Identifier ổn định)
+        if device_identifier not in devices:
             if len(devices) >= kd.get("maxDevices", 1): 
                 send_telegram_event('limit', {'key': key, 'ip': client_ip})
                 return jsonify({"status": "error", "msg": "Key này đã vượt quá số lượng thiết bị cho phép!"})
-            devices.append(client_ip)
+            devices.append(device_identifier)
+        # --- KẾT THÚC ĐOẠN FIX LỖI ---
 
         if kd.get("exp") == "pending":
             kd["exp"] = now + kd.get("durationMs", 0)
