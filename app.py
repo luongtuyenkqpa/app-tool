@@ -95,7 +95,7 @@ def telegram_polling():
 
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -251,10 +251,8 @@ def firewall_and_csrf():
         banned_ips = set(db.get("banned_ips", []))
         ip = get_real_ip()
         
-        # Bắt cả IP Local nếu app truyền lên
-        client_ip = request.json.get('local_ip') or request.json.get('real_ip') or ip if request.is_json else ip
-        
-        if ip in banned_ips or client_ip in banned_ips: 
+        # [SỬA LỖI BẢO MẬT] Sử dụng IP thực từ hệ thống để chặn firewall, tránh việc đối thủ gửi real_ip giả lập trên JSON payload
+        if ip in banned_ips: 
             return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL LVT.", 403
 
         ua = (request.headers.get('User-Agent') or '').lower()
@@ -375,7 +373,7 @@ def api_verify_core():
     device_name = data.get('device_name', '')
     android_version = data.get('android_version', '')
     
-    # [NÂNG CẤP LẤY IP THẬT TỪ CÀI ĐẶT MÁY] Lấy từ app gửi lên nếu có
+    # Giữ nguyên việc log IP cục bộ từ thiết bị phục vụ hiển thị
     client_ip = data.get('local_ip') or data.get('real_ip') or public_ip
     
     ua_string = request.headers.get('User-Agent', '')
@@ -390,7 +388,8 @@ def api_verify_core():
     
     db = load_db()
     with db_lock:
-        if public_ip in db.get("banned_ips", []) or client_ip in db.get("banned_ips", []):
+        # [SỬA LỖI BẢO MẬT] Kiểm tra Tường lửa bằng public_ip thực để ngăn chặn việc bypass qua payload JSON
+        if public_ip in db.get("banned_ips", []):
             return jsonify({"status": "error", "msg": "Thiết bị của bạn đã bị chặn bởi tường lửa!"})
             
         if key not in db.get("keys", {}): return jsonify({"status": "error", "msg": "Mã Key không tồn tại hoặc sai định dạng!"})
@@ -527,7 +526,7 @@ def admin_dashboard():
             ban_btn = f'<a href="/admin/action/unban/{escape(str(k))}" class="action-btn text-success" title="Mở khóa Key"><i class="fas fa-unlock"></i></a>'
         else:
             status_badge = '<span class="badge badge-custom text-bg-success"><i class="fas fa-check-circle"></i> Sống</span>'
-            ban_btn = f'<button class="action-btn action-btn-danger" onclick="openBanModal(\'{escape(str(k))}\')" title="Khóa (Kick) ngay lập tức"><i class="fas fa-ban"></i></button>'
+            ban_btn = f'<button class="action-btn action-btn-danger" data-key="{escape(str(k))}" onclick="openBanModal(this.getAttribute(\'data-key\'))" title="Khóa (Kick) ngay lập tức"><i class="fas fa-ban"></i></button>'
 
         vip_badge = '<span class="badge badge-custom" style="background:#f59e0b; color:#000;"><i class="fas fa-crown"></i> VIP</span>' if data.get('vip', False) else '<span class="badge badge-custom bg-secondary">Thường</span>'
         
@@ -543,6 +542,7 @@ def admin_dashboard():
         safe_k = escape(str(k))
         bound_olm = escape(data.get('bound_olm', ''))
 
+        # [SỬA LỖI ĐƠ MODAL] Chuyển đổi gọi hàm JS sang data-attributes để tránh lỗi vỡ cú pháp khi chuỗi chứa kí tự nháy đơn/nháy kép
         keys_html += f'''<tr>
         <td>
             <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')" title="Nhấn để Copy">{safe_k} <i class="far fa-copy text-muted small"></i></div>
@@ -555,11 +555,11 @@ def admin_dashboard():
         <td><span class="badge bg-dark border border-secondary p-2 fs-6">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
         <td>
             <div class="d-flex flex-wrap gap-2 justify-content-center">
-                <button class="action-btn text-light" style="background: #0284c7;" onclick="openNoteModal('{safe_k}', '{note}')" title="Ghi Chú Key"><i class="fas fa-sticky-note"></i></button>
-                <button class="action-btn" onclick="openBindModal('{safe_k}', '{bound_olm}')" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
-                <button class="action-btn" onclick="openAddTimeModal('{safe_k}')" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
+                <button class="action-btn text-light" style="background: #0284c7;" data-key="{safe_k}" data-note="{note}" onclick="openNoteModal(this.getAttribute('data-key'), this.getAttribute('data-note'))" title="Ghi Chú Key"><i class="fas fa-sticky-note"></i></button>
+                <button class="action-btn" data-key="{safe_k}" data-olm="{bound_olm}" onclick="openBindModal(this.getAttribute('data-key'), this.getAttribute('data-olm'))" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
+                <button class="action-btn" data-key="{safe_k}" onclick="openAddTimeModal(this.getAttribute('data-key'))" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
                 <a href="/admin/action/reset_dev/{safe_k}" class="action-btn text-primary" onclick="return confirm('Bạn có chắc chắn muốn Xóa sạch lịch sử thiết bị của Key này?')" title="Reset Thiết Bị"><i class="fas fa-sync-alt"></i></a>
-                <button class="action-btn text-success" onclick="openMaxDevModal('{safe_k}', '{data.get('maxDevices', 1)}')" title="Tùy Chỉnh Giới Hạn Thiết Bị"><i class="fas fa-mobile-alt"></i></button>
+                <button class="action-btn text-success" data-key="{safe_k}" data-max="{data.get('maxDevices', 1)}" onclick="openMaxDevModal(this.getAttribute('data-key'), this.getAttribute('data-max'))" title="Tùy Chỉnh Giới Hạn Thiết Bị"><i class="fas fa-mobile-alt"></i></button>
                 {ban_btn}
                 <a href="/admin/action/delete/{safe_k}" class="action-btn text-muted" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
             </div>
@@ -747,8 +747,7 @@ def admin_dashboard():
                             <input type="number" name="max_dev" id="maxDevInput" class="form-control form-control-lg text-center" placeholder="Nhập số thiết bị..." required min="1">
                         </div>
                         <div class="modal-footer p-3"><button class="btn-primary-custom btn-success-custom w-100">CẬP NHẬT THIẾT BỊ</button></div>
-                    </form>
-                </div>
+                    </form>                </div>
             </div>
         </div>
 
@@ -773,12 +772,12 @@ def admin_dashboard():
 
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script>
-            function openNoteModal(key, note) {{ document.getElementById('noteKeyInput').value = key; document.getElementById('noteKeyDisplay').innerText = key; document.getElementById('noteInput').value = note; new bootstrap.Modal(document.getElementById('noteModal')).show(); }}
-            function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
-            function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
-            function openMaxDevModal(key, max) {{ document.getElementById('maxDevKeyInput').value = key; document.getElementById('maxDevKeyDisplay').innerText = key; document.getElementById('maxDevInput').value = max; new bootstrap.Modal(document.getElementById('maxDevModal')).show(); }}
-            function openBanModal(key) {{ document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('banModal')).show(); }}
-            function copyToClipboard(text) {{ navigator.clipboard.writeText(text); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}}); }}
+            function openNoteModal(key, note) { document.getElementById('noteKeyInput').value = key; document.getElementById('noteKeyDisplay').innerText = key; document.getElementById('noteInput').value = note; new bootstrap.Modal(document.getElementById('noteModal')).show(); }
+            function openBindModal(key, old) { document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }
+            function openAddTimeModal(key) { document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }
+            function openMaxDevModal(key, max) { document.getElementById('maxDevKeyInput').value = key; document.getElementById('maxDevKeyDisplay').innerText = key; document.getElementById('maxDevInput').value = max; new bootstrap.Modal(document.getElementById('maxDevModal')).show(); }
+            function openBanModal(key) { document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('banModal')).show(); }
+            function copyToClipboard(text) { navigator.clipboard.writeText(text); Swal.fire({toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}); }
         </script>
     </body>
     </html>
@@ -1089,6 +1088,7 @@ def admin_update_webview():
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp file Giao diện WebView thành công!", "success", "/admin/files")
 
+# [TỐI ƯU SIÊU TỐC - ĐÃ SỬA LỖI NGHẼN]
 @app.route('/admin/update_pak', methods=['POST'])
 def admin_update_pak():
     if session.get('role') != 'admin': return redirect('/admin_login')
@@ -1096,12 +1096,26 @@ def admin_update_pak():
     file = request.files['pak_file']
     if file.filename == '': return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
     
+    pak_path = './uploaded.pak'
+    temp_pak_path = './uploaded.pak.tmp'
     try:
-        file.save('./uploaded.pak')
+        # Cơ chế Chunked Streaming: Đọc và ghi nhỏ 64KB liên tục giúp nuốt trọn file 500MB mà không bị tràn RAM hay nghẽn mạng
+        with open(temp_pak_path, 'wb') as f:
+            while True:
+                chunk = file.stream.read(64 * 1024) 
+                if not chunk:
+                    break
+                f.write(chunk)
+        if os.path.exists(pak_path):
+            os.remove(pak_path)
+        os.rename(temp_pak_path, pak_path)
     except Exception as e:
+        if os.path.exists(temp_pak_path):
+            try: os.remove(temp_pak_path)
+            except: pass
         return swal_back("Lỗi", f"Không thể lưu file: {str(e)}", "error")
         
-    return swal_redirect("Thành Công", "Đã nạp file .PAK lên Server thành công mà không bị nghẽn!", "success", "/admin/files")
+    return swal_redirect("Thành Công", "Đã nạp file .PAK lên Server thành công cực kì nhanh chóng và mượt mà!", "success", "/admin/files")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
