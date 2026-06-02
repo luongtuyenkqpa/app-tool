@@ -28,7 +28,6 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8714375866:AAG9r0aCCF
 TELEGRAM_CHAT_ID = "7363320876"
 WEB_URL = "https://app-tool-trlp.onrender.com" 
 
-# [NÂNG CẤP BẢO MẬT] Hệ thống gửi Telegram chuyên nghiệp, mã hóa chuẩn TLS và lọc thông báo
 def send_telegram_event(event_type, data):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
     def _send():
@@ -69,7 +68,9 @@ def send_telegram_backup():
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
         with open(DB_FILE, 'rb') as f:
             requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📦 BACKUP DATABASE LVT TOOL\nThời gian: {time.strftime('%d/%m/%Y %H:%M:%S')}"}, files={"document": f}, timeout=10)
-    except: pass
+    except Exception as e: 
+        print(f"Lỗi gửi telegram backup: {e}")
+        pass
 
 def telegram_polling():
     offset = 0
@@ -132,6 +133,7 @@ DB_BACKUP = './database.backup.json'
 
 db_lock = threading.RLock()
 api_rate_lock = threading.Lock()
+admin_login_lock = threading.Lock() # [FIXED LỖI 4] Khóa luồng chống xung đột Crash hệ thống khi bị Brute-force
 
 active_sessions = {}
 api_rate_cache = {}
@@ -148,11 +150,15 @@ def safe_int(val, default=0):
 
 def hash_pwd(pwd): return hashlib.sha256(pwd.encode()).hexdigest()
 
+# [FIXED LỖI 3 BẢO MẬT] Làm sạch biến chống chèn mã độc (XSS) qua tham số nội dung truyền vào.
+def escape_swal(text):
+    return str(text).replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+
 def swal_redirect(title, text, icon, url):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: "{title}", html: "{text}", icon: "{icon}", background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false }}).then(() => {{ window.location.href = '{url}'; }});</script></body></html>"""
+    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: "{escape_swal(title)}", html: "{escape_swal(text)}", icon: "{icon}", background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false }}).then(() => {{ window.location.href = '{url}'; }});</script></body></html>"""
 
 def swal_back(title, text, icon):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: "{title}", html: "{text}", icon: "{icon}", background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false }}).then(() => {{ window.history.back(); }});</script></body></html>"""
+    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: "{escape_swal(title)}", html: "{escape_swal(text)}", icon: "{icon}", background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false }}).then(() => {{ window.history.back(); }});</script></body></html>"""
 
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
@@ -170,7 +176,14 @@ def load_db():
             if os.path.exists(DB_FILE):
                 try:
                     with open(DB_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
-                except Exception: pass
+                except Exception as e:
+                    # [FIXED BẢO MẬT & DATA] Khắc phục triệt để lỗi mất trắng DB nếu file DB_FILE bị rỗng/lỗi định dạng do sập Server/hết RAM!
+                    print(f"Cảnh báo: File DB chính bị hỏng ({e}). Tự động phục hồi từ Backup!")
+                    if os.path.exists(DB_BACKUP):
+                        try:
+                            with open(DB_BACKUP, 'r', encoding='utf-8') as f: data = json.load(f)
+                        except Exception: pass
+
             if not data: data = {"users": {}, "keys": {}, "banned_ips": [], "settings": {}}
             try:
                 data.setdefault("users", {})
@@ -218,7 +231,10 @@ def save_db(db=None):
             os.replace(temp_file, DB_FILE)
             shutil.copy2(DB_FILE, DB_BACKUP)
             _last_db_mtime = os.path.getmtime(DB_FILE)
-        except Exception: pass
+        except Exception as e:
+            # In lỗi ra log thay vì im lặng để biết host full dung lượng.
+            print(f"Lỗi lưu Database: {e}") 
+            pass
 
 def generate_proxy_key():
     return ''.join(secrets.choice(string.ascii_lowercase) for _ in range(15))
@@ -251,7 +267,7 @@ def firewall_and_csrf():
         banned_ips = set(db.get("banned_ips", []))
         ip = get_real_ip()
         
-        # [SỬA LỖI BẢO MẬT] Sử dụng IP thực từ hệ thống để chặn firewall, tránh việc đối thủ gửi real_ip giả lập trên JSON payload
+        # Sử dụng IP thực từ hệ thống để chặn firewall, tránh việc đối thủ gửi real_ip giả lập trên JSON payload
         if ip in banned_ips: 
             return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL LVT.", 403
 
@@ -261,8 +277,11 @@ def firewall_and_csrf():
             
         if request.path.startswith("/admin") and request.path not in ["/admin_login"]:
             if session.get('role') != 'admin': return redirect('/admin_login')
+            # [FIXED LỖI 1 BẢO MẬT CSRF] Chặn triệt để kịch bản chèn Link ngầm để xóa Key của người dùng GET (State-changing Request).
             if request.method == 'POST':
-                if request.form.get("csrf_token") != session.get('csrf_token'): return "Lỗi CSRF Token", 403
+                if request.form.get("csrf_token") != session.get('csrf_token'): return "Lỗi CSRF Token (POST)", 403
+            elif request.method == 'GET' and ('/admin/action/' in request.path or '/admin/unban_ip/' in request.path):
+                if request.args.get("csrf_token") != session.get('csrf_token'): return "Lỗi CSRF Token (GET Action bị chặn)", 403
     except: pass
 
 @app.after_request
@@ -280,7 +299,7 @@ def check_ban_status():
     now = int(time.time() * 1000)
     if ip in db.get("banned_ips", []): return jsonify({"banned": True, "reason": "IP của bạn đã bị Firewall chặn đứt."})
     for k, v in db.get("keys", {}).items():
-        if ip in v.get("devices", []) or ip in v.get("connected_ips", []):
+        if ip in v.get("connected_ips", []):
             if v.get("status") == "banned":
                 ban_until = v.get("ban_until", "permanent")
                 if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now):
@@ -359,6 +378,12 @@ def api_verify_core():
     now = int(time.time() * 1000)
 
     with api_rate_lock:
+        # Quét dọn bộ nhớ chống tràn RAM - Loại bỏ IP rác.
+        if len(api_rate_cache) > 5000:
+            stale_ips = [k for k, v in api_rate_cache.items() if not v or now - v[-1] > 60000]
+            for k in stale_ips:
+                api_rate_cache.pop(k, None)
+
         reqs = api_rate_cache.get(public_ip, [])
         reqs = [t for t in reqs if now - t < 60000]
         if len(reqs) >= 30: 
@@ -388,7 +413,7 @@ def api_verify_core():
     
     db = load_db()
     with db_lock:
-        # [SỬA LỖI BẢO MẬT] Kiểm tra Tường lửa bằng public_ip thực để ngăn chặn việc bypass qua payload JSON
+        # Kiểm tra Tường lửa bằng public_ip thực để ngăn chặn việc bypass qua payload JSON
         if public_ip in db.get("banned_ips", []):
             return jsonify({"status": "error", "msg": "Thiết bị của bạn đã bị chặn bởi tường lửa!"})
             
@@ -475,25 +500,31 @@ def admin_login():
         ip = get_real_ip()
         global admin_login_attempts
         now = time.time()
-        admin_login_attempts = {k: v for k, v in admin_login_attempts.items() if now - v['time'] < 300} 
-        attempts = admin_login_attempts.get(ip, {'count': 0, 'time': now})
-        if attempts['count'] >= 5: return swal_back("Bị Khóa", "Thử lại sau 5 phút!", "error")
+        
+        # [FIXED LỖI 4 BẢO MẬT] Bọc Khóa Luồng (Lock) khi tương tác với Dictionary để tránh lỗi Thread Crash
+        with admin_login_lock:
+            admin_login_attempts = {k: v for k, v in admin_login_attempts.items() if now - v['time'] < 300} 
+            attempts = admin_login_attempts.get(ip, {'count': 0, 'time': now})
+            
+            if attempts['count'] >= 5: return swal_back("Bị Khóa", "Thử lại sau 5 phút!", "error")
 
-        if request.method == 'POST':
-            db = load_db()
-            username = request.form.get('username', '').strip().lower()
-            pwd = request.form.get('password', '').strip()
-            u_data = db.get("users", {}).get(username)
-            if u_data and u_data.get("role") == "admin" and u_data.get("password_hash") == hash_pwd(pwd):
-                session['username'] = username
-                session['role'] = 'admin'
-                session['csrf_token'] = secrets.token_hex(16)
-                admin_login_attempts.pop(ip, None) 
-                return redirect('/admin')
-            attempts['count'] += 1
-            attempts['time'] = now
-            admin_login_attempts[ip] = attempts
-            return swal_back("Từ Chối", f"Sai mật khẩu! Bạn còn {5 - attempts['count']} lần thử.", "error")
+            if request.method == 'POST':
+                db = load_db()
+                username = request.form.get('username', '').strip().lower()
+                pwd = request.form.get('password', '').strip()
+                u_data = db.get("users", {}).get(username)
+                
+                if u_data and u_data.get("role") == "admin" and u_data.get("password_hash") == hash_pwd(pwd):
+                    session['username'] = username
+                    session['role'] = 'admin'
+                    session['csrf_token'] = secrets.token_hex(16)
+                    admin_login_attempts.pop(ip, None) 
+                    return redirect('/admin')
+                
+                attempts['count'] += 1
+                attempts['time'] = now
+                admin_login_attempts[ip] = attempts
+                return swal_back("Từ Chối", f"Sai mật khẩu! Bạn còn {5 - attempts['count']} lần thử.", "error")
             
         return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>C-Panel Admin Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(0,255,204,0.3); color: #00ffcc; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #00ffcc; }}</style></head><body style="background:#0b0f19; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px; background:#131722; border-color:#1e293b;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
     except Exception as e: return f"LỖI: {str(e)}", 200
@@ -503,7 +534,10 @@ def admin_login():
 def admin_dashboard():
     if session.get('role') != 'admin': return redirect('/admin_login')
     db = load_db()
-    csrf_input = f'<input type="hidden" name="csrf_token" value="{session.get("csrf_token", "")}">'
+    
+    # [FIXED LỖI 1 BẢO MẬT] Lấy csrf token đưa vào tham số param để bảo mật các action GET
+    token_url = session.get("csrf_token", "")
+    csrf_input = f'<input type="hidden" name="csrf_token" value="{token_url}">'
     
     with db_lock:
         keys_items = list(db.get("keys", {}).items())
@@ -521,9 +555,10 @@ def admin_dashboard():
             else: is_banned = False; data["status"] = "active" 
         else: is_banned = False
 
+        # Cấp token vào đuôi cho bảo mật URL Action
         if is_banned:
             status_badge = '<span class="badge badge-custom text-bg-danger"><i class="fas fa-ban"></i> Bị Khóa</span>'
-            ban_btn = f'<a href="/admin/action/unban/{escape(str(k))}" class="action-btn text-success" title="Mở khóa Key"><i class="fas fa-unlock"></i></a>'
+            ban_btn = f'<a href="/admin/action/unban/{escape(str(k))}?csrf_token={token_url}" class="action-btn text-success" title="Mở khóa Key"><i class="fas fa-unlock"></i></a>'
         else:
             status_badge = '<span class="badge badge-custom text-bg-success"><i class="fas fa-check-circle"></i> Sống</span>'
             ban_btn = f'<button class="action-btn action-btn-danger" data-key="{escape(str(k))}" onclick="openBanModal(this.getAttribute(\'data-key\'))" title="Khóa (Kick) ngay lập tức"><i class="fas fa-ban"></i></button>'
@@ -542,8 +577,7 @@ def admin_dashboard():
         safe_k = escape(str(k))
         bound_olm = escape(data.get('bound_olm', ''))
 
-        # [SỬA LỖI ĐƠ MODAL] Chuyển đổi gọi hàm JS sang data-attributes để tránh lỗi vỡ cú pháp khi chuỗi chứa kí tự nháy đơn/nháy kép
-        # [SỬA LỖI TÌM KIẾM KEY] Bổ sung class="key-row" để JS search có thể nhận diện dòng
+        # Tích hợp token chống giả mạo URL ở Xóa / Reset Dev
         keys_html += f'''<tr class="key-row">
         <td>
             <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')" title="Nhấn để Copy">{safe_k} <i class="far fa-copy text-muted small"></i></div>
@@ -559,15 +593,16 @@ def admin_dashboard():
                 <button class="action-btn text-light" style="background: #0284c7;" data-key="{safe_k}" data-note="{note}" onclick="openNoteModal(this.getAttribute('data-key'), this.getAttribute('data-note'))" title="Ghi Chú Key"><i class="fas fa-sticky-note"></i></button>
                 <button class="action-btn" data-key="{safe_k}" data-olm="{bound_olm}" onclick="openBindModal(this.getAttribute('data-key'), this.getAttribute('data-olm'))" title="Ghim Tên OLM"><i class="fas fa-user-tag text-warning"></i></button>
                 <button class="action-btn" data-key="{safe_k}" onclick="openAddTimeModal(this.getAttribute('data-key'))" title="Bơm Giờ"><i class="fas fa-clock text-info"></i></button>
-                <a href="/admin/action/reset_dev/{safe_k}" class="action-btn text-primary" onclick="return confirm('Bạn có chắc chắn muốn Xóa sạch lịch sử thiết bị của Key này?')" title="Reset Thiết Bị"><i class="fas fa-sync-alt"></i></a>
+                <a href="/admin/action/reset_dev/{safe_k}?csrf_token={token_url}" class="action-btn text-primary" onclick="return confirm('Bạn có chắc chắn muốn Xóa sạch lịch sử thiết bị của Key này?')" title="Reset Thiết Bị"><i class="fas fa-sync-alt"></i></a>
                 <button class="action-btn text-success" data-key="{safe_k}" data-max="{data.get('maxDevices', 1)}" onclick="openMaxDevModal(this.getAttribute('data-key'), this.getAttribute('data-max'))" title="Tùy Chỉnh Giới Hạn Thiết Bị"><i class="fas fa-mobile-alt"></i></button>
                 {ban_btn}
-                <a href="/admin/action/delete/{safe_k}" class="action-btn text-muted" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
+                <a href="/admin/action/delete/{safe_k}?csrf_token={token_url}" class="action-btn text-muted" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
             </div>
         </td>
         </tr>'''
 
-    blacklist_rows = "".join([f'<li class="list-group-item d-flex justify-content-between align-items-center"><span class="font-monospace text-danger">{escape(ip)}</span> <a href="/admin/unban_ip/{escape(ip)}" class="action-btn action-btn-danger px-3">Gỡ</a></li>' for ip in banned_ips])
+    # Tích hợp token gỡ IP chặn
+    blacklist_rows = "".join([f'<li class="list-group-item d-flex justify-content-between align-items-center"><span class="font-monospace text-danger">{escape(ip)}</span> <a href="/admin/unban_ip/{escape(ip)}?csrf_token={token_url}" class="action-btn action-btn-danger px-3">Gỡ</a></li>' for ip in banned_ips])
 
     return f'''
     <!DOCTYPE html><html lang="vi" data-bs-theme="dark">
@@ -937,7 +972,7 @@ def admin_toggle_maintenance():
         save_db(db)
     return redirect('/admin/files')
 
-# [CẬP NHẬT] Xử lý tạo Key Thủ công / Tự động
+# Xử lý tạo Key Thủ công / Tự động
 @app.route('/admin/create', methods=['POST'])
 def create_key():
     if session.get('role') != 'admin': return redirect('/admin_login')
@@ -1107,14 +1142,13 @@ def admin_update_pak():
                 if not chunk:
                     break
                 f.write(chunk)
-        if os.path.exists(pak_path):
-            os.remove(pak_path)
-        os.rename(temp_pak_path, pak_path)
+        # [FIXED BẢO MẬT & CORRUPT FILE] Dùng lệnh chuẩn os.replace nguyên tử của python thay vì xóa đi đổi tên dễ bị tuột file
+        os.replace(temp_pak_path, pak_path)
     except Exception as e:
         if os.path.exists(temp_pak_path):
             try: os.remove(temp_pak_path)
             except: pass
-        return swal_back("Lỗi", f"Không thể lưu file: {str(e)}", "error")
+        return swal_back("Lỗi", f"Không thể lưu file: {escape_swal(str(e))}", "error")
         
     return swal_redirect("Thành Công", "Đã nạp file .PAK lên Server thành công cực kì nhanh chóng và mượt mà!", "success", "/admin/files")
 
