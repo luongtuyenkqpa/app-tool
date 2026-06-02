@@ -773,12 +773,12 @@ def admin_dashboard():
 
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script>
-            function openNoteModal(key, note) { document.getElementById('noteKeyInput').value = key; document.getElementById('noteKeyDisplay').innerText = key; document.getElementById('noteInput').value = note; bootstrap.Modal.getOrCreateInstance(document.getElementById('noteModal')).show(); }
-            function openBindModal(key, old) { document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; bootstrap.Modal.getOrCreateInstance(document.getElementById('bindModal')).show(); }
-            function openAddTimeModal(key) { document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; bootstrap.Modal.getOrCreateInstance(document.getElementById('addTimeModal')).show(); }
-            function openMaxDevModal(key, max) { document.getElementById('maxDevKeyInput').value = key; document.getElementById('maxDevKeyDisplay').innerText = key; document.getElementById('maxDevInput').value = max; bootstrap.Modal.getOrCreateInstance(document.getElementById('maxDevModal')).show(); }
-            function openBanModal(key) { document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; bootstrap.Modal.getOrCreateInstance(document.getElementById('banModal')).show(); }
-            function copyToClipboard(text) { navigator.clipboard.writeText(text); Swal.fire({toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}); }
+            function openNoteModal(key, note) {{ document.getElementById('noteKeyInput').value = key; document.getElementById('noteKeyDisplay').innerText = key; document.getElementById('noteInput').value = note; bootstrap.Modal.getOrCreateInstance(document.getElementById('noteModal')).show(); }}
+            function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; bootstrap.Modal.getOrCreateInstance(document.getElementById('bindModal')).show(); }}
+            function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; bootstrap.Modal.getOrCreateInstance(document.getElementById('addTimeModal')).show(); }}
+            function openMaxDevModal(key, max) {{ document.getElementById('maxDevKeyInput').value = key; document.getElementById('maxDevKeyDisplay').innerText = key; document.getElementById('maxDevInput').value = max; bootstrap.Modal.getOrCreateInstance(document.getElementById('maxDevModal')).show(); }}
+            function openBanModal(key) {{ document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; bootstrap.Modal.getOrCreateInstance(document.getElementById('banModal')).show(); }}
+            function copyToClipboard(text) {{ navigator.clipboard.writeText(text); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}}); }}
         </script>
     </body>
     </html>
