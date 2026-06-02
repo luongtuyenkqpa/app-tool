@@ -542,8 +542,8 @@ def admin_dashboard():
         safe_k = escape(str(k))
         bound_olm = escape(data.get('bound_olm', ''))
 
-        # [SỬA LỖI ĐƠ MODAL] Chuyển đổi gọi hàm JS sang data-attributes để tránh lỗi vỡ cú pháp khi chuỗi chứa kí tự nháy đơn/nháy kép
-        keys_html += f'''<tr>
+        # [SỬA LỖI ĐƠ MODAL & TÌM KIẾM] Thêm class="key-row" để bộ lọc JavaScript không bị đơ và nhận diện chính xác hàng cần ẩn/hiện
+        keys_html += f'''<tr class="key-row">
         <td>
             <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')" title="Nhấn để Copy">{safe_k} <i class="far fa-copy text-muted small"></i></div>
             <div class="d-flex gap-1 justify-content-center">{vip_badge} {status_badge}</div>
@@ -658,7 +658,7 @@ def admin_dashboard():
                                 <button type="submit" class="action-btn action-btn-danger" style="white-space:nowrap;"><i class="fas fa-ban"></i> Chặn Cửa</button>
                             </form>
                             <ul class="list-group" style="max-height:300px; overflow-y:auto;">
-                                {blacklist_rows or '<li class="list-group-item text-center text-muted border-0 py-4"><i class="fas fa-check-circle fs-4 mb-2 d-block"></i> Không có IP nào bị khoá.</li>'}
+                                {blacklist_rows or "<li class=\"list-group-item text-center text-muted border-0 py-4\"><i class=\"fas fa-check-circle fs-4 mb-2 d-block\"></i> Không có IP nào bị khoá.</li>"}
                             </ul>
                         </div>
                     </div>
@@ -680,7 +680,7 @@ def admin_dashboard():
                                 <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
-                                {keys_html or '<tr><td colspan="5" class="py-5 text-muted">Chưa có dữ liệu.</td></tr>'}
+                                {keys_html or "<tr><td colspan=\"5\" class=\"py-5 text-muted\">Chưa có dữ liệu.</td></tr>"}
                             </tbody>
                         </table>
                     </div>
@@ -772,12 +772,12 @@ def admin_dashboard():
 
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script>
-            function openNoteModal(key, note) { document.getElementById('noteKeyInput').value = key; document.getElementById('noteKeyDisplay').innerText = key; document.getElementById('noteInput').value = note; new bootstrap.Modal(document.getElementById('noteModal')).show(); }
-            function openBindModal(key, old) { document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }
-            function openAddTimeModal(key) { document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }
-            function openMaxDevModal(key, max) { document.getElementById('maxDevKeyInput').value = key; document.getElementById('maxDevKeyDisplay').innerText = key; document.getElementById('maxDevInput').value = max; new bootstrap.Modal(document.getElementById('maxDevModal')).show(); }
-            function openBanModal(key) { document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('banModal')).show(); }
-            function copyToClipboard(text) { navigator.clipboard.writeText(text); Swal.fire({toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}); }
+            function openNoteModal(key, note) {{ document.getElementById('noteKeyInput').value = key; document.getElementById('noteKeyDisplay').innerText = key; document.getElementById('noteInput').value = note; new bootstrap.Modal(document.getElementById('noteModal')).show(); }}
+            function openBindModal(key, old) {{ document.getElementById('bindKeyInput').value = key; document.getElementById('bindKeyDisplay').innerText = key; document.getElementById('bindOlmInput').value = old; new bootstrap.Modal(document.getElementById('bindModal')).show(); }}
+            function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('addTimeModal')).show(); }}
+            function openMaxDevModal(key, max) {{ document.getElementById('maxDevKeyInput').value = key; document.getElementById('maxDevKeyDisplay').innerText = key; document.getElementById('maxDevInput').value = max; new bootstrap.Modal(document.getElementById('maxDevModal')).show(); }}
+            function openBanModal(key) {{ document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; new bootstrap.Modal(document.getElementById('banModal')).show(); }}
+            function copyToClipboard(text) {{ navigator.clipboard.writeText(text); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}}); }}
         </script>
     </body>
     </html>
