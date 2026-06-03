@@ -35,16 +35,17 @@ def send_telegram_event(event_type, data):
             session_req = requests.Session()
             msg = ""
             
+            # [VÁ BẢO MẬT] Bọc hàm escape() để chống Injection phá vỡ cấu trúc HTML của Telegram Bot
             if event_type == "create":
-                msg = f"🌟 <b>KEY VỪA ĐƯỢC TẠO</b> 🌟\n\n🔑 <code>{data.get('key')}</code>\n⏳ Hạn: {data.get('exp')}\n📱 Thiết bị tối đa: {data.get('max_dev')}"
+                msg = f"🌟 <b>KEY VỪA ĐƯỢC TẠO</b> 🌟\n\n🔑 <code>{escape(str(data.get('key')))}</code>\n⏳ Hạn: {escape(str(data.get('exp')))}\n📱 Thiết bị tối đa: {escape(str(data.get('max_dev')))}"
             elif event_type == "banned":
-                msg = f"🚫 <b>CẢNH BÁO: KEY BỊ BAND</b> 🚫\n\n🔑 Key: <code>{data.get('key')}</code>\n🌐 IP Vi phạm: {data.get('ip')}"
+                msg = f"🚫 <b>CẢNH BÁO: KEY BỊ BAND</b> 🚫\n\n🔑 Key: <code>{escape(str(data.get('key')))}</code>\n🌐 IP Vi phạm: {escape(str(data.get('ip')))}"
             elif event_type == "expired":
-                msg = f"⚠️ <b>THÔNG BÁO: KEY HẾT HẠN</b> ⚠️\n\n🔑 Key: <code>{data.get('key')}</code>\n🌐 IP Khách: {data.get('ip')}"
+                msg = f"⚠️ <b>THÔNG BÁO: KEY HẾT HẠN</b> ⚠️\n\n🔑 Key: <code>{escape(str(data.get('key')))}</code>\n🌐 IP Khách: {escape(str(data.get('ip')))}"
             elif event_type == "limit":
-                msg = f"📵 <b>CẢNH BÁO: VƯỢT QUÁ THIẾT BỊ</b> 📵\n\n🔑 Key: <code>{data.get('key')}</code>\n🌐 IP Đăng nhập: {data.get('ip')}"
+                msg = f"📵 <b>CẢNH BÁO: VƯỢT QUÁ THIẾT BỊ</b> 📵\n\n🔑 Key: <code>{escape(str(data.get('key')))}</code>\n🌐 IP Đăng nhập: {escape(str(data.get('ip')))}"
             elif event_type == "login":
-                msg = f"✅ <b>ĐĂNG NHẬP THÀNH CÔNG</b> ✅\n\n🔑 Key: <code>{data.get('key')}</code>\n🌐 IP Máy Khách (Local IP): {data.get('ip')}\n📱 Tên Máy: {data.get('device_name')}\n🤖 Phiên bản: {data.get('android_version')}"
+                msg = f"✅ <b>ĐĂNG NHẬP THÀNH CÔNG</b> ✅\n\n🔑 Key: <code>{escape(str(data.get('key')))}</code>\n🌐 IP Máy Khách (Local IP): {escape(str(data.get('ip')))}\n📱 Tên Máy: {escape(str(data.get('device_name')))}\n🤖 Phiên bản: {escape(str(data.get('android_version')))}"
             
             if not msg: return
             
@@ -95,7 +96,7 @@ def telegram_polling():
                                 continue
 
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
-                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{user_first_name}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
+                            welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{escape(user_first_name)}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
                             keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
@@ -155,10 +156,12 @@ def escape_swal(text):
     return str(text).replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
 
 def swal_redirect(title, text, icon, url):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: "{escape_swal(title)}", html: "{escape_swal(text)}", icon: "{icon}", background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false }}).then(() => {{ window.location.href = '{url}'; }});</script></body></html>"""
+    # [VÁ BẢO MẬT TUYỆT ĐỐI XSS]: Sử dụng json.dumps để ép kiểu an toàn cho JS block tránh lỗi đóng thẻ </script>
+    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: {json.dumps(title)}, html: {json.dumps(text)}, icon: {json.dumps(icon)}, background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false }}).then(() => {{ window.location.href = {json.dumps(url)}; }});</script></body></html>"""
 
 def swal_back(title, text, icon):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: "{escape_swal(title)}", html: "{escape_swal(text)}", icon: "{icon}", background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false }}).then(() => {{ window.history.back(); }});</script></body></html>"""
+    # [VÁ BẢO MẬT TUYỆT ĐỐI XSS]: Sử dụng json.dumps để ép kiểu an toàn cho JS block tránh lỗi đóng thẻ </script>
+    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: {json.dumps(title)}, html: {json.dumps(text)}, icon: {json.dumps(icon)}, background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false }}).then(() => {{ window.history.back(); }});</script></body></html>"""
 
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
@@ -298,16 +301,19 @@ def check_ban_status():
     db = load_db()
     now = int(time.time() * 1000)
     if ip in db.get("banned_ips", []): return jsonify({"banned": True, "reason": "IP của bạn đã bị Firewall chặn đứt."})
-    for k, v in db.get("keys", {}).items():
-        if ip in v.get("connected_ips", []):
-            if v.get("status") == "banned":
-                ban_until = v.get("ban_until", "permanent")
-                if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now):
-                    return jsonify({"banned": True, "reason": "Key của bạn đã bị Admin khóa. Bạn đã bị kick khỏi hệ thống!", "ban_time": ban_until})
-                else:
-                    v["status"] = "active"
-                    save_db(db)
-                    return jsonify({"banned": False})
+    
+    # [VÁ LỖI XUNG ĐỘT LUỒNG]: Bọc db_lock khi duyệt dữ liệu và chỉnh sửa trạng thái ghi vào DB tránh tranh chấp giữa các request cùng lúc
+    with db_lock:
+        for k, v in db.get("keys", {}).items():
+            if ip in v.get("connected_ips", []):
+                if v.get("status") == "banned":
+                    ban_until = v.get("ban_until", "permanent")
+                    if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now):
+                        return jsonify({"banned": True, "reason": "Key của bạn đã bị Admin khóa. Bạn đã bị kick khỏi hệ thống!", "ban_time": ban_until})
+                    else:
+                        v["status"] = "active"
+                        save_db(db)
+                        return jsonify({"banned": False})
     return jsonify({"banned": False})
 
 @app.route('/api/get_script')
@@ -514,7 +520,8 @@ def admin_login():
                 pwd = request.form.get('password', '').strip()
                 u_data = db.get("users", {}).get(username)
                 
-                if u_data and u_data.get("role") == "admin" and u_data.get("password_hash") == hash_pwd(pwd):
+                # [VÁ LỖI BẢO MẬT] Sử dụng hmac.compare_digest thay vì == để chống tấn công Timing Attack dò mật khẩu
+                if u_data and u_data.get("role") == "admin" and hmac.compare_digest(u_data.get("password_hash"), hash_pwd(pwd)):
                     session['username'] = username
                     session['role'] = 'admin'
                     session['csrf_token'] = secrets.token_hex(16)
@@ -1124,7 +1131,7 @@ def admin_update_webview():
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp file Giao diện WebView thành công!", "success", "/admin/files")
 
-# [TỐI ƯU SIÊU TỐC - ĐÃ SỬA LỖI NGHẼN]
+# [TỐI ƯU SIÊU TỐC - ĐÃ SỬA LỖI NGHỄN]
 @app.route('/admin/update_pak', methods=['POST'])
 def admin_update_pak():
     if session.get('role') != 'admin': return redirect('/admin_login')
