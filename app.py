@@ -97,7 +97,8 @@ def telegram_polling():
 
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{escape(user_first_name)}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}]]}
+                            # [FIXED LỖI SYNTAXERROR]: Đã thêm dấu } đóng cho dictionary web_app
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -1205,7 +1206,9 @@ def logout():
 try:
     init_db = load_db()
     app.secret_key = os.environ.get('SECRET_KEY', init_db.get("settings", {}).get("secret_key", secrets.token_hex(32)))
-except Exception: pass
+except Exception:
+    # [FIXED BẢO MẬT KHỞI ĐỘNG]: Dự phòng cấp Secret_key nếu file JSON chưa kịp load hoặc load lỗi, để server không bao giờ bị Crash Session
+    app.secret_key = secrets.token_hex(32)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
