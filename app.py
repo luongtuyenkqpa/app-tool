@@ -117,7 +117,7 @@ def telegram_polling():
                                 continue
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{escape(user_first_name)}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"} khai xuat}]]}
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -1003,7 +1003,7 @@ def admin_getkey_dashboard():
                                     <label class="text-muted small fw-bold mb-1">API Token Bí Mật</label>
                                     <input type="text" name="shortlink_api_token" class="form-control" value="{api_token}" placeholder="Dán token API rút gọn link vào đây">
                                 </div>
-                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤU HÌSH</button>
+                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤU HÌNH</button>
                             </form>
                         </div>
                     </div>
@@ -1454,3 +1454,4 @@ except Exception: app.secret_key = secrets.token_hex(32)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
+
