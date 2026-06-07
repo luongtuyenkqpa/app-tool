@@ -35,7 +35,6 @@ def send_telegram_event(event_type, data):
             session_req = requests.Session()
             msg = ""
             
-            # [VÁ BẢO MẬT] Bọc hàm escape() để chống Injection phá vỡ cấu trúc HTML của Telegram Bot
             if event_type == "create":
                 msg = f"🌟 <b>KEY VỪA ĐƯỢC TẠO</b> 🌟\n\n🔑 <code>{escape(str(data.get('key')))}</code>\n⏳ Hạn: {escape(str(data.get('exp')))}\n📱 Thiết bị tối đa: {escape(str(data.get('max_dev')))}"
             elif event_type == "banned":
@@ -63,15 +62,49 @@ def send_telegram_event(event_type, data):
 def send_telegram_alert(message):
     pass 
 
+# Hệ thống Queue Backup để chống Spam Telegram và xóa tin cũ
+_needs_tg_backup = False
+def tg_backup_worker():
+    global _needs_tg_backup
+    while True:
+        time.sleep(10)
+        if _needs_tg_backup:
+            _needs_tg_backup = False
+            if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: continue
+            try:
+                db = load_db()
+                old_msg_id = db.get("settings", {}).get("last_tg_backup_msg_id")
+                
+                # Xóa tin nhắn backup cũ nếu có
+                if old_msg_id:
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", 
+                                      json={"chat_id": TELEGRAM_CHAT_ID, "message_id": old_msg_id}, timeout=5)
+                    except Exception: pass
+                
+                # Gửi file backup mới
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+                if os.path.exists(DB_FILE):
+                    with open(DB_FILE, 'rb') as f:
+                        res = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📦 BACKUP DATABASE LVT TOOL\nThời gian: {time.strftime('%d/%m/%Y %H:%M:%S')}\n\nLưu ý: Dùng file này để Khôi Phục Dữ Liệu trên Web Admin nếu Server bị tắt ngang."}, files={"document": f}, timeout=15).json()
+                        if res.get("ok"):
+                            new_msg_id = res["result"]["message_id"]
+                            # Lưu ID tin nhắn mới vào memory mà không trigger backup lại
+                            with db_lock:
+                                GLOBAL_DB["settings"]["last_tg_backup_msg_id"] = new_msg_id
+                                # Ghi âm thầm xuống file
+                                safe_db = copy.deepcopy(GLOBAL_DB)
+                                with open(DB_FILE, 'w', encoding='utf-8') as fw:
+                                    json.dump(safe_db, fw, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"Lỗi gửi telegram backup: {e}")
+
+threading.Thread(target=tg_backup_worker, daemon=True).start()
+
 def send_telegram_backup():
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
-        with open(DB_FILE, 'rb') as f:
-            requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": f"📦 BACKUP DATABASE LVT TOOL\nThời gian: {time.strftime('%d/%m/%Y %H:%M:%S')}"}, files={"document": f}, timeout=10)
-    except Exception as e: 
-        print(f"Lỗi gửi telegram backup: {e}")
-        pass
+    # Gọi cờ để luồng worker xử lý
+    global _needs_tg_backup
+    _needs_tg_backup = True
 
 def telegram_polling():
     offset = 0
@@ -97,7 +130,6 @@ def telegram_polling():
 
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{escape(user_first_name)}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            # [FIXED LỖI SYNTAXERROR]: Đã thêm dấu } đóng cho dictionary web_app
                             keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG KÍCH HOẠT PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
@@ -135,7 +167,7 @@ DB_BACKUP = './database.backup.json'
 
 db_lock = threading.RLock()
 api_rate_lock = threading.Lock()
-admin_login_lock = threading.Lock() # [FIXED LỖI 4] Khóa luồng chống xung đột Crash hệ thống khi bị Brute-force
+admin_login_lock = threading.Lock() 
 
 active_sessions = {}
 api_rate_cache = {}
@@ -152,16 +184,13 @@ def safe_int(val, default=0):
 
 def hash_pwd(pwd): return hashlib.sha256(pwd.encode()).hexdigest()
 
-# [FIXED LỖI 3 BẢO MẬT] Làm sạch biến chống chèn mã độc (XSS) qua tham số nội dung truyền vào.
 def escape_swal(text):
     return str(text).replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
 
 def swal_redirect(title, text, icon, url):
-    # [VÁ BẢO MẬT TUYỆT ĐỐI XSS]: Sử dụng json.dumps để ép kiểu an toàn cho JS block tránh lỗi đóng thẻ </script>
     return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: {json.dumps(title)}, html: {json.dumps(text)}, icon: {json.dumps(icon)}, background: '#11111A', color: '#fff', confirmButtonColor: '#00ffcc', allowOutsideClick: false }}).then(() => {{ window.location.href = {json.dumps(url)}; }});</script></body></html>"""
 
 def swal_back(title, text, icon):
-    # [VÁ BẢO MẬT TUYỆT ĐỐI XSS]: Sử dụng json.dumps để ép kiểu an toàn cho JS block tránh lỗi đóng thẻ </script>
     return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: {json.dumps(title)}, html: {json.dumps(text)}, icon: {json.dumps(icon)}, background: '#11111A', color: '#fff', confirmButtonColor: '#bd00ff', allowOutsideClick: false }}).then(() => {{ window.history.back(); }});</script></body></html>"""
 
 def load_db():
@@ -181,7 +210,6 @@ def load_db():
                 try:
                     with open(DB_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
                 except Exception as e:
-                    # [FIXED BẢO MẬT & DATA] Khắc phục triệt để lỗi mất trắng DB nếu file DB_FILE bị rỗng/lỗi định dạng do sập Server/hết RAM!
                     print(f"Cảnh báo: File DB chính bị hỏng ({e}). Tự động phục hồi từ Backup!")
                     if os.path.exists(DB_BACKUP):
                         try:
@@ -235,8 +263,9 @@ def save_db(db=None):
             os.replace(temp_file, DB_FILE)
             shutil.copy2(DB_FILE, DB_BACKUP)
             _last_db_mtime = os.path.getmtime(DB_FILE)
+            # Kích hoạt cờ gửi Telegram
+            send_telegram_backup()
         except Exception as e:
-            # In lỗi ra log thay vì im lặng để biết host full dung lượng.
             print(f"Lỗi lưu Database: {e}") 
             pass
 
@@ -271,7 +300,6 @@ def firewall_and_csrf():
         banned_ips = set(db.get("banned_ips", []))
         ip = get_real_ip()
         
-        # Sử dụng IP thực từ hệ thống để chặn firewall, tránh việc đối thủ gửi real_ip giả lập trên JSON payload
         if ip in banned_ips: 
             return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL LVT.", 403
 
@@ -281,7 +309,6 @@ def firewall_and_csrf():
             
         if request.path.startswith("/admin") and request.path not in ["/admin_login"]:
             if session.get('role') != 'admin': return redirect('/admin_login')
-            # [FIXED LỖI 1 BẢO MẬT CSRF] Chặn triệt để kịch bản chèn Link ngầm để xóa Key của người dùng GET (State-changing Request).
             if request.method == 'POST':
                 if request.form.get("csrf_token") != session.get('csrf_token'): return "Lỗi CSRF Token (POST)", 403
             elif request.method == 'GET' and ('/admin/action/' in request.path or '/admin/unban_ip/' in request.path):
@@ -303,7 +330,6 @@ def check_ban_status():
     now = int(time.time() * 1000)
     if ip in db.get("banned_ips", []): return jsonify({"banned": True, "reason": "IP của bạn đã bị Firewall chặn đứt."})
     
-    # [VÁ LỖI XUNG ĐỘT LUỒNG]: Bọc db_lock khi duyệt dữ liệu và chỉnh sửa trạng thái ghi vào DB tránh tranh chấp giữa các request cùng lúc
     with db_lock:
         for k, v in db.get("keys", {}).items():
             if ip in v.get("connected_ips", []):
@@ -385,7 +411,6 @@ def api_verify_core():
     now = int(time.time() * 1000)
 
     with api_rate_lock:
-        # Quét dọn bộ nhớ chống tràn RAM - Loại bỏ IP rác.
         if len(api_rate_cache) > 5000:
             stale_ips = [k for k, v in api_rate_cache.items() if not v or now - v[-1] > 60000]
             for k in stale_ips:
@@ -405,7 +430,6 @@ def api_verify_core():
     device_name = data.get('device_name', '')
     android_version = data.get('android_version', '')
     
-    # Giữ nguyên việc log IP cục bộ từ thiết bị phục vụ hiển thị
     client_ip = data.get('local_ip') or data.get('real_ip') or public_ip
     
     ua_string = request.headers.get('User-Agent', '')
@@ -420,7 +444,6 @@ def api_verify_core():
     
     db = load_db()
     with db_lock:
-        # Kiểm tra Tường lửa bằng public_ip thực để ngăn chặn việc bypass qua payload JSON
         if public_ip in db.get("banned_ips", []):
             return jsonify({"status": "error", "msg": "Thiết bị của bạn đã bị chặn bởi tường lửa!"})
             
@@ -508,7 +531,6 @@ def admin_login():
         global admin_login_attempts
         now = time.time()
         
-        # [FIXED LỖI 4 BẢO MẬT] Bọc Khóa Luồng (Lock) khi tương tác với Dictionary để tránh lỗi Thread Crash
         with admin_login_lock:
             admin_login_attempts = {k: v for k, v in admin_login_attempts.items() if now - v['time'] < 300} 
             attempts = admin_login_attempts.get(ip, {'count': 0, 'time': now})
@@ -521,7 +543,6 @@ def admin_login():
                 pwd = request.form.get('password', '').strip()
                 u_data = db.get("users", {}).get(username)
                 
-                # [VÁ LỖI BẢO MẬT] Sử dụng hmac.compare_digest thay vì == để chống tấn công Timing Attack dò mật khẩu
                 if u_data and u_data.get("role") == "admin" and hmac.compare_digest(u_data.get("password_hash"), hash_pwd(pwd)):
                     session['username'] = username
                     session['role'] = 'admin'
@@ -543,7 +564,6 @@ def admin_dashboard():
     if session.get('role') != 'admin': return redirect('/admin_login')
     db = load_db()
     
-    # [FIXED LỖI 1 BẢO MẬT] Lấy csrf token đưa vào tham số param để bảo mật các action GET
     token_url = session.get("csrf_token", "")
     csrf_input = f'<input type="hidden" name="csrf_token" value="{token_url}">'
     
@@ -563,7 +583,6 @@ def admin_dashboard():
             else: is_banned = False; data["status"] = "active" 
         else: is_banned = False
 
-        # Cấp token vào đuôi cho bảo mật URL Action
         if is_banned:
             status_badge = '<span class="badge badge-custom text-bg-danger"><i class="fas fa-ban"></i> Bị Khóa</span>'
             ban_btn = f'<a href="/admin/action/unban/{escape(str(k))}?csrf_token={token_url}" class="action-btn text-success" title="Mở khóa Key"><i class="fas fa-unlock"></i></a>'
@@ -585,7 +604,6 @@ def admin_dashboard():
         safe_k = escape(str(k))
         bound_olm = escape(data.get('bound_olm', ''))
 
-        # Tích hợp token chống giả mạo URL ở Xóa / Reset Dev
         keys_html += f'''<tr class="key-row">
         <td>
             <div class="fw-bold text-info font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')" title="Nhấn để Copy">{safe_k} <i class="far fa-copy text-muted small"></i></div>
@@ -609,7 +627,6 @@ def admin_dashboard():
         </td>
         </tr>'''
 
-    # Tích hợp token gỡ IP chặn
     blacklist_rows = "".join([f'<li class="list-group-item d-flex justify-content-between align-items-center"><span class="font-monospace text-danger">{escape(ip)}</span> <a href="/admin/unban_ip/{escape(ip)}?csrf_token={token_url}" class="action-btn action-btn-danger px-3">Gỡ</a></li>' for ip in banned_ips])
 
     return f'''
@@ -899,6 +916,17 @@ def admin_files_dashboard():
                 <a href="/admin" class="nav-btn"><i class="fas fa-key"></i> QUẢN LÝ KEY & FIREWALL</a>
                 <a href="/admin/files" class="nav-btn active"><i class="fas fa-cloud-upload-alt"></i> AUTO NẠP FILE TRÊN MÂY</a>
             </div>
+            
+            <div class="card mb-4" style="border-top: 4px solid #10b981;">
+                <div class="card-header text-success"><div><i class="fas fa-history"></i> KHÔI PHỤC DỮ LIỆU TỪ BACKUP TELEGRAM</div></div>
+                <div class="card-body">
+                    <form action="/admin/restore_db" method="POST" enctype="multipart/form-data" class="d-flex align-items-center gap-3">{csrf_input}
+                        <input type="file" name="db_file" class="form-control w-50" accept=".json" required>
+                        <button type="submit" class="btn-primary-custom" style="width:auto; background: linear-gradient(135deg, #10b981, #059669);"><i class="fas fa-upload"></i> KHÔI PHỤC NGAY</button>
+                    </form>
+                    <small class="text-muted mt-2 d-block">* Tải file database.json từ Bot Telegram về và upload lên đây nếu Server bị mất dữ liệu.</small>
+                </div>
+            </div>
 
             <div class="row g-4">
                 <div class="col-xl-6 col-lg-6">
@@ -906,9 +934,9 @@ def admin_files_dashboard():
                         <div class="card-header" style="color: #a855f7;"><div><i class="fas fa-code"></i> NẠP SCRIPT TIÊM GỐC</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_script_tiem" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:13px;">Chọn file Script Tiêm gốc tải lên đây.</p>
                                 <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{tiem_status}</div>
-                                <input type="file" name="script_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
+                                <input type="file" name="script_file" class="form-control mb-2" accept=".js,.txt">
+                                <textarea name="script_text" class="form-control mb-3 flex-grow-1" rows="4" placeholder="Hoặc dán trực tiếp mã nguồn vào đây..."></textarea>
                                 <button type="submit" class="btn-primary-custom mt-auto btn-purple"><i class="fas fa-cloud-upload-alt"></i> NẠP FILE SCRIPT TIÊM</button>
                             </form>
                         </div>
@@ -920,9 +948,9 @@ def admin_files_dashboard():
                         <div class="card-header text-warning"><div><i class="fas fa-certificate"></i> NẠP SCRIPT VIOLENTMONKEY LOADER</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_vm_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:13px;">Tải file Violentmonkey Script chuẩn lên đây. Khi user kích hoạt key sẽ tự động tải file này về một lần duy nhất.</p>
                                 <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{loader_status}</div>
-                                <input type="file" name="loader_file" class="form-control mb-3 flex-grow-1" accept=".js,.txt" required>
+                                <input type="file" name="loader_file" class="form-control mb-2" accept=".js,.txt">
+                                <textarea name="loader_text" class="form-control mb-3 flex-grow-1" rows="4" placeholder="Hoặc dán trực tiếp mã nguồn vào đây..."></textarea>
                                 <button type="submit" class="btn-primary-custom mt-auto" style="background: linear-gradient(135deg, #f59e0b, #d97706);"><i class="fas fa-cloud-upload-alt"></i> NẠP SCRIPT LOADER</button>
                             </form>
                         </div>
@@ -940,9 +968,9 @@ def admin_files_dashboard():
                                 <button type="submit" class="btn {maint_btn_class} w-100 fw-bold btn-sm py-2"><i class="fas fa-tools"></i> {maint_btn_text}</button>
                             </form>
                             <form action="/admin/update_webview" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:13px;">Tải file HTML/JS giao diện App lên đây. App Android sẽ tự động kéo giao diện này về hiển thị.</p>
                                 <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{webview_status}</div>
-                                <input type="file" name="webview_file" class="form-control mb-3 flex-grow-1" accept=".html,.js,.txt" required>
+                                <input type="file" name="webview_file" class="form-control mb-2" accept=".html,.js,.txt">
+                                <textarea name="webview_text" class="form-control mb-3 flex-grow-1" rows="4" placeholder="Hoặc dán trực tiếp mã nguồn Webview vào đây..."></textarea>
                                 <button type="submit" class="btn-primary-custom mt-auto" style="background: linear-gradient(135deg, #00ffcc, #0099ff); color:#000;"><i class="fas fa-cloud-upload-alt"></i> NẠP GIAO DIỆN APP</button>
                             </form>
                         </div>
@@ -954,9 +982,9 @@ def admin_files_dashboard():
                         <div class="card-header text-danger"><div><i class="fas fa-file-archive"></i> NẠP FILE .PAK (DATA)</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_pak" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <p class="text-muted mb-3" style="font-size:13px;">Tải file .pak gốc lên đây. Hệ thống sẽ lưu trữ và cung cấp link tải cho App Android.</p>
                                 <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{pak_status}</div>
-                                <input type="file" name="pak_file" class="form-control mb-3 flex-grow-1" accept=".pak" required>
+                                <input type="file" name="pak_file" class="form-control mb-2" accept=".pak">
+                                <input type="url" name="pak_url" class="form-control mb-3" placeholder="Hoặc dán Link trực tiếp tải file .pak (Direct URL)...">
                                 <button type="submit" class="btn-primary-custom mt-auto" style="background: linear-gradient(135deg, #ef4444, #dc2626); color:#fff;"><i class="fas fa-cloud-upload-alt"></i> NẠP FILE .PAK</button>
                             </form>
                         </div>
@@ -980,7 +1008,6 @@ def admin_toggle_maintenance():
         save_db(db)
     return redirect('/admin/files')
 
-# Xử lý tạo Key Thủ công / Tự động
 @app.route('/admin/create', methods=['POST'])
 def create_key():
     if session.get('role') != 'admin': return redirect('/admin_login')
@@ -1090,75 +1117,129 @@ def admin_bind_olm():
             save_db(db)
     return redirect('/admin')
 
+# === TÍNH NĂNG MỚI: RESTORE DỮ LIỆU TỪ WEB ===
+@app.route('/admin/restore_db', methods=['POST'])
+def admin_restore_db():
+    if session.get('role') != 'admin': return redirect('/admin_login')
+    if 'db_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file database.json!", "error")
+    file = request.files['db_file']
+    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file!", "error")
+    
+    try:
+        content = file.read().decode('utf-8')
+        json_data = json.loads(content) # Verify file JSON chuẩn
+        
+        with db_lock:
+            # Ghi đè file DB cũ
+            temp_file = DB_FILE + '.restore.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(json.dumps(json_data, indent=2, ensure_ascii=False))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_file, DB_FILE)
+            
+            # Bắt hệ thống nạp lại bộ nhớ tạm
+            global GLOBAL_DB, _last_db_mtime, _last_mtime_check
+            GLOBAL_DB = json_data
+            _last_db_mtime = os.path.getmtime(DB_FILE)
+            _last_mtime_check = time.time()
+            
+    except Exception as e:
+        return swal_back("Lỗi", f"Định dạng file không hợp lệ hoặc lỗi khôi phục: {escape_swal(str(e))}", "error")
+        
+    return swal_redirect("Khôi Phục Thành Công", "Đã khôi phục toàn bộ Key và Dữ Liệu gốc thành công!", "success", "/admin")
+
+# === NÂNG CẤP DÁN MÃ NGUỒN (TEXT) ===
 @app.route('/admin/update_script_tiem', methods=['POST'])
 def admin_update_script_tiem():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'script_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script Tiêm!", "error")
-    file = request.files['script_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script Tiêm!", "error")
-    try: script_content = file.read().decode('utf-8')
-    except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
+    
+    script_content = request.form.get('script_text', '').strip()
+    if not script_content and 'script_file' in request.files and request.files['script_file'].filename != '':
+        try: script_content = request.files['script_file'].read().decode('utf-8')
+        except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
+        
+    if not script_content: return swal_back("Lỗi", "Vui lòng chọn File hoặc dán Mã Nguồn!", "error")
+    
     db = load_db()
     with db_lock:
         db.setdefault("settings", {})["script_tiem"] = script_content
         save_db(db)
-    return swal_redirect("Thành Công", "Đã nạp file Script Tiêm thành công!", "success", "/admin/files")
+    return swal_redirect("Thành Công", "Đã nạp Script Tiêm thành công!", "success", "/admin/files")
 
 @app.route('/admin/update_vm_loader', methods=['POST'])
 def admin_update_vm_loader():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'loader_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Script Loader!", "error")
-    file = request.files['loader_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Script Loader!", "error")
-    try: script_content = file.read().decode('utf-8')
-    except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
+    
+    script_content = request.form.get('loader_text', '').strip()
+    if not script_content and 'loader_file' in request.files and request.files['loader_file'].filename != '':
+        try: script_content = request.files['loader_file'].read().decode('utf-8')
+        except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
+        
+    if not script_content: return swal_back("Lỗi", "Vui lòng chọn File hoặc dán Mã Nguồn!", "error")
+    
     db = load_db()
     with db_lock:
         db.setdefault("settings", {})["vm_loader"] = script_content
         save_db(db)
-    return swal_redirect("Thành Công", "Đã nạp file Script Violentmonkey Loader thành công!", "success", "/admin/files")
+    return swal_redirect("Thành Công", "Đã nạp Script Violentmonkey Loader thành công!", "success", "/admin/files")
 
 @app.route('/admin/update_webview', methods=['POST'])
 def admin_update_webview():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'webview_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file Giao diện WebView!", "error")
-    file = request.files['webview_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file Giao diện WebView!", "error")
-    try: script_content = file.read().decode('utf-8')
-    except: return swal_back("Lỗi", "File không hợp lệ (.html/.txt)", "error")
+    
+    script_content = request.form.get('webview_text', '').strip()
+    if not script_content and 'webview_file' in request.files and request.files['webview_file'].filename != '':
+        try: script_content = request.files['webview_file'].read().decode('utf-8')
+        except: return swal_back("Lỗi", "File không hợp lệ (.html/.txt)", "error")
+        
+    if not script_content: return swal_back("Lỗi", "Vui lòng chọn File hoặc dán Mã Nguồn!", "error")
+        
     db = load_db()
     with db_lock:
         db.setdefault("settings", {})["app_webview_code"] = script_content
         save_db(db)
-    return swal_redirect("Thành Công", "Đã nạp file Giao diện WebView thành công!", "success", "/admin/files")
+    return swal_redirect("Thành Công", "Đã nạp Giao diện WebView thành công!", "success", "/admin/files")
 
-# [TỐI ƯU SIÊU TỐC - ĐÃ SỬA LỖI NGHỄN]
+# === NÂNG CẤP KÉO FILE QUA URL ===
 @app.route('/admin/update_pak', methods=['POST'])
 def admin_update_pak():
     if session.get('role') != 'admin': return redirect('/admin_login')
-    if 'pak_file' not in request.files: return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
-    file = request.files['pak_file']
-    if file.filename == '': return swal_back("Lỗi", "Chưa chọn file .pak!", "error")
     
+    pak_url = request.form.get('pak_url', '').strip()
     pak_path = './uploaded.pak'
     temp_pak_path = './uploaded.pak.tmp'
+    
     try:
-        # Cơ chế Chunked Streaming: Đọc và ghi nhỏ 64KB liên tục giúp nuốt trọn file 500MB mà không bị tràn RAM hay nghẽn mạng
-        with open(temp_pak_path, 'wb') as f:
-            while True:
-                chunk = file.stream.read(64 * 1024) 
-                if not chunk:
-                    break
-                f.write(chunk)
-        # [FIXED BẢO MẬT & CORRUPT FILE] Dùng lệnh chuẩn os.replace nguyên tử của python thay vì xóa đi đổi tên dễ bị tuột file
-        os.replace(temp_pak_path, pak_path)
+        if pak_url:
+            # Tải từ link
+            r = requests.get(pak_url, stream=True, timeout=30)
+            r.raise_for_status()
+            with open(temp_pak_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
+            os.replace(temp_pak_path, pak_path)
+        else:
+            # Tải từ file upload
+            if 'pak_file' not in request.files or request.files['pak_file'].filename == '':
+                return swal_back("Lỗi", "Chưa chọn file hoặc dán Link URL!", "error")
+            file = request.files['pak_file']
+            with open(temp_pak_path, 'wb') as f:
+                while True:
+                    chunk = file.stream.read(64 * 1024) 
+                    if not chunk: break
+                    f.write(chunk)
+            os.replace(temp_pak_path, pak_path)
+            
+        # Nạp thành công thì báo hệ thống lưu DB để gửi backup ra tele
+        db = load_db()
+        save_db(db)
     except Exception as e:
         if os.path.exists(temp_pak_path):
             try: os.remove(temp_pak_path)
             except: pass
-        return swal_back("Lỗi", f"Không thể lưu file: {escape_swal(str(e))}", "error")
+        return swal_back("Lỗi", f"Không thể lưu file .pak: {escape_swal(str(e))}", "error")
         
-    return swal_redirect("Thành Công", "Đã nạp file .PAK lên Server thành công cực kì nhanh chóng và mượt mà!", "success", "/admin/files")
+    return swal_redirect("Thành Công", "Đã nạp file .PAK thành công!", "success", "/admin/files")
 
 @app.route('/admin/ban_ip', methods=['POST'])
 def web_ban_ip():
@@ -1207,7 +1288,6 @@ try:
     init_db = load_db()
     app.secret_key = os.environ.get('SECRET_KEY', init_db.get("settings", {}).get("secret_key", secrets.token_hex(32)))
 except Exception:
-    # [FIXED BẢO MẬT KHỞI ĐỘNG]: Dự phòng cấp Secret_key nếu file JSON chưa kịp load hoặc load lỗi, để server không bao giờ bị Crash Session
     app.secret_key = secrets.token_hex(32)
 
 if __name__ == '__main__':
