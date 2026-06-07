@@ -117,7 +117,7 @@ def telegram_polling():
                                 continue
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{escape(user_first_name)}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"} mb-1}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -215,10 +215,9 @@ def load_db():
                 if "tg_admins" not in data["settings"]: data["settings"]["tg_admins"] = [TELEGRAM_CHAT_ID]
                 if "webview_maintenance" not in data["settings"]: data["settings"]["webview_maintenance"] = False
                 
-                # Biến dùng cho Trang 3: Get Key Vượt Link
                 if "games_list" not in data["settings"]: data["settings"]["games_list"] = "PUBG, LIENQUAN, FREEFIRE"
-                if "shortlink_api_url" not in data["settings"]: data["settings"]["shortlink_api_url"] = "https://layma.net/api"
-                if "shortlink_api_token" not in data["settings"]: data["settings"]["shortlink_api_token"] = ""
+                if "shortlink_api_url" not in data["settings"]: data["settings"]["shortlink_api_url"] = "https://api.layma.net/api/admin/shortlink/quicklink"
+                if "shortlink_api_token" not in data["settings"]: data["settings"]["shortlink_api_token"] = "4f62901315a7381c321f76bc988ff0e3"
 
                 if "admin" not in data["users"]: data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin"}
 
@@ -341,7 +340,7 @@ def serve_custom_script():
             .then(r => r.json())
             .then(d => {{
                 if(d.banned) {{
-                    localStorage.removeItem('lvt_proxy_key'); // Xóa key lưu ẩn
+                    localStorage.removeItem('lvt_proxy_key');
                     alert("⚠️ LVT HỆ THỐNG: " + d.reason);
                     window.location.href = "https://google.com";
                 }}
@@ -672,7 +671,7 @@ def get_key_portal():
 
                     <div class="input-group-custom">
                         <div class="input-icon-prefix"><i class="far fa-calendar-alt"></i></div>
-                        <input type="text" class="control-custom" value="24 Giờ" disabled>
+                        <input type="text" class="control-custom" value="Bảo lưu tự động" disabled>
                     </div>
 
                     <div class="input-group-custom">
@@ -724,28 +723,21 @@ def get_key_portal():
     </html>
     '''
 
+# ========================================================
+# HÀM GỌI API CHUẨN ĐỊNH DẠNG LAYMA.NET MỚI 100%
+# ========================================================
 def call_shortlink_api(url_to_shorten):
     db = load_db()
-    api_url = db.get("settings", {}).get("shortlink_api_url", "").strip()
-    api_token = db.get("settings", {}).get("shortlink_api_token", "").strip()
-    
-    if not api_url or not api_token:
-        return f"https://google.com/search?q=Lỗi+Cấu+Hình+API+Rút+Gọn+Từ+Admin"
+    api_token = db.get("settings", {}).get("shortlink_api_token", "4f62901315a7381c321f76bc988ff0e3").strip()
     
     try:
-        # Chuẩn hóa link API của layma nếu admin cấu hình thiếu đường dẫn đầy đủ
-        if "api.layma.net" in api_url and "shortlink" not in api_url:
-            api_url = "https://api.layma.net/api/admin/shortlink/quicklink"
-
-        # Định dạng truyền tham số chuẩn hóa cho Layma: format=json&tokenUser=...&url=...
-        if "tokenUser=" in api_url:
-            full_url = f"{api_url}&url={urllib.parse.quote(url_to_shorten)}"
-        else:
-            full_url = f"{api_url}?tokenUser={api_token}&format=json&url={urllib.parse.quote(url_to_shorten)}"
-            
-        res = requests.get(full_url, timeout=12).json()
+        # Sử dụng cấu trúc định dạng API chuẩn của hệ thống Layma
+        full_url = f"https://api.layma.net/api/admin/shortlink/quicklink?tokenUser={api_token}&format=json&url={urllib.parse.quote(url_to_shorten)}"
         
-        # [CƠ CHẾ ĐỌC DỮ LIỆU ĐÃ SỬA]: Layma trả về "success": true và chuỗi liên kết nằm trong biến "html"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        res = requests.get(full_url, headers=headers, timeout=12).json()
+        
+        # Đọc trường dữ liệu chuỗi liên kết rút gọn từ phản hồi của Layma
         if res.get("success") is True or res.get("status") == "success":
             short_link = res.get("html") or res.get("shortenedUrl") or res.get("short_url") or res.get("link")
             if short_link:
@@ -774,6 +766,9 @@ def start_bypass():
     short_url = call_shortlink_api(return_url)
     return redirect(short_url)
 
+# ========================================================
+# LUỒNG LOGIC TỰ ĐỘNG CHUYỂN HƯỚNG 1 LẦN (12H) / 2 LẦN (24H)
+# ========================================================
 @app.route('/verify_bypass')
 def verify_bypass():
     session_id = request.args.get('session')
@@ -782,12 +777,14 @@ def verify_bypass():
         
     s_data = bypass_sessions[session_id]
     
+    # Nếu lượt vượt link hiện tại chưa đủ tổng số lượt quy định (Dành cho gói 24H yêu cầu 2 lần)
     if s_data["current_step"] < s_data["steps"]:
         s_data["current_step"] += 1
         return_url = f"{WEB_URL}/verify_bypass?session={session_id}"
-        short_url = call_shortlink_api(return_url)
-        return redirect(short_url)
+        short_url = call_shortlink_api(return_url) # Gọi API tạo link lấy mã lần 2
+        return redirect(short_url) # Tự động chuyển khách sang lượt vượt link thứ 2
         
+    # Khi đã hoàn thành đủ số lượt (1 lần cho gói 12H, 2 lần cho gói 24H)
     game_clean = re.sub(r'[^A-Z0-9_]', '', str(s_data["game"]).upper()[:10])
     hours = "12H" if s_data["steps"] == 1 else "24H"
     random_str = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(5))
@@ -982,7 +979,6 @@ def admin_login():
         return f'''<!DOCTYPE html><html lang="vi"><head><title>C-Panel Admin Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: #ffffff; border: 1px solid #cbd5e1; color: #1e293b; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #0f172a; box-shadow: 0 0 10px rgba(0,0,0,0.05); }}</style></head><body style="background:#f1f5f9; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px; background:#ffffff;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
     except Exception as e: return f"LỖI: {str(e)}", 200
 
-# [TRANG 1: QUẢN LÝ KEY VÀ FIREWALL]
 @app.route('/admin')
 def admin_dashboard():
     if session.get('role') != 'admin': return redirect('/admin_login')
@@ -997,6 +993,7 @@ def admin_dashboard():
     now_ms = int(time.time() * 1000)
     keys_html = ''
     for k, data in sorted(keys_items, key=lambda x: x[1].get('exp', 0) if isinstance(x[1].get('exp'), int) else 9999999999999, reverse=True):
+        if "Key Vượt Link" in data.get("note", ""): continue
         st = data.get('status', 'active')
         ban_until = data.get("ban_until", 0)
         note = escape(data.get("note", ""))
@@ -1158,7 +1155,7 @@ def admin_dashboard():
                     <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
                         <table class="table table-hover text-center align-middle mb-0">
                             <thead style="position: sticky; top: 0; z-index: 1;">
-                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
+                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Định Định Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
                                 {keys_html or '<tr><td colspan="5" class="py-5 text-muted" style="background:#fff;">Chưa có dữ liệu.</td></tr>'}
@@ -1202,7 +1199,6 @@ def admin_dashboard():
     </html>
     '''
 
-# [TRANG MỚI: TRANG QUẢN LÝ VƯỢT LINK GET KEY]
 @app.route('/admin/getkey')
 def admin_getkey_dashboard():
     if session.get('role') != 'admin': return redirect('/admin_login')
@@ -1210,8 +1206,8 @@ def admin_getkey_dashboard():
     csrf_input = f'<input type="hidden" name="csrf_token" value="{session.get("csrf_token", "")}">'
     
     settings = db.get("settings", {})
-    api_url = escape(settings.get("shortlink_api_url", "https://layma.net/api"))
-    api_token = escape(settings.get("shortlink_api_token", ""))
+    api_url = escape(settings.get("shortlink_api_url", "https://api.layma.net/api/admin/shortlink/quicklink"))
+    api_token = escape(settings.get("shortlink_api_token", "4f62901315a7381c321f76bc988ff0e3"))
     games_list = escape(settings.get("games_list", "PUBG, LIENQUAN, FREEFIRE"))
     
     keys_html = ''
@@ -1292,14 +1288,14 @@ def admin_getkey_dashboard():
                                 </div>
                                 <div class="mb-3">
                                     <label class="text-muted small fw-bold mb-1">URL API Rút Gọn Link</label>
-                                    <input type="text" name="shortlink_api_url" class="form-control" value="{api_url}" placeholder="Ví dụ: https://layma.net/api">
-                                    <small class="text-dark">* Format chuẩn: <code>https://layma.net/api</code> hoặc kèm token.</small>
+                                    <input type="text" name="shortlink_api_url" class="form-control" value="{api_url}" placeholder="Ví dụ: https://api.layma.net/api/admin/shortlink/quicklink">
+                                    <small class="text-dark">* Format chuẩn: <code>https://api.layma.net/api/admin/shortlink/quicklink</code></small>
                                 </div>
                                 <div class="mb-4">
                                     <label class="text-muted small fw-bold mb-1">API Token Bí Mật</label>
                                     <input type="text" name="shortlink_api_token" class="form-control" value="{api_token}" placeholder="Dán token API rút gọn của bạn vào đây">
                                 </div>
-                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤU HÌNH</button>
+                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤHÌNH</button>
                             </form>
                         </div>
                     </div>
