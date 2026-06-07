@@ -393,7 +393,7 @@ def get_key_portal():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-        <title>VuaHackVip - Hệ Thống GetKey</title>
+        <title>HELY - Hệ Thống GetKey</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
@@ -628,7 +628,7 @@ def get_key_portal():
         <div class="navbar-custom">
             <div class="navbar-top">
                 <a href="/" class="brand-title">
-                    <i class="fas fa-layer-group"></i> VuaHackVip
+                    <i class="fas fa-layer-group"></i> HELY
                 </a>
                 <button class="menu-toggle-btn" onclick="toggleMenu()"><i class="fas fa-bars"></i></button>
             </div>
@@ -703,7 +703,7 @@ def get_key_portal():
         </div>
 
         <div class="footer-copyright">
-            &copy; 2026 - ManhLamDev
+            &copy; 2026 - Hely.dev
         </div>
 
         <script>
