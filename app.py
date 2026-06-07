@@ -739,18 +739,30 @@ def call_shortlink_api(url_to_shorten):
     api_url = db.get("settings", {}).get("shortlink_api_url", "").strip()
     api_token = db.get("settings", {}).get("shortlink_api_token", "").strip()
     
-    if not api_url or not api_token: return url_to_shorten 
+    # [FIX TRIỆT ĐỂ]: Nếu không điền cấu hình API, hệ thống sẽ chặn không cho sang thẳng trang Key
+    if not api_url or not api_token:
+        return f"https://google.com/search?q=Lỗi+Cấu+Hình+API+Rút+Gọn+Từ+Admin"
     
     try:
-        # API Thường dùng cho các site link rút gọn VN (Link1s, MegaUrl...)
-        # Format: domain.com/api?api=TOKEN&url=URL
-        full_url = f"{api_url}?api={api_token}&url={urllib.parse.quote(url_to_shorten)}"
-        res = requests.get(full_url, timeout=10).json()
-        if res.get("status") == "success" or res.get("status") == 200:
-            return res.get("shortenedUrl") or res.get("short_url", url_to_shorten)
+        # Hỗ trợ tự động chuyển đổi linh hoạt định dạng query cho layma.net hoặc link1s
+        # Thích ứng với các tham số Token, API key và URL đích
+        if "api=" in api_url or "token=" in api_url:
+            full_url = f"{api_url}&url={urllib.parse.quote(url_to_shorten)}"
+        else:
+            full_url = f"{api_url}?api={api_token}&url={urllib.parse.quote(url_to_shorten)}"
+            
+        res = requests.get(full_url, timeout=12).json()
+        
+        # Parse data từ API của site trung gian
+        if res.get("status") == "success" or res.get("status") == 200 or res.get("error") is False:
+            short_link = res.get("shortenedUrl") or res.get("short_url") or res.get("link")
+            if short_link:
+                return short_link
     except Exception as e:
         print("Lỗi tạo shortlink:", e)
-    return url_to_shorten
+        
+    # Nếu hệ thống API lỗi hoặc sập, trả về trang cảnh báo bảo mật chứ không trả về link Key
+    return f"https://google.com/search?q=Hệ+Thống+Vượt+Link+Đang+Bảo+Trì"
 
 @app.route('/start_bypass', methods=['POST'])
 def start_bypass():
@@ -1157,7 +1169,7 @@ def admin_dashboard():
                     <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
                         <table class="table table-hover text-center align-middle mb-0">
                             <thead style="position: sticky; top: 0; z-index: 1;">
-                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
+                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Định OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
                                 {keys_html or '<tr><td colspan="5" class="py-5 text-muted" style="background:#fff;">Chưa có dữ liệu.</td></tr>'}
@@ -1209,11 +1221,10 @@ def admin_getkey_dashboard():
     csrf_input = f'<input type="hidden" name="csrf_token" value="{session.get("csrf_token", "")}">'
     
     settings = db.get("settings", {})
-    api_url = escape(settings.get("shortlink_api_url", "https://link1s.com/api"))
+    api_url = escape(settings.get("shortlink_api_url", "https://layma.net/api"))
     api_token = escape(settings.get("shortlink_api_token", ""))
     games_list = escape(settings.get("games_list", "PUBG, LIENQUAN, FREEFIRE"))
     
-    # Lọc danh sách các key do hệ thống vượt link tạo ra
     keys_html = ''
     now_ms = int(time.time() * 1000)
     
@@ -1292,12 +1303,12 @@ def admin_getkey_dashboard():
                                 </div>
                                 <div class="mb-3">
                                     <label class="text-muted small fw-bold mb-1">URL API Rút Gọn Link</label>
-                                    <input type="text" name="shortlink_api_url" class="form-control" value="{api_url}" placeholder="Ví dụ: https://link1s.com/api">
-                                    <small class="text-dark">* Hỗ trợ chuẩn API link1s, droplink, megaurl...</small>
+                                    <input type="text" name="shortlink_api_url" class="form-control" value="{api_url}" placeholder="Ví dụ: https://layma.net/api">
+                                    <small class="text-dark">* Format chuẩn: <code>https://layma.net/api</code> hoặc kèm token.</small>
                                 </div>
                                 <div class="mb-4">
                                     <label class="text-muted small fw-bold mb-1">API Token Bí Mật</label>
-                                    <input type="text" name="shortlink_api_token" class="form-control" value="{api_token}" placeholder="Dán token API rút gọn link vào đây">
+                                    <input type="text" name="shortlink_api_token" class="form-control" value="{api_token}" placeholder="Dán token API rút gọn của bạn vào đây">
                                 </div>
                                 <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤU HÌNH</button>
                             </form>
@@ -1750,4 +1761,3 @@ except Exception: app.secret_key = secrets.token_hex(32)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
-
