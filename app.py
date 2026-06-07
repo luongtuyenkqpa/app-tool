@@ -18,10 +18,11 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 # GIAO DIỆN HIỆU ỨNG TRẮNG (WHITE THEME)
 # ========================================================
 CSS_GLASS = """
-.glass-panel { background: rgba(20, 20, 25, 0.8); backdrop-filter: blur(15px); border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 15px; padding: 30px; box-shadow: 0 0 20px rgba(255, 255, 255, 0.15); text-align: center; }
-.text-neon { color: #ffffff; text-shadow: 0 0 15px rgba(255, 255, 255, 0.6); }
-.btn-neon { background: linear-gradient(90deg, #ffffff, #d1d5db); border: none; color: #000; font-weight: bold; padding: 12px 20px; border-radius: 8px; width: 100%; transition: 0.3s; text-transform: uppercase; cursor: pointer; }
-.btn-neon:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(255, 255, 255, 0.4); }
+body { background: #f4f6f9; color: #1e293b; font-family: 'Inter', sans-serif; }
+.glass-panel { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(15px); border: 1px solid rgba(255, 255, 255, 0.6); border-radius: 16px; padding: 35px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05); text-align: center; }
+.text-neon { color: #0f172a; font-weight: 800; text-shadow: none; }
+.btn-neon { background: linear-gradient(135deg, #1e293b, #0f172a); border: none; color: #ffffff; font-weight: bold; padding: 14px 20px; border-radius: 10px; width: 100%; transition: 0.3s; text-transform: uppercase; cursor: pointer; letter-spacing: 0.5px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15); }
+.btn-neon:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(15, 23, 42, 0.25); background: linear-gradient(135deg, #334155, #1e293b); }
 """
 
 # ========================================================
@@ -116,7 +117,7 @@ def telegram_polling():
                                 continue
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{escape(user_first_name)}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"} khai xuat}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -137,7 +138,7 @@ def ping_server(): return "OK", 200
 @app.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, HTTPException): return e
-    return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Server Updating</title><style>body {{ background: #05050A; color: #ffffff; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin: 0; }} .loader {{ border: 5px solid rgba(255, 255, 255, 0.2); border-top: 5px solid #ffffff; border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; margin-bottom: 20px; box-shadow: 0 0 15px rgba(255, 255, 255, 0.5); }} @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }} h2 {{ text-shadow: 0 0 10px rgba(255, 255, 255, 0.5); letter-spacing: 1px; }}</style></head><body><div class="loader"></div><h2>Đang update online server vui lòng đợi...</h2></body></html>""", 500
+    return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Server Updating</title><style>body {{ background: #f8fafc; color: #0f172a; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin: 0; }} .loader {{ border: 5px solid rgba(15, 23, 42, 0.1); border-top: 5px solid #0f172a; border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; margin-bottom: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.05); }} @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }} h2 {{ letter-spacing: 1px; }}</style></head><body><div class="loader"></div><h2>Đang update online server vui lòng đợi...</h2></body></html>""", 500
 
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
@@ -172,10 +173,10 @@ def hash_pwd(pwd): return hashlib.sha256(pwd.encode()).hexdigest()
 def escape_swal(text): return str(text).replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
 
 def swal_redirect(title, text, icon, url):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: {json.dumps(title)}, html: {json.dumps(text)}, icon: {json.dumps(icon)}, background: '#11111A', color: '#fff', confirmButtonColor: '#ffffff', allowOutsideClick: false }}).then(() => {{ window.location.href = {json.dumps(url)}; }});</script></body></html>"""
+    return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #f4f6f9; }}</style></head><body><script>Swal.fire({{ title: {json.dumps(title)}, html: {json.dumps(text)}, icon: {json.dumps(icon)}, background: '#ffffff', color: '#1e293b', confirmButtonColor: '#0f172a', allowOutsideClick: false }}).then(() => {{ window.location.href = {json.dumps(url)}; }});</script></body></html>"""
 
 def swal_back(title, text, icon):
-    return f"""<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #05050A; }}</style></head><body><script>Swal.fire({{ title: {json.dumps(title)}, html: {json.dumps(text)}, icon: {json.dumps(icon)}, background: '#11111A', color: '#fff', confirmButtonColor: '#ffffff', allowOutsideClick: false }}).then(() => {{ window.history.back(); }});</script></body></html>"""
+    return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script><style>body {{ background: #f4f6f9; }}</style></head><body><script>Swal.fire({{ title: {json.dumps(title)}, html: {json.dumps(text)}, icon: {json.dumps(icon)}, background: '#ffffff', color: '#1e293b', confirmButtonColor: '#0f172a', allowOutsideClick: false }}).then(() => {{ window.history.back(); }});</script></body></html>"""
 
 def load_db():
     global GLOBAL_DB, _last_db_mtime, _last_mtime_check
@@ -372,7 +373,7 @@ def serve_webview_app():
     db = load_db()
     is_maintenance = db.get("settings", {}).get("webview_maintenance", False)
     if is_maintenance:
-        html_content = f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>App Maintenance</title><style>body {{ background: #05050A; color: #ffffff; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin: 0; }} .pulse {{ width: 70px; height: 70px; background: #ffffff; border-radius: 50%; animation: pulse-anim 2s infinite; margin-bottom: 20px; box-shadow: 0 0 20px rgba(255, 255, 255, 0.6); }} @keyframes pulse-anim {{ 0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }} 70% {{ transform: scale(1); box-shadow: 0 0 0 20px rgba(255, 255, 255, 0); }} 100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }} }} h2 {{ text-shadow: 0 0 10px rgba(255, 255, 255, 0.5); letter-spacing: 1px; }} p {{ color: #a1a1aa; font-size: 14px; margin-top: 5px; }}</style></head><body><div class="pulse"></div><h2>Đang update online app</h2><p>Hệ thống đang được nâng cấp, vui lòng quay lại sau!</p></body></html>"""
+        html_content = f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>App Maintenance</title><style>body {{ background: #f8fafc; color: #0f172a; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin: 0; }} .pulse {{ width: 70px; height: 70px; background: #0f172a; border-radius: 50%; animation: pulse-anim 2s infinite; margin-bottom: 20px; box-shadow: 0 0 20px rgba(15, 23, 42, 0.2); }} @keyframes pulse-anim {{ 0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(15, 23, 42, 0.4); }} 70% {{ transform: scale(1); box-shadow: 0 0 0 20px rgba(15, 23, 42, 0); }} 100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(15, 23, 42, 0); }} }} h2 {{ letter-spacing: 1px; }} p {{ color: #64748b; font-size: 14px; margin-top: 5px; }}</style></head><body><div class="pulse"></div><h2>Đang update online app</h2><p>Hệ thống đang được nâng cấp, vui lòng quay lại sau!</p></body></html>"""
     else:
         html_content = db.get("settings", {}).get("app_webview_code", "<h1>Hệ thống chưa được nạp giao diện WebView. Vui lòng liên hệ Admin!</h1>")
     resp = make_response(html_content)
@@ -380,7 +381,7 @@ def serve_webview_app():
     return resp
 
 # ========================================================
-# TRANG CHỦ MỚI: GIAO DIỆN GET KEY VƯỢT LINK
+# TRANG CHỦ MỚI: GIAO DIỆN GET KEY VƯỢT LINK (WHITE LIGHT THEME)
 # ========================================================
 @app.route('/')
 def get_key_portal():
@@ -390,46 +391,46 @@ def get_key_portal():
     options_html = "".join([f'<option value="{escape(g)}">{escape(g)}</option>' for g in games])
     
     return f'''
-    <!DOCTYPE html><html lang="vi" data-bs-theme="dark">
+    <!DOCTYPE html><html lang="vi">
     <head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>GET KEY VIP - HỆ THỐNG AUTO</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-            body {{ background: #0a0a0c; font-family: 'Inter', sans-serif; color: #e2e8f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
-            .get-key-box {{ background: rgba(20, 20, 25, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 30px; width: 100%; max-width: 450px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); text-align: center; }}
-            .logo-icon {{ font-size: 40px; color: #ffffff; text-shadow: 0 0 15px rgba(255,255,255,0.4); margin-bottom: 10px; }}
-            .form-select, .form-control {{ background: rgba(0,0,0,0.4) !important; border: 1px solid rgba(255,255,255,0.2) !important; color: #fff !important; padding: 12px; border-radius: 8px; text-align: center; font-weight: 600; margin-bottom: 15px; }}
-            .form-select:focus {{ border-color: #ffffff !important; box-shadow: 0 0 10px rgba(255,255,255,0.2) !important; }}
-            .btn-getkey {{ background: #ffffff; color: #000; font-weight: 800; padding: 14px; border-radius: 8px; width: 100%; border: none; transition: 0.3s; text-transform: uppercase; font-size: 16px; letter-spacing: 1px; margin-top: 10px; box-shadow: 0 0 15px rgba(255,255,255,0.2); }}
-            .btn-getkey:hover {{ transform: translateY(-2px); box-shadow: 0 0 25px rgba(255,255,255,0.4); background: #f8fafc; }}
-            .footer-text {{ font-size: 12px; color: #64748b; margin-top: 20px; }}
-            label {{ font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-bottom: 5px; display: block; font-weight: 600; text-align: left; }}
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+            body {{ background-color: #f3f4f6; font-family: 'Inter', sans-serif; color: #1f2937; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
+            .get-key-box {{ background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.7); border-radius: 24px; padding: 35px 30px; width: 100%; max-width: 440px; box-shadow: 0 10px 40px rgba(0,0,0,0.04); text-align: center; }}
+            .logo-icon {{ font-size: 36px; color: #111827; margin-bottom: 12px; display: inline-block; }}
+            .form-select {{ background: rgba(249, 250, 251, 0.8) !important; border: 1px solid #e5e7eb !important; color: #111827 !important; padding: 13px 16px; border-radius: 12px; font-weight: 500; margin-bottom: 20px; font-size: 15px; appearance: none; -webkit-appearance: none; text-align: left !important; }}
+            .form-select:focus {{ border-color: #111827 !important; box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.05) !important; }}
+            .btn-getkey {{ background: #111827; color: #ffffff; font-weight: 700; padding: 14px; border-radius: 12px; width: 100%; border: none; transition: all 0.2s ease-in-out; text-transform: uppercase; font-size: 15px; letter-spacing: 0.5px; margin-top: 10px; box-shadow: 0 4px 12px rgba(17, 24, 39, 0.15); }}
+            .btn-getkey:hover {{ transform: translateY(-1px); box-shadow: 0 6px 20px rgba(17, 24, 39, 0.25); background: #1f2937; }}
+            .footer-text {{ font-size: 12px; color: #6b7280; margin-top: 24px; line-height: 1.6; border-top: 1px solid #f3f4f6; padding-top: 16px; }}
+            label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: #4b5563; margin-bottom: 6px; display: block; font-weight: 600; text-align: left; }}
         </style>
     </head>
     <body>
         <div class="container d-flex justify-content-center">
             <div class="get-key-box">
-                <i class="fas fa-key logo-icon"></i>
-                <h3 class="fw-bold mb-4" style="color: #ffffff;">NHẬN KEY VIP SERVER</h3>
+                <div class="logo-icon"><i class="fas fa-key"></i></div>
+                <h4 class="fw-bold mb-4" style="color: #111827; letter-spacing: -0.5px;">NHẬN KEY VIP SERVER</h4>
                 <form action="/start_bypass" method="POST">
-                    <label><i class="fas fa-gamepad"></i> Chọn Tựa Game</label>
+                    <label><i class="fas fa-gamepad me-1"></i> Chọn Tựa Game</label>
                     <select name="game" class="form-select" required>
                         {options_html}
                     </select>
                     
-                    <label><i class="fas fa-link"></i> Chọn Mức Độ (Gói Thời Gian)</label>
+                    <label><i class="fas fa-layer-group me-1"></i> Gói Thời Gian</label>
                     <select name="steps" class="form-select" required>
                         <option value="1">Vượt 1 Lần Link ➔ Key 12H VIP</option>
                         <option value="2">Vượt 2 Lần Link ➔ Key 24H VIP</option>
                     </select>
 
-                    <button type="submit" class="btn-getkey"><i class="fas fa-rocket"></i> BẮT ĐẦU VƯỢT LINK</button>
+                    <button type="submit" class="btn-getkey"><i class="fas fa-rocket me-1"></i> Bắt đầu vượt link</button>
                 </form>
                 <div class="footer-text">
-                    Lưu ý: Thiết bị tối đa cho mỗi Key vượt link là 1 máy.<br>Hoàn thành vượt link Key sẽ tự động hiển thị để Copy.
+                    Lưu ý: Thiết bị tối đa cho mỗi Key vượt link là 1 máy.<br>Hoàn thành vượt link, hệ thống tự động trả về mã cấu hình VIP.
                 </div>
             </div>
         </div>
@@ -516,7 +517,7 @@ def verify_bypass():
     del bypass_sessions[session_id] # Xoá session an toàn
     
     return f'''
-    <!DOCTYPE html><html lang="vi" data-bs-theme="dark">
+    <!DOCTYPE html><html lang="vi">
     <head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>NHẬN KEY THÀNH CÔNG</title>
@@ -524,32 +525,33 @@ def verify_bypass():
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-            body {{ background: #0a0a0c; font-family: 'Inter', sans-serif; color: #e2e8f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
-            .result-box {{ background: rgba(20, 20, 25, 0.9); border: 1px solid #22c55e; border-radius: 16px; padding: 40px 30px; width: 100%; max-width: 450px; text-align: center; box-shadow: 0 0 30px rgba(34, 197, 94, 0.2); }}
-            .key-display {{ background: rgba(0,0,0,0.5); padding: 15px; font-size: 22px; font-family: monospace; font-weight: bold; color: #22c55e; border-radius: 8px; border: 1px dashed #22c55e; margin: 20px 0; letter-spacing: 1px; word-break: break-all; }}
-            .btn-copy {{ background: #22c55e; color: #000; font-weight: 800; padding: 12px; border-radius: 8px; width: 100%; border: none; transition: 0.3s; margin-bottom: 15px; }}
-            .btn-copy:hover {{ background: #16a34a; transform: translateY(-2px); }}
-            .btn-home {{ background: transparent; color: #94a3b8; border: 1px solid #475569; padding: 10px; border-radius: 8px; width: 100%; font-weight: 600; text-decoration: none; display: inline-block; }}
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+            body {{ background-color: #f3f4f6; font-family: 'Inter', sans-serif; color: #1f2937; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
+            .result-box {{ background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(20px); border: 1px solid #10b981; border-radius: 24px; padding: 40px 30px; width: 100%; max-width: 440px; text-align: center; box-shadow: 0 10px 40px rgba(16, 185, 129, 0.08); }}
+            .key-display {{ background: #f0fdf4; padding: 16px; font-size: 20px; font-family: monospace; font-weight: 700; color: #15803d; border-radius: 12px; border: 1px dashed #10b981; margin: 24px 0; letter-spacing: 0.5px; word-break: break-all; }}
+            .btn-copy {{ background: #10b981; color: #ffffff; font-weight: 700; padding: 13px; border-radius: 12px; width: 100%; border: none; transition: all 0.2s; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2); }}
+            .btn-copy:hover {{ background: #059669; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16, 185, 129, 0.3); }}
+            .btn-home {{ background: transparent; color: #4b5563; border: 1px solid #d1d5db; padding: 11px; border-radius: 12px; width: 100%; font-weight: 600; text-decoration: none; display: inline-block; font-size: 14px; transition: 0.2s; }}
+            .btn-home:hover {{ background: #f9fafb; color: #111827; }}
         </style>
     </head>
     <body>
         <div class="container d-flex justify-content-center">
             <div class="result-box">
-                <i class="fas fa-check-circle mb-3" style="font-size: 50px; color: #22c55e;"></i>
-                <h3 class="fw-bold text-white">VƯỢT LINK THÀNH CÔNG</h3>
-                <p class="text-muted">Bạn đã nhận được KEY VIP. Vui lòng copy và dán vào tool/app để sử dụng.</p>
+                <i class="fas fa-check-circle mb-3" style="font-size: 48px; color: #10b981;"></i>
+                <h4 class="fw-bold text-dark" style="letter-spacing: -0.5px;">VƯỢT LINK THÀNH CÔNG</h4>
+                <p class="text-muted small">Bạn đã nhận được KEY VIP. Vui lòng copy và dán mã bên dưới vào ứng dụng để sử dụng.</p>
                 
                 <div class="key-display" id="myKey">{key_name}</div>
                 
-                <button class="btn-copy" onclick="copyKey()"><i class="far fa-copy"></i> COPY KEY NGAY</button>
-                <a href="/" class="btn-home"><i class="fas fa-home"></i> TRỞ VỀ TRANG CHỦ</a>
+                <button class="btn-copy" onclick="copyKey()"><i class="far fa-copy me-1"></i> Copy Key Ngay</button>
+                <a href="/" class="btn-home"><i class="fas fa-home me-1"></i> Trở về trang chủ</a>
             </div>
         </div>
         <script>
             function copyKey() {{
                 navigator.clipboard.writeText(document.getElementById("myKey").innerText);
-                Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 2000, background: '#1e293b', color: '#fff'}});
+                Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 2000, background: '#ffffff', color: '#1f2937'}});
             }}
         </script>
     </body>
@@ -648,7 +650,7 @@ def api_verify_core():
         return jsonify({"status": "ok", "is_vip": is_vip, "core": core_code, "exp": kd["exp"], "devices": len(devices), "max_devs": kd.get("maxDevices", 1), "server_time": now, "note": note_msg})
 
 # ========================================================
-# GIAO DIỆN WEB ADMIN (PC C-PANEL) - WHITE/MINIMAL THEME
+# GIAO DIỆN WEB ADMIN (PC C-PANEL) - LIGHT DESIGN
 # ========================================================
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
@@ -680,7 +682,7 @@ def admin_login():
                 admin_login_attempts[ip] = attempts
                 return swal_back("Từ Chối", f"Sai mật khẩu! Bạn còn {5 - attempts['count']} lần thử.", "error")
             
-        return f'''<!DOCTYPE html><html lang="vi" data-bs-theme="dark"><head><title>C-Panel Admin Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.3); color: #fff; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #ffffff; box-shadow: 0 0 10px rgba(255,255,255,0.2); }}</style></head><body style="background:#0b0f19; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px; background:#131722;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
+        return f'''<!DOCTYPE html><html lang="vi"><head><title>C-Panel Admin Đăng Nhập</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"><style>{CSS_GLASS} .inp-neon {{ background: #ffffff; border: 1px solid #cbd5e1; color: #1e293b; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 15px; outline: none; transition: 0.3s; text-align: center; }} .inp-neon:focus {{ border-color: #0f172a; box-shadow: 0 0 10px rgba(0,0,0,0.05); }}</style></head><body style="background:#f1f5f9; display:flex; justify-content:center; align-items:center; height:100vh;"><div class="container"><div class="glass-panel mx-auto" style="max-width:400px; background:#ffffff;"><h2 class="text-neon mb-4"><i class="fas fa-user-shield"></i> LVT C-PANEL</h2><form method="POST"><input type="text" name="username" class="inp-neon" placeholder="Tài khoản Quản Trị" required><input type="password" name="password" class="inp-neon" placeholder="Mật Khẩu" required><button type="submit" class="btn-neon mt-2"><i class="fas fa-sign-in-alt"></i> TRUY CẬP HỆ THỐNG</button></form></div></div></body></html>'''
     except Exception as e: return f"LỖI: {str(e)}", 200
 
 # [TRANG 1: QUẢN LÝ KEY VÀ FIREWALL]
@@ -714,45 +716,45 @@ def admin_dashboard():
             status_badge = '<span class="badge badge-custom text-bg-success"><i class="fas fa-check-circle"></i> Sống</span>'
             ban_btn = f'<button class="action-btn action-btn-danger" data-key="{escape(str(k))}" onclick="openBanModal(this.getAttribute(\'data-key\'))" title="Khóa (Kick)"><i class="fas fa-ban"></i></button>'
 
-        vip_badge = '<span class="badge badge-custom" style="background:#e2e8f0; color:#000;"><i class="fas fa-crown"></i> VIP</span>' if data.get('vip', False) else '<span class="badge badge-custom bg-secondary">Thường</span>'
+        vip_badge = '<span class="badge badge-custom" style="background:#0f172a; color:#fff;"><i class="fas fa-crown"></i> VIP</span>' if data.get('vip', False) else '<span class="badge badge-custom bg-secondary text-white">Thường</span>'
         
         is_expired = False
         if data.get('exp') == 'pending': exp_text = '<span class="badge badge-custom bg-info text-dark">Chưa kích hoạt</span>'
         elif data.get('exp') == 'permanent': exp_text = '<span class="text-success fw-bold">Vĩnh Viễn</span>'
         else:
             is_expired = now_ms > data.get('exp', 0)
-            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-light"}">{time.strftime("%d/%m/%y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
+            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-dark font-weight-bold"}">{time.strftime("%d/%m/%y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
         
-        if is_expired and not is_banned: status_badge = '<span class="badge badge-custom bg-secondary">Hết hạn</span>'
+        if is_expired and not is_banned: status_badge = '<span class="badge badge-custom bg-secondary text-white">Hết hạn</span>'
         
         safe_k = escape(str(k))
         bound_olm = escape(data.get('bound_olm', ''))
 
         keys_html += f'''<tr class="key-row">
         <td>
-            <div class="fw-bold text-white font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')">{safe_k} <i class="far fa-copy text-muted small"></i></div>
+            <div class="fw-bold text-dark font-monospace mb-1" style="font-size:15px; cursor:pointer;" onclick="copyToClipboard('{safe_k}')">{safe_k} <i class="far fa-copy text-muted small"></i></div>
             <div class="d-flex gap-1 justify-content-center">{vip_badge} {status_badge}</div>
         </td>
         <td>{exp_text}</td>
-        <td class="text-center"><span class="text-white fw-bold">{bound_olm or '---'}</span></td>
-        <td><span class="badge bg-dark border border-secondary p-2 fs-6 text-white">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
+        <td class="text-center"><span class="text-dark fw-bold">{bound_olm or '---'}</span></td>
+        <td><span class="badge bg-light border border-secondary p-2 fs-6 text-dark">{len(data.get('devices', []))}/{data.get('maxDevices', 1)}</span></td>
         <td>
             <div class="d-flex flex-wrap gap-2 justify-content-center">
-                <button class="action-btn text-light" style="background: rgba(255,255,255,0.1);" data-key="{safe_k}" data-note="{note}" onclick="openNoteModal(this.getAttribute('data-key'), this.getAttribute('data-note'))" title="Ghi Chú"><i class="fas fa-sticky-note"></i></button>
-                <button class="action-btn text-white" data-key="{safe_k}" data-olm="{bound_olm}" onclick="openBindModal(this.getAttribute('data-key'), this.getAttribute('data-olm'))" title="Ghim Tên"><i class="fas fa-user-tag"></i></button>
-                <button class="action-btn text-white" data-key="{safe_k}" onclick="openAddTimeModal(this.getAttribute('data-key'))" title="Bơm Giờ"><i class="fas fa-clock"></i></button>
-                <a href="/admin/action/reset_dev/{safe_k}?csrf_token={token_url}" class="action-btn text-white" onclick="return confirm('Xóa sạch lịch sử thiết bị của Key này?')" title="Reset Thiết Bị"><i class="fas fa-sync-alt"></i></a>
-                <button class="action-btn text-white" data-key="{safe_k}" data-max="{data.get('maxDevices', 1)}" onclick="openMaxDevModal(this.getAttribute('data-key'), this.getAttribute('data-max'))" title="Giới Hạn Máy"><i class="fas fa-mobile-alt"></i></button>
+                <button class="action-btn text-dark" style="background: rgba(0,0,0,0.05);" data-key="{safe_k}" data-note="{note}" onclick="openNoteModal(this.getAttribute('data-key'), this.getAttribute('data-note'))" title="Ghi Chú"><i class="fas fa-sticky-note"></i></button>
+                <button class="action-btn text-dark" data-key="{safe_k}" data-olm="{bound_olm}" onclick="openBindModal(this.getAttribute('data-key'), this.getAttribute('data-olm'))" title="Ghim Tên"><i class="fas fa-user-tag"></i></button>
+                <button class="action-btn text-dark" data-key="{safe_k}" onclick="openAddTimeModal(this.getAttribute('data-key'))" title="Bơm Giờ"><i class="fas fa-clock"></i></button>
+                <a href="/admin/action/reset_dev/{safe_k}?csrf_token={token_url}" class="action-btn text-dark" onclick="return confirm('Xóa sạch lịch sử thiết bị của Key này?')" title="Reset Thiết Bị"><i class="fas fa-sync-alt"></i></a>
+                <button class="action-btn text-dark" data-key="{safe_k}" data-max="{data.get('maxDevices', 1)}" onclick="openMaxDevModal(this.getAttribute('data-key'), this.getAttribute('data-max'))" title="Giới Hạn Máy"><i class="fas fa-mobile-alt"></i></button>
                 {ban_btn}
                 <a href="/admin/action/delete/{safe_k}?csrf_token={token_url}" class="action-btn text-muted" onclick="return confirm('Xóa vĩnh viễn Key này?')" title="Xóa"><i class="fas fa-trash"></i></a>
             </div>
         </td>
         </tr>'''
 
-    blacklist_rows = "".join([f'<li class="list-group-item d-flex justify-content-between align-items-center"><span class="font-monospace text-danger">{escape(ip)}</span> <a href="/admin/unban_ip/{escape(ip)}?csrf_token={token_url}" class="action-btn action-btn-danger px-3">Gỡ</a></li>' for ip in banned_ips])
+    blacklist_rows = "".join([f'<li class="list-group-item d-flex justify-content-between align-items-center" style="background:#fff;"><span class="font-monospace text-danger">{escape(ip)}</span> <a href="/admin/unban_ip/{escape(ip)}?csrf_token={token_url}" class="action-btn action-btn-danger px-3">Gỡ</a></li>' for ip in banned_ips])
 
     return f'''
-    <!DOCTYPE html><html lang="vi" data-bs-theme="dark">
+    <!DOCTYPE html><html lang="vi">
     <head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>LVT C-Panel</title>
@@ -761,31 +763,32 @@ def admin_dashboard():
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-            body {{ background: #0b0f19; font-family: 'Inter', sans-serif; color: #e2e8f0; }}
-            .topbar {{ background: #131722; border-bottom: 1px solid #1e293b; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }}
-            .topbar-brand {{ font-size: 20px; font-weight: 800; color: #ffffff; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }}
-            .card {{ background: #131722; border: 1px solid #1e293b; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }}
-            .card-header {{ background: rgba(255,255,255,0.02); border-bottom: 1px solid #1e293b; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
+            body {{ background: #f8fafc; font-family: 'Inter', sans-serif; color: #334155; }}
+            .topbar {{ background: #ffffff; border-bottom: 1px solid #e2e8f0; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
+            .topbar-brand {{ font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: 0.5px; display: flex; align-items: center; gap: 10px; }}
+            .card {{ background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }}
+            .card-header {{ background: #fafafa; border-bottom: 1px solid #e2e8f0; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; color: #0f172a; display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
             .card-body {{ padding: 20px; }}
-            .form-control, .form-select {{ background: #0b0f19 !important; border: 1px solid #334155 !important; color: #f8fafc !important; border-radius: 8px; padding: 10px 15px; font-size: 14px; transition: 0.2s; }}
-            .form-control:focus, .form-select:focus {{ border-color: #ffffff !important; box-shadow: 0 0 0 3px rgba(255,255,255,0.1) !important; outline: none; }}
-            .btn-primary-custom {{ background: linear-gradient(135deg, #ffffff, #e2e8f0); border: none; color: #000; font-weight: 800; padding: 12px 20px; border-radius: 8px; transition: 0.3s; text-transform: uppercase; width: 100%; cursor:pointer; }}
-            .btn-primary-custom:hover {{ transform: translateY(-2px); box-shadow: 0 0 15px rgba(255,255,255,0.3); }}
-            .btn-success-custom {{ background: linear-gradient(135deg, #ffffff, #cbd5e1); color:#000; border: 1px solid #e2e8f0; }}
-            .table {{ color: #cbd5e1; font-size: 14px; margin-bottom: 0; }}
-            .table thead th {{ background: #0f172a; border-bottom: 1px solid #1e293b; color: #94a3b8; font-weight: 600; padding: 15px; text-transform: uppercase; font-size: 12px; }}
-            .table tbody td {{ border-bottom: 1px solid #1e293b; padding: 15px; vertical-align: middle; }}
+            .form-control, .form-select {{ background: #ffffff !important; border: 1px solid #cbd5e1 !important; color: #1e293b !important; border-radius: 8px; padding: 10px 15px; font-size: 14px; transition: 0.2s; }}
+            .form-control:focus, .form-select:focus {{ border-color: #0f172a !important; box-shadow: 0 0 0 3px rgba(15,23,42,0.08) !important; outline: none; }}
+            .btn-primary-custom {{ background: linear-gradient(135deg, #1e293b, #0f172a); border: none; color: #fff; font-weight: 700; padding: 12px 20px; border-radius: 8px; transition: 0.3s; text-transform: uppercase; width: 100%; cursor:pointer; }}
+            .btn-primary-custom:hover {{ transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
+            .btn-success-custom {{ background: #0f172a; color:#fff; border: 1px solid #0f172a; }}
+            .table {{ color: #334155; font-size: 14px; margin-bottom: 0; }}
+            .table thead th {{ background: #f1f5f9; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; padding: 15px; text-transform: uppercase; font-size: 12px; }}
+            .table tbody td {{ border-bottom: 1px solid #e2e8f0; padding: 15px; vertical-align: middle; background: #fff; }}
             .badge-custom {{ padding: 6px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; display: inline-flex; align-items: center; gap: 4px; }}
-            .action-btn {{ background: rgba(255,255,255,0.05); color: #e2e8f0; border: 1px solid #334155; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; cursor: pointer; }}
-            .action-btn:hover {{ background: rgba(255,255,255,0.2); color: #fff; }}
-            .action-btn-danger {{ color: #f87171; border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.05); }}
-            .action-btn-danger:hover {{ background: #f87171; color: #fff; border-color: #f87171; }}
-            .list-group-item {{ background: transparent; border-color: #1e293b; color: #cbd5e1; padding: 12px 15px; }}
-            .modal-content {{ background: #131722; border: 1px solid #334155; border-radius: 12px; }}
-            .nav-tabs-custom {{ display: flex; gap: 15px; margin-bottom: 25px; border-bottom: 1px solid #1e293b; padding-bottom: 15px; }}
-            .nav-btn {{ padding: 12px 25px; border-radius: 8px; font-weight: 700; color: #94a3b8; text-decoration: none; border: 1px solid #1e293b; background: #0f172a; transition: 0.3s; display: inline-flex; align-items: center; gap: 8px; }}
-            .nav-btn:hover {{ color: #fff; background: rgba(255,255,255,0.1); }}
-            .nav-btn.active {{ background: #ffffff; color: #000; border-color: #ffffff; box-shadow: 0 0 15px rgba(255, 255, 255, 0.4); }}
+            .action-btn {{ background: #f8fafc; color: #334155; border: 1px solid #e2e8f0; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; cursor: pointer; }}
+            .action-btn:hover {{ background: #f1f5f9; color: #0f172a; }}
+            .action-btn-danger {{ color: #ef4444; border-color: #fca5a5; background: #fef2f2; }}
+            .action-btn-danger:hover {{ background: #ef4444; color: #fff; border-color: #ef4444; }}
+            .list-group-item {{ background: #fff; border-color: #e2e8f0; color: #334155; padding: 12px 15px; }}
+            .modal-content {{ background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; color: #1e293b; }}
+            .modal-header h5 {{ color: #0f172a !important; }}
+            .nav-tabs-custom {{ display: flex; gap: 15px; margin-bottom: 25px; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; }}
+            .nav-btn {{ padding: 12px 25px; border-radius: 8px; font-weight: 700; color: #475569; text-decoration: none; border: 1px solid #e2e8f0; background: #ffffff; transition: 0.3s; display: inline-flex; align-items: center; gap: 8px; }}
+            .nav-btn:hover {{ color: #0f172a; background: #f8fafc; }}
+            .nav-btn.active {{ background: #0f172a; color: #fff; border-color: #0f172a; box-shadow: 0 4px 12px rgba(15,23,42,0.15); }}
         </style>
     </head>
     <body>
@@ -803,13 +806,13 @@ def admin_dashboard():
 
             <div class="row g-4 mb-4">
                 <div class="col-xl-5 col-lg-12">
-                    <div class="card h-100" style="border-top: 3px solid #ffffff;">
-                        <div class="card-header text-white"><div><i class="fas fa-magic"></i> Tạo Mới Key Kích Hoạt</div></div>
+                    <div class="card h-100" style="border-top: 3px solid #0f172a;">
+                        <div class="card-header"><div><i class="fas fa-magic"></i> Tạo Mới Key Kích Hoạt</div></div>
                         <div class="card-body">
                             <form action="/admin/create" method="POST" class="row g-3">{csrf_input}
                                 <div class="col-12 mb-1">
                                     <label class="text-muted small fw-bold mb-1">Chế Độ Tạo</label>
-                                    <select name="gen_type" class="form-select border-light text-white fw-bold" onchange="document.getElementById('manual_box').style.display = this.value === 'manual' ? 'block' : 'none'; document.getElementById('qty_box').style.display = this.value === 'auto' ? 'block' : 'none';">
+                                    <select name="gen_type" class="form-select text-dark fw-bold" onchange="document.getElementById('manual_box').style.display = this.value === 'manual' ? 'block' : 'none'; document.getElementById('qty_box').style.display = this.value === 'auto' ? 'block' : 'none';">
                                         <option value="auto">Auto Ngẫu Nhiên (Mặc định)</option>
                                         <option value="manual">Thủ Công (Tự Chọn Tên Key)</option>
                                     </select>
@@ -823,7 +826,7 @@ def admin_dashboard():
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Số máy/Key</label><input type="number" name="devices" class="form-control" value="1" required></div>
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Độ dài TG</label><input type="number" name="duration" class="form-control" value="1" required></div>
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Đơn vị</label><select name="type" class="form-select"><option value="minute">Phút</option><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh Viễn</option></select></div>
-                                <div class="col-12 mt-3"><div class="form-check form-switch fs-6 p-3 rounded" style="background: rgba(255,255,255,0.05); border: 1px solid #334155;"><input class="form-check-input ms-0 mt-1" type="checkbox" name="is_vip"><label class="text-white fw-bold ms-3" style="line-height:24px;">VIP PRO</label></div></div>
+                                <div class="col-12 mt-3"><div class="form-check form-switch fs-6 p-3 rounded" style="background: #f8fafc; border: 1px solid #cbd5e1;"><input class="form-check-input ms-0 mt-1" type="checkbox" name="is_vip"><label class="text-dark fw-bold ms-3" style="line-height:24px;">VIP PRO</label></div></div>
                                 <div class="col-12 mt-4"><button type="submit" class="btn-primary-custom btn-success-custom"><i class="fas fa-cogs"></i> Sản xuất Key</button></div>
                             </form>
                         </div>
@@ -832,25 +835,25 @@ def admin_dashboard():
 
                 <div class="col-xl-7 col-lg-12">
                     <div class="card h-100" style="border-top: 3px solid #64748b;">
-                        <div class="card-header text-white"><div><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen IP)</div></div>
+                        <div class="card-header"><div><i class="fas fa-shield-virus"></i> Firewall (Danh Sách Đen IP)</div></div>
                         <div class="card-body">
                             <form action="/admin/ban_ip" method="POST" class="d-flex gap-2 mb-3">{csrf_input}
                                 <input type="text" name="ip" class="form-control" placeholder="Nhập IP cần khoá..." required>
                                 <button type="submit" class="action-btn action-btn-danger" style="white-space:nowrap;"><i class="fas fa-ban"></i> Chặn Cửa</button>
                             </form>
                             <ul class="list-group" style="max-height:300px; overflow-y:auto;">
-                                {blacklist_rows or '<li class="list-group-item text-center text-muted border-0 py-4"><i class="fas fa-check-circle fs-4 mb-2 d-block"></i> Không có IP nào bị khoá.</li>'}
+                                {blacklist_rows or '<li class="list-group-item text-center text-muted border-0 py-4" style="background:#fff;"><i class="fas fa-check-circle fs-4 mb-2 d-block"></i> Không có IP nào bị khoá.</li>'}
                             </ul>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="card mb-5" style="border-top: 3px solid #ffffff;">
-                <div class="card-header text-white d-flex justify-content-between align-items-center">
+            <div class="card mb-5" style="border-top: 3px solid #0f172a;">
+                <div class="card-header d-flex justify-content-between align-items-center">
                     <div><i class="fas fa-database"></i> Quản Lý Kho Key Cấp Phát</div>
                     <div class="input-group" style="width:300px;">
-                        <span class="input-group-text bg-transparent border-end-0" style="border-color:#1e293b; color:#64748b;"><i class="fas fa-search"></i></span>
+                        <span class="input-group-text bg-transparent border-end-0" style="border-color:#cbd5e1; color:#64748b;"><i class="fas fa-search"></i></span>
                         <input type="text" class="form-control border-start-0 ps-0" placeholder="Tìm kiếm nhanh..." onkeyup="let s=this.value.toLowerCase();document.querySelectorAll('.key-row').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(s)?'':'none');" style="box-shadow:none !important;">
                     </div>
                 </div>
@@ -861,7 +864,7 @@ def admin_dashboard():
                                 <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
-                                {keys_html or '<tr><td colspan="5" class="py-5 text-muted">Chưa có dữ liệu.</td></tr>'}
+                                {keys_html or '<tr><td colspan="5" class="py-5 text-muted" style="background:#fff;">Chưa có dữ liệu.</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -869,24 +872,24 @@ def admin_dashboard():
             </div>
         </div>
         
-        <div class="modal fade" id="noteModal" tabindex="-1" data-bs-theme="dark">
-            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/edit_note" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-white"><i class="fas fa-sticky-note"></i> GHI CHÚ KEY</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="noteKeyInput"><h4 id="noteKeyDisplay" class="text-white font-monospace d-block mb-4 fw-bold"></h4><textarea name="note_text" id="noteInput" class="form-control form-control-lg text-center" rows="3" placeholder="Nhập văn bản thông báo..."></textarea></div><div class="modal-footer p-3"><button class="btn-primary-custom w-100">LƯU GHI CHÚ</button></div></form></div></div>
+        <div class="modal fade" id="noteModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/edit_note" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-dark"><i class="fas fa-sticky-note"></i> GHI CHÚ KEY</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="noteKeyInput"><h4 id="noteKeyDisplay" class="text-dark font-monospace d-block mb-4 fw-bold"></h4><textarea name="note_text" id="noteInput" class="form-control form-control-lg text-center" rows="3" placeholder="Nhập văn bản thông báo..."></textarea></div><div class="modal-footer p-3"><button class="btn-primary-custom w-100">LƯU GHI CHÚ</button></div></form></div></div>
         </div>
 
-        <div class="modal fade" id="bindModal" tabindex="-1" data-bs-theme="dark">
-            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/bind_olm" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-white"><i class="fas fa-user-tag"></i> GHIM TÀI KHOẢN OLM</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="bindKeyInput"><h4 id="bindKeyDisplay" class="text-white font-monospace d-block mb-4 fw-bold"></h4><input type="text" name="olm_name" id="bindOlmInput" class="form-control form-control-lg text-center" placeholder="Nhập tên tài khoản OLM cần ghim..." required></div><div class="modal-footer p-3"><button class="btn-primary-custom w-100">LƯU ĐỊNH DANH</button></div></form></div></div>
+        <div class="modal fade" id="bindModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/bind_olm" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-dark"><i class="fas fa-user-tag"></i> GHIM TÀI KHOẢN OLM</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="bindKeyInput"><h4 id="bindKeyDisplay" class="text-dark font-monospace d-block mb-4 fw-bold"></h4><input type="text" name="olm_name" id="bindOlmInput" class="form-control form-control-lg text-center" placeholder="Nhập tên tài khoản OLM cần ghim..." required></div><div class="modal-footer p-3"><button class="btn-primary-custom w-100">LƯU ĐỊNH DANH</button></div></form></div></div>
         </div>
 
-        <div class="modal fade" id="addTimeModal" tabindex="-1" data-bs-theme="dark">
-            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/add_time" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-white"><i class="fas fa-clock"></i> CỘNG THÊM GIỜ</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="addTimeKeyInput"><h4 id="addTimeKeyDisplay" class="text-white font-monospace d-block mb-4 fw-bold"></h4><div class="row g-2"><div class="col-8"><input type="number" name="time_val" class="form-control form-control-lg text-center" placeholder="Số lượng" required></div><div class="col-4"><select name="time_unit" class="form-select form-select-lg"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option></select></div></div></div><div class="modal-footer p-3"><button class="btn-primary-custom w-100">XÁC NHẬN CỘNG</button></div></form></div></div>
+        <div class="modal fade" id="addTimeModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/add_time" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-dark"><i class="fas fa-clock"></i> CỘNG THÊM GIỜ</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="addTimeKeyInput"><h4 id="addTimeKeyDisplay" class="text-dark font-monospace d-block mb-4 fw-bold"></h4><div class="row g-2"><div class="col-8"><input type="number" name="time_val" class="form-control form-control-lg text-center" placeholder="Số lượng" required></div><div class="col-4"><select name="time_unit" class="form-select form-select-lg"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days" selected>Ngày</option><option value="months">Tháng</option></select></div></div></div><div class="modal-footer p-3"><button class="btn-primary-custom w-100">XÁC NHẬN CỘNG</button></div></form></div></div>
         </div>
 
-        <div class="modal fade" id="maxDevModal" tabindex="-1" data-bs-theme="dark">
-            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/edit_max_dev" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-white"><i class="fas fa-mobile-alt"></i> TÙY CHỈNH GIỚI HẠN THIẾT BỊ</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="maxDevKeyInput"><h4 id="maxDevKeyDisplay" class="text-white font-monospace d-block mb-4 fw-bold"></h4><input type="number" name="max_dev" id="maxDevInput" class="form-control form-control-lg text-center" placeholder="Nhập số thiết bị..." required min="1"></div><div class="modal-footer p-3"><button class="btn-primary-custom w-100">CẬP NHẬT THIẾT BỊ</button></div></form></div></div>
+        <div class="modal fade" id="maxDevModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/edit_max_dev" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-dark"><i class="fas fa-mobile-alt"></i> TÙY CHỈNH GIỚI HẠN THIẾT BỊ</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="maxDevKeyInput"><h4 id="maxDevKeyDisplay" class="text-dark font-monospace d-block mb-4 fw-bold"></h4><input type="number" name="max_dev" id="maxDevInput" class="form-control form-control-lg text-center" placeholder="Nhập số thiết bị..." required min="1"></div><div class="modal-footer p-3"><button class="btn-primary-custom w-100">CẬP NHẬT THIẾT BỊ</button></div></form></div></div>
         </div>
 
-        <div class="modal fade" id="banModal" tabindex="-1" data-bs-theme="dark">
-            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/custom_ban" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-danger"><i class="fas fa-ban"></i> KHÓA KEY (KICK KHÁCH)</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="banKeyInput"><h4 id="banKeyDisplay" class="text-white font-monospace d-block mb-4 fw-bold"></h4><div class="row g-2"><div class="col-6"><input type="number" name="time_val" class="form-control form-control-lg text-center" placeholder="Thời gian"></div><div class="col-6"><select name="time_unit" class="form-select form-select-lg"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days">Ngày</option><option value="months">Tháng</option><option value="permanent" selected>Vĩnh Viễn</option></select></div></div></div><div class="modal-footer p-3"><button type="submit" class="btn-primary-custom action-btn-danger w-100 border-0">XÁC NHẬN KHÓA</button></div></form></div></div>
+        <div class="modal fade" id="banModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form action="/admin/custom_ban" method="POST">{csrf_input}<div class="modal-header"><h5 class="modal-title fw-bold text-danger"><i class="fas fa-ban"></i> KHÓA KEY (KICK KHÁCH)</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4 text-center"><input type="hidden" name="key" id="banKeyInput"><h4 id="banKeyDisplay" class="text-dark font-monospace d-block mb-4 fw-bold"></h4><div class="row g-2"><div class="col-6"><input type="number" name="time_val" class="form-control form-control-lg text-center" placeholder="Thời gian"></div><div class="col-6"><select name="time_unit" class="form-select form-select-lg"><option value="minutes">Phút</option><option value="hours">Giờ</option><option value="days">Ngày</option><option value="months">Tháng</option><option value="permanent" selected>Vĩnh Viễn</option></select></div></div></div><div class="modal-footer p-3"><button type="submit" class="btn-primary-custom action-btn-danger w-100 border-0">XÁC NHẬN KHÓA</button></div></form></div></div>
         </div>
 
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
@@ -896,7 +899,7 @@ def admin_dashboard():
             function openAddTimeModal(key) {{ document.getElementById('addTimeKeyInput').value = key; document.getElementById('addTimeKeyDisplay').innerText = key; bootstrap.Modal.getOrCreateInstance(document.getElementById('addTimeModal')).show(); }}
             function openMaxDevModal(key, max) {{ document.getElementById('maxDevKeyInput').value = key; document.getElementById('maxDevKeyDisplay').innerText = key; document.getElementById('maxDevInput').value = max; bootstrap.Modal.getOrCreateInstance(document.getElementById('maxDevModal')).show(); }}
             function openBanModal(key) {{ document.getElementById('banKeyInput').value = key; document.getElementById('banKeyDisplay').innerText = key; bootstrap.Modal.getOrCreateInstance(document.getElementById('banModal')).show(); }}
-            function copyToClipboard(text) {{ navigator.clipboard.writeText(text); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#1e293b', color: '#fff'}}); }}
+            function copyToClipboard(text) {{ navigator.clipboard.writeText(text); Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Đã copy Key!', showConfirmButton: false, timer: 1500, background: '#ffffff', color: '#1e293b'}}); }}
         </script>
     </body>
     </html>
@@ -928,19 +931,19 @@ def admin_getkey_dashboard():
         if data.get('exp') == 'pending': exp_text = '<span class="badge bg-info text-dark">Chưa kích hoạt</span>'
         else:
             is_expired = now_ms > data.get('exp', 0)
-            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-success"}">{time.strftime("%d/%m/%y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
+            exp_text = f'<span class="{"text-danger fw-bold" if is_expired else "text-success fw-bold"}">{time.strftime("%d/%m/%y %H:%M", time.localtime(data.get("exp", 0) / 1000))}</span>'
             
         safe_k = escape(str(k))
         keys_html += f'''<tr>
-            <td><div class="fw-bold text-white font-monospace mb-1">{safe_k}</div></td>
-            <td><span class="badge bg-light text-dark fw-bold">{escape(data.get("note", ""))}</span></td>
+            <td><div class="fw-bold text-dark font-monospace mb-1">{safe_k}</div></td>
+            <td><span class="badge bg-light text-dark border fw-bold">{escape(data.get("note", ""))}</span></td>
             <td>{exp_text}</td>
-            <td><span class="badge bg-dark border p-2 text-white">{len(data.get('devices', []))}/1</span></td>
+            <td><span class="badge bg-light border p-2 text-dark">{len(data.get('devices', []))}/1</span></td>
             <td><a href="/admin/action/delete/{safe_k}?csrf_token={session.get('csrf_token')}" class="btn btn-sm btn-outline-danger" onclick="return confirm('Xóa key này?')" title="Xóa"><i class="fas fa-trash"></i> Xóa</a></td>
         </tr>'''
 
     return f'''
-    <!DOCTYPE html><html lang="vi" data-bs-theme="dark">
+    <!DOCTYPE html><html lang="vi">
     <head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>LVT C-Panel - Get Key</title>
@@ -949,23 +952,23 @@ def admin_getkey_dashboard():
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-            body {{ background: #0b0f19; font-family: 'Inter', sans-serif; color: #e2e8f0; }}
-            .topbar {{ background: #131722; border-bottom: 1px solid #1e293b; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }}
-            .topbar-brand {{ font-size: 20px; font-weight: 800; color: #ffffff; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }}
-            .card {{ background: #131722; border: 1px solid #1e293b; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }}
-            .card-header {{ background: rgba(255,255,255,0.02); border-bottom: 1px solid #1e293b; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
+            body {{ background: #f8fafc; font-family: 'Inter', sans-serif; color: #334155; }}
+            .topbar {{ background: #ffffff; border-bottom: 1px solid #e2e8f0; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
+            .topbar-brand {{ font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: 0.5px; display: flex; align-items: center; gap: 10px; }}
+            .card {{ background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }}
+            .card-header {{ background: #fafafa; border-bottom: 1px solid #e2e8f0; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; color: #0f172a; display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
             .card-body {{ padding: 20px; }}
-            .form-control {{ background: #0b0f19 !important; border: 1px solid #334155 !important; color: #f8fafc !important; border-radius: 8px; padding: 10px 15px; font-size: 14px; transition: 0.2s; }}
-            .form-control:focus {{ border-color: #ffffff !important; box-shadow: 0 0 0 3px rgba(255,255,255,0.1) !important; outline: none; }}
-            .btn-primary-custom {{ background: linear-gradient(135deg, #ffffff, #e2e8f0); border: none; color: #000; font-weight: 800; padding: 12px 20px; border-radius: 8px; transition: 0.3s; text-transform: uppercase; width: 100%; cursor:pointer; }}
-            .btn-primary-custom:hover {{ transform: translateY(-2px); box-shadow: 0 0 15px rgba(255,255,255,0.3); }}
-            .nav-tabs-custom {{ display: flex; gap: 15px; margin-bottom: 25px; border-bottom: 1px solid #1e293b; padding-bottom: 15px; }}
-            .nav-btn {{ padding: 12px 25px; border-radius: 8px; font-weight: 700; color: #94a3b8; text-decoration: none; border: 1px solid #1e293b; background: #0f172a; transition: 0.3s; display: inline-flex; align-items: center; gap: 8px; }}
-            .nav-btn:hover {{ color: #fff; background: rgba(255,255,255,0.1); }}
-            .nav-btn.active {{ background: #ffffff; color: #000; border-color: #ffffff; box-shadow: 0 0 15px rgba(255, 255, 255, 0.4); }}
-            .table {{ color: #cbd5e1; font-size: 14px; margin-bottom: 0; }}
-            .table thead th {{ background: #0f172a; border-bottom: 1px solid #1e293b; color: #94a3b8; font-weight: 600; padding: 15px; text-transform: uppercase; font-size: 12px; }}
-            .table tbody td {{ border-bottom: 1px solid #1e293b; padding: 15px; vertical-align: middle; }}
+            .form-control {{ background: #ffffff !important; border: 1px solid #cbd5e1 !important; color: #1e293b !important; border-radius: 8px; padding: 10px 15px; font-size: 14px; transition: 0.2s; }}
+            .form-control:focus {{ border-color: #0f172a !important; box-shadow: 0 0 0 3px rgba(15,23,42,0.08) !important; outline: none; }}
+            .btn-primary-custom {{ background: linear-gradient(135deg, #1e293b, #0f172a); border: none; color: #fff; font-weight: 700; padding: 12px 20px; border-radius: 8px; transition: 0.3s; text-transform: uppercase; width: 100%; cursor:pointer; }}
+            .btn-primary-custom:hover {{ transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
+            .nav-tabs-custom {{ display: flex; gap: 15px; margin-bottom: 25px; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; }}
+            .nav-btn {{ padding: 12px 25px; border-radius: 8px; font-weight: 700; color: #475569; text-decoration: none; border: 1px solid #e2e8f0; background: #ffffff; transition: 0.3s; display: inline-flex; align-items: center; gap: 8px; }}
+            .nav-btn:hover {{ color: #0f172a; background: #f8fafc; }}
+            .nav-btn.active {{ background: #0f172a; color: #fff; border-color: #0f172a; box-shadow: 0 4px 12px rgba(15,23,42,0.15); }}
+            .table {{ color: #334155; font-size: 14px; margin-bottom: 0; }}
+            .table thead th {{ background: #f1f5f9; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; padding: 15px; text-transform: uppercase; font-size: 12px; }}
+            .table tbody td {{ border-bottom: 1px solid #e2e8f0; padding: 15px; vertical-align: middle; background: #fff; }}
         </style>
     </head>
     <body>
@@ -983,8 +986,8 @@ def admin_getkey_dashboard():
 
             <div class="row g-4">
                 <div class="col-xl-4 col-lg-12">
-                    <div class="card h-100" style="border-top: 3px solid #ffffff;">
-                        <div class="card-header text-white"><div><i class="fas fa-cogs"></i> Cài Đặt API Vượt Link</div></div>
+                    <div class="card h-100" style="border-top: 3px solid #0f172a;">
+                        <div class="card-header"><div><i class="fas fa-cogs"></i> Cài Đặt API Vượt Link</div></div>
                         <div class="card-body">
                             <form action="/admin/update_getkey_settings" method="POST">{csrf_input}
                                 <div class="mb-3">
@@ -994,13 +997,13 @@ def admin_getkey_dashboard():
                                 <div class="mb-3">
                                     <label class="text-muted small fw-bold mb-1">URL API Rút Gọn Link</label>
                                     <input type="text" name="shortlink_api_url" class="form-control" value="{api_url}" placeholder="Ví dụ: https://link1s.com/api">
-                                    <small class="text-info">* Hỗ trợ chuẩn API link1s, droplink, megaurl...</small>
+                                    <small class="text-dark">* Hỗ trợ chuẩn API link1s, droplink, megaurl...</small>
                                 </div>
                                 <div class="mb-4">
                                     <label class="text-muted small fw-bold mb-1">API Token Bí Mật</label>
                                     <input type="text" name="shortlink_api_token" class="form-control" value="{api_token}" placeholder="Dán token API rút gọn link vào đây">
                                 </div>
-                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤU HÌNH</button>
+                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤU HÌSH</button>
                             </form>
                         </div>
                     </div>
@@ -1008,7 +1011,7 @@ def admin_getkey_dashboard():
 
                 <div class="col-xl-8 col-lg-12">
                     <div class="card h-100" style="border-top: 3px solid #22c55e;">
-                        <div class="card-header text-success"><div><i class="fas fa-list-alt"></i> Danh Sách Key Vượt Link Đã Tạo</div></div>
+                        <div class="card-header text-dark"><div><i class="fas fa-list-alt"></i> Danh Sách Key Vượt Link Đã Tạo</div></div>
                         <div class="card-body p-0">
                             <div class="table-responsive" style="max-height: 500px; overflow-y:auto;">
                                 <table class="table table-hover text-center align-middle mb-0">
@@ -1016,7 +1019,7 @@ def admin_getkey_dashboard():
                                         <tr><th>Cụm Key</th><th>Loại Vượt Link</th><th>Thời Hạn</th><th>Thiết Bị</th><th>Thao Tác</th></tr>
                                     </thead>
                                     <tbody>
-                                        {keys_html or '<tr><td colspan="5" class="py-5 text-muted">Chưa có khách nào vượt link lấy key.</td></tr>'}
+                                        {keys_html or '<tr><td colspan="5" class="py-5 text-muted" style="background:#fff;">Chưa có khách nào vượt link lấy key.</td></tr>'}
                                     </tbody>
                                 </table>
                             </div>
@@ -1070,11 +1073,11 @@ def admin_files_dashboard():
             
         is_maintenance = db.get("settings", {}).get("webview_maintenance", False)
         maint_btn_text = "TẮT BẢO TRÌ WEBVIEW" if is_maintenance else "BẬT BẢO TRÌ WEBVIEW"
-        maint_btn_class = "btn-danger" if is_maintenance else "btn-light text-dark"
+        maint_btn_class = "btn-danger text-white" if is_maintenance else "btn-light text-dark"
         maint_status_badge = '<span class="badge bg-danger ms-2">Đang Bảo Trì</span>' if is_maintenance else '<span class="badge bg-success ms-2">Online</span>'
 
     return f'''
-    <!DOCTYPE html><html lang="vi" data-bs-theme="dark">
+    <!DOCTYPE html><html lang="vi">
     <head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>LVT C-Panel - Auto Nạp File</title>
@@ -1083,20 +1086,20 @@ def admin_files_dashboard():
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-            body {{ background: #0b0f19; font-family: 'Inter', sans-serif; color: #e2e8f0; }}
-            .topbar {{ background: #131722; border-bottom: 1px solid #1e293b; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }}
-            .topbar-brand {{ font-size: 20px; font-weight: 800; color: #ffffff; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }}
-            .card {{ background: #131722; border: 1px solid #1e293b; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }}
-            .card-header {{ background: rgba(255,255,255,0.02); border-bottom: 1px solid #1e293b; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
+            body {{ background: #f8fafc; font-family: 'Inter', sans-serif; color: #334155; }}
+            .topbar {{ background: #ffffff; border-bottom: 1px solid #e2e8f0; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 1000; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
+            .topbar-brand {{ font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: 0.5px; display: flex; align-items: center; gap: 10px; }}
+            .card {{ background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }}
+            .card-header {{ background: #fafafa; border-bottom: 1px solid #e2e8f0; padding: 15px 20px; font-weight: 700; font-size: 14px; text-transform: uppercase; color: #0f172a; display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
             .card-body {{ padding: 20px; }}
-            .form-control {{ background: #0b0f19 !important; border: 1px solid #334155 !important; color: #f8fafc !important; border-radius: 8px; padding: 10px 15px; font-size: 14px; transition: 0.2s; }}
-            .form-control:focus {{ border-color: #ffffff !important; box-shadow: 0 0 0 3px rgba(255,255,255,0.1) !important; outline: none; }}
-            .btn-primary-custom {{ background: linear-gradient(135deg, #ffffff, #e2e8f0); border: none; color: #000; font-weight: 800; padding: 12px 20px; border-radius: 8px; transition: 0.3s; text-transform: uppercase; width: 100%; cursor:pointer; }}
-            .btn-primary-custom:hover {{ transform: translateY(-2px); box-shadow: 0 0 15px rgba(255,255,255,0.3); }}
-            .nav-tabs-custom {{ display: flex; gap: 15px; margin-bottom: 25px; border-bottom: 1px solid #1e293b; padding-bottom: 15px; }}
-            .nav-btn {{ padding: 12px 25px; border-radius: 8px; font-weight: 700; color: #94a3b8; text-decoration: none; border: 1px solid #1e293b; background: #0f172a; transition: 0.3s; display: inline-flex; align-items: center; gap: 8px; }}
-            .nav-btn:hover {{ color: #fff; background: rgba(255,255,255,0.1); }}
-            .nav-btn.active {{ background: #ffffff; color: #000; border-color: #ffffff; box-shadow: 0 0 15px rgba(255, 255, 255, 0.4); }}
+            .form-control {{ background: #ffffff !important; border: 1px solid #cbd5e1 !important; color: #1e293b !important; border-radius: 8px; padding: 10px 15px; font-size: 14px; transition: 0.2s; }}
+            .form-control:focus {{ border-color: #0f172a !important; box-shadow: 0 0 0 3px rgba(15,23,42,0.08) !important; outline: none; }}
+            .btn-primary-custom {{ background: linear-gradient(135deg, #1e293b, #0f172a); border: none; color: #fff; font-weight: 700; padding: 12px 20px; border-radius: 8px; transition: 0.3s; text-transform: uppercase; width: 100%; cursor:pointer; }}
+            .btn-primary-custom:hover {{ transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
+            .nav-tabs-custom {{ display: flex; gap: 15px; margin-bottom: 25px; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; }}
+            .nav-btn {{ padding: 12px 25px; border-radius: 8px; font-weight: 700; color: #475569; text-decoration: none; border: 1px solid #e2e8f0; background: #ffffff; transition: 0.3s; display: inline-flex; align-items: center; gap: 8px; }}
+            .nav-btn:hover {{ color: #0f172a; background: #f8fafc; }}
+            .nav-btn.active {{ background: #0f172a; color: #fff; border-color: #0f172a; box-shadow: 0 4px 12px rgba(15,23,42,0.15); }}
         </style>
     </head>
     <body>
@@ -1113,22 +1116,22 @@ def admin_files_dashboard():
             </div>
             
             <div class="card mb-4" style="border-top: 3px solid #10b981;">
-                <div class="card-header text-success"><div><i class="fas fa-history"></i> KHÔI PHỤC DỮ LIỆU TỪ BACKUP TELEGRAM</div></div>
+                <div class="card-header text-dark"><div><i class="fas fa-history"></i> KHÔI PHỤC DỮ LIỆU TỪ BACKUP TELEGRAM</div></div>
                 <div class="card-body">
                     <form action="/admin/restore_db" method="POST" enctype="multipart/form-data" class="d-flex align-items-center gap-3">{csrf_input}
                         <input type="file" name="db_file" class="form-control w-50" accept=".json" required>
-                        <button type="submit" class="btn-primary-custom" style="width:auto; border: 1px solid #10b981;"><i class="fas fa-upload"></i> KHÔI PHỤC NGAY</button>
+                        <button type="submit" class="btn-primary-custom" style="width:auto; border: 1px solid #0f172a;"><i class="fas fa-upload"></i> KHÔI PHỤC NGAY</button>
                     </form>
                 </div>
             </div>
 
             <div class="row g-4">
                 <div class="col-xl-6 col-lg-6">
-                    <div class="card h-100" style="border-top: 3px solid #ffffff;">
-                        <div class="card-header text-white"><div><i class="fas fa-code"></i> NẠP SCRIPT TIÊM GỐC</div></div>
+                    <div class="card h-100" style="border-top: 3px solid #0f172a;">
+                        <div class="card-header"><div><i class="fas fa-code"></i> NẠP SCRIPT TIÊM GỐC</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_script_tiem" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{tiem_status}</div>
+                                <div class="mb-3 p-3 text-center" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">{tiem_status}</div>
                                 <input type="file" name="script_file" class="form-control mb-2" accept=".js,.txt">
                                 <textarea name="script_text" class="form-control mb-3 flex-grow-1" rows="4" placeholder="Hoặc dán trực tiếp mã nguồn vào đây..."></textarea>
                                 <button type="submit" class="btn-primary-custom mt-auto"><i class="fas fa-cloud-upload-alt"></i> NẠP FILE SCRIPT TIÊM</button>
@@ -1138,11 +1141,11 @@ def admin_files_dashboard():
                 </div>
 
                 <div class="col-xl-6 col-lg-6">
-                    <div class="card h-100" style="border-top: 3px solid #ffffff;">
-                        <div class="card-header text-white"><div><i class="fas fa-certificate"></i> NẠP SCRIPT VIOLENTMONKEY LOADER</div></div>
+                    <div class="card h-100" style="border-top: 3px solid #0f172a;">
+                        <div class="card-header"><div><i class="fas fa-certificate"></i> NẠP SCRIPT VIOLENTMONKEY LOADER</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_vm_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{loader_status}</div>
+                                <div class="mb-3 p-3 text-center" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">{loader_status}</div>
                                 <input type="file" name="loader_file" class="form-control mb-2" accept=".js,.txt">
                                 <textarea name="loader_text" class="form-control mb-3 flex-grow-1" rows="4" placeholder="Hoặc dán trực tiếp mã nguồn vào đây..."></textarea>
                                 <button type="submit" class="btn-primary-custom mt-auto"><i class="fas fa-cloud-upload-alt"></i> NẠP SCRIPT LOADER</button>
@@ -1152,8 +1155,8 @@ def admin_files_dashboard():
                 </div>
                 
                 <div class="col-xl-6 col-lg-6">
-                    <div class="card h-100" style="border-top: 3px solid #ffffff;">
-                        <div class="card-header text-white">
+                    <div class="card h-100" style="border-top: 3px solid #0f172a;">
+                        <div class="card-header">
                             <div><i class="fas fa-mobile-alt"></i> NẠP GIAO DIỆN WEBVIEW APP (.HTML)</div>
                             <div>{maint_status_badge}</div>
                         </div>
@@ -1162,7 +1165,7 @@ def admin_files_dashboard():
                                 <button type="submit" class="btn {maint_btn_class} w-100 fw-bold btn-sm py-2 border"><i class="fas fa-tools"></i> {maint_btn_text}</button>
                             </form>
                             <form action="/admin/update_webview" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{webview_status}</div>
+                                <div class="mb-3 p-3 text-center" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">{webview_status}</div>
                                 <input type="file" name="webview_file" class="form-control mb-2" accept=".html,.js,.txt">
                                 <textarea name="webview_text" class="form-control mb-3 flex-grow-1" rows="4" placeholder="Hoặc dán trực tiếp mã nguồn Webview vào đây..."></textarea>
                                 <button type="submit" class="btn-primary-custom mt-auto"><i class="fas fa-cloud-upload-alt"></i> NẠP GIAO DIỆN APP</button>
@@ -1172,11 +1175,11 @@ def admin_files_dashboard():
                 </div>
 
                 <div class="col-xl-6 col-lg-6">
-                    <div class="card h-100" style="border-top: 3px solid #ffffff;">
-                        <div class="card-header text-white"><div><i class="fas fa-file-archive"></i> NẠP FILE .PAK (DATA)</div></div>
+                    <div class="card h-100" style="border-top: 3px solid #0f172a;">
+                        <div class="card-header"><div><i class="fas fa-file-archive"></i> NẠP FILE .PAK (DATA)</div></div>
                         <div class="card-body d-flex flex-column">
                             <form action="/admin/update_pak" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <div class="mb-3 p-3 text-center" style="background: rgba(255,255,255,0.02); border: 1px dashed #475569; border-radius: 8px;">{pak_status}</div>
+                                <div class="mb-3 p-3 text-center" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">{pak_status}</div>
                                 <input type="file" name="pak_file" class="form-control mb-2" accept=".pak">
                                 <input type="url" name="pak_url" class="form-control mb-3" placeholder="Hoặc dán Link trực tiếp tải file .pak (Direct URL)...">
                                 <button type="submit" class="btn-primary-custom mt-auto"><i class="fas fa-cloud-upload-alt"></i> NẠP FILE .PAK</button>
