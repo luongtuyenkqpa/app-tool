@@ -117,7 +117,7 @@ def telegram_polling():
                                 continue
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{escape(user_first_name)}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"} mb-1}]]}
+                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -731,13 +731,10 @@ def call_shortlink_api(url_to_shorten):
     api_token = db.get("settings", {}).get("shortlink_api_token", "4f62901315a7381c321f76bc988ff0e3").strip()
     
     try:
-        # Sử dụng cấu trúc định dạng API chuẩn của hệ thống Layma
         full_url = f"https://api.layma.net/api/admin/shortlink/quicklink?tokenUser={api_token}&format=json&url={urllib.parse.quote(url_to_shorten)}"
-        
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         res = requests.get(full_url, headers=headers, timeout=12).json()
         
-        # Đọc trường dữ liệu chuỗi liên kết rút gọn từ phản hồi của Layma
         if res.get("success") is True or res.get("status") == "success":
             short_link = res.get("html") or res.get("shortenedUrl") or res.get("short_url") or res.get("link")
             if short_link:
@@ -777,14 +774,12 @@ def verify_bypass():
         
     s_data = bypass_sessions[session_id]
     
-    # Nếu lượt vượt link hiện tại chưa đủ tổng số lượt quy định (Dành cho gói 24H yêu cầu 2 lần)
     if s_data["current_step"] < s_data["steps"]:
         s_data["current_step"] += 1
         return_url = f"{WEB_URL}/verify_bypass?session={session_id}"
-        short_url = call_shortlink_api(return_url) # Gọi API tạo link lấy mã lần 2
-        return redirect(short_url) # Tự động chuyển khách sang lượt vượt link thứ 2
+        short_url = call_shortlink_api(return_url)
+        return redirect(short_url)
         
-    # Khi đã hoàn thành đủ số lượt (1 lần cho gói 12H, 2 lần cho gói 24H)
     game_clean = re.sub(r'[^A-Z0-9_]', '', str(s_data["game"]).upper()[:10])
     hours = "12H" if s_data["steps"] == 1 else "24H"
     random_str = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(5))
@@ -1155,7 +1150,7 @@ def admin_dashboard():
                     <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
                         <table class="table table-hover text-center align-middle mb-0">
                             <thead style="position: sticky; top: 0; z-index: 1;">
-                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Định Định Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
+                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
                                 {keys_html or '<tr><td colspan="5" class="py-5 text-muted" style="background:#fff;">Chưa có dữ liệu.</td></tr>'}
@@ -1295,7 +1290,7 @@ def admin_getkey_dashboard():
                                     <label class="text-muted small fw-bold mb-1">API Token Bí Mật</label>
                                     <input type="text" name="shortlink_api_token" class="form-control" value="{api_token}" placeholder="Dán token API rút gọn của bạn vào đây">
                                 </div>
-                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤHÌNH</button>
+                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤU HÌNH</button>
                             </form>
                         </div>
                     </div>
