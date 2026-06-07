@@ -265,7 +265,6 @@ def garbage_collector():
         now_ms = int(time.time() * 1000)
         now_sec = time.time()
         try:
-            # Xoá session vượt link quá 1 tiếng
             stale_sessions = [k for k, v in bypass_sessions.items() if now_sec - v.get("time", 0) > 3600]
             for k in stale_sessions: bypass_sessions.pop(k, None)
 
@@ -554,7 +553,7 @@ def get_key_portal():
                 background-color: #f8f8f8 !important;
                 color: #555555;
             }}
-            .input-suffix-text {{
+            .input-device-text {{
                 background-color: #f0f0f0;
                 padding: 0 16px;
                 display: flex;
@@ -668,7 +667,7 @@ def get_key_portal():
                     <div class="input-group-custom">
                         <div class="input-icon-prefix"><i class="fas fa-mobile-alt"></i></div>
                         <input type="text" class="control-custom" value="1" disabled>
-                        <div class="input-suffix-text">Thiết bị</div>
+                        <div class="input-device-text">Thiết bị</div>
                     </div>
 
                     <div class="input-group-custom">
@@ -734,19 +733,19 @@ def call_shortlink_api(url_to_shorten):
         return f"https://google.com/search?q=Lỗi+Cấu+Hình+API+Rút+Gọn+Từ+Admin"
     
     try:
-        # Tự động chuẩn hóa URL API nếu thiếu /shortlink/quicklink
-        if "api.layma.net" in api_url and "quicklink" not in api_url:
+        # Chuẩn hóa link API của layma nếu admin cấu hình thiếu đường dẫn đầy đủ
+        if "api.layma.net" in api_url and "shortlink" not in api_url:
             api_url = "https://api.layma.net/api/admin/shortlink/quicklink"
 
-        if "tokenUser=" in api_url or "api=" in api_url or "token=" in api_url:
+        # Định dạng truyền tham số chuẩn hóa cho Layma: format=json&tokenUser=...&url=...
+        if "tokenUser=" in api_url:
             full_url = f"{api_url}&url={urllib.parse.quote(url_to_shorten)}"
         else:
-            # [CẤU TRÚC CHUẨN LAYMA.NET]: format=json&tokenUser=...&url=...
             full_url = f"{api_url}?tokenUser={api_token}&format=json&url={urllib.parse.quote(url_to_shorten)}"
             
         res = requests.get(full_url, timeout=12).json()
         
-        # [VÁ LỖI PHÂN TÍCH LAYMA.NET]: Đọc trường "html" chứa link rút gọn khi success là True
+        # [CƠ CHẾ ĐỌC DỮ LIỆU ĐÃ SỬA]: Layma trả về "success": true và chuỗi liên kết nằm trong biến "html"
         if res.get("success") is True or res.get("status") == "success":
             short_link = res.get("html") or res.get("shortenedUrl") or res.get("short_url") or res.get("link")
             if short_link:
@@ -936,7 +935,7 @@ def api_verify_core():
             kd["ban_until"] = "permanent"
             save_db(db)
             send_telegram_event('banned', {'key': key, 'ip': client_ip})
-            return jsonify({"status": "banned", "msg": f"⚠️ CẢNH BÁO: Phạt hiện sai tài khoản OLM! Key của bạn đã bị Hệ thống khóa vĩnh viễn!", "ban_time": "permanent"})
+            return jsonify({"status": "banned", "msg": f"⚠️ CẢNH BÁO: Phát hiện sai tài khoản OLM! Key của bạn đã bị Hệ thống khóa vĩnh viễn!", "ban_time": "permanent"})
             
         save_db(db)
         send_telegram_event('login', {'key': key, 'ip': client_ip, 'device_name': device_name, 'android_version': android_version})
