@@ -217,7 +217,7 @@ def load_db():
                 
                 # Biến dùng cho Trang 3: Get Key Vượt Link
                 if "games_list" not in data["settings"]: data["settings"]["games_list"] = "PUBG, LIENQUAN, FREEFIRE"
-                if "shortlink_api_url" not in data["settings"]: data["settings"]["shortlink_api_url"] = "https://link1s.com/api"
+                if "shortlink_api_url" not in data["settings"]: data["settings"]["shortlink_api_url"] = "https://layma.net/api"
                 if "shortlink_api_token" not in data["settings"]: data["settings"]["shortlink_api_token"] = ""
 
                 if "admin" not in data["users"]: data["users"]["admin"] = {"password_hash": hash_pwd("120510@"), "role": "admin"}
@@ -401,7 +401,6 @@ def get_key_portal():
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
             
-            /* Cố định màn hình điện thoại chống cuộn thừa */
             html, body {{ 
                 background-color: #f5f5f5; 
                 font-family: 'Roboto', sans-serif; 
@@ -414,7 +413,6 @@ def get_key_portal():
                 position: relative;
             }}
             
-            /* Header màu xanh dương đặc trưng của ảnh */
             .navbar-custom {{
                 background-color: #0066ff;
                 padding: 12px 16px;
@@ -470,7 +468,6 @@ def get_key_portal():
             }}
             .nav-item-link:hover {{ opacity: 1; }}
 
-            /* Hộp Welcome Stranger */
             .welcome-box {{
                 background-color: #e9e9e9;
                 border-radius: 4px;
@@ -491,7 +488,6 @@ def get_key_portal():
                 cursor: pointer;
             }}
 
-            /* Tìm kiếm tra cứu đơn hàng */
             .search-box-container {{
                 margin: 0 16px 16px 16px;
                 display: flex;
@@ -503,7 +499,6 @@ def get_key_portal():
                 cursor: pointer;
             }}
 
-            /* Khối chính Hệ Thống GetKey */
             .getkey-card {{
                 background: #ffffff;
                 border-radius: 0px;
@@ -526,7 +521,6 @@ def get_key_portal():
                 padding: 20px 16px;
             }}
 
-            /* Thiết kế các hàng nhập dữ liệu y hệt trong ảnh */
             .input-group-custom {{
                 display: flex;
                 width: 100%;
@@ -571,7 +565,6 @@ def get_key_portal():
                 border-left: 1px solid #cccccc;
             }}
 
-            /* Khu vực nút bấm cuối */
             .action-buttons-group {{
                 display: grid;
                 grid-template-columns: 1fr 1fr;
@@ -612,7 +605,6 @@ def get_key_portal():
                 font-size: 14px;
             }}
 
-            /* Chú thích phía dưới */
             .info-notice {{
                 font-size: 12px;
                 color: #777777;
@@ -621,7 +613,6 @@ def get_key_portal():
                 line-height: 1.5;
             }}
 
-            /* Bản quyền chân trang */
             .footer-copyright {{
                 text-align: center;
                 color: #777777;
@@ -739,13 +730,11 @@ def call_shortlink_api(url_to_shorten):
     api_url = db.get("settings", {}).get("shortlink_api_url", "").strip()
     api_token = db.get("settings", {}).get("shortlink_api_token", "").strip()
     
-    # [FIX TRIỆT ĐỂ]: Nếu không điền cấu hình API, hệ thống sẽ chặn không cho sang thẳng trang Key
+    # [FIX TRIỆT ĐỂ]: Ngăn chặn lỗi nhảy thẳng trang tạo key nếu token chưa được điền hoặc sai lệch
     if not api_url or not api_token:
         return f"https://google.com/search?q=Lỗi+Cấu+Hình+API+Rút+Gọn+Từ+Admin"
     
     try:
-        # Hỗ trợ tự động chuyển đổi linh hoạt định dạng query cho layma.net hoặc link1s
-        # Thích ứng với các tham số Token, API key và URL đích
         if "api=" in api_url or "token=" in api_url:
             full_url = f"{api_url}&url={urllib.parse.quote(url_to_shorten)}"
         else:
@@ -753,7 +742,6 @@ def call_shortlink_api(url_to_shorten):
             
         res = requests.get(full_url, timeout=12).json()
         
-        # Parse data từ API của site trung gian
         if res.get("status") == "success" or res.get("status") == 200 or res.get("error") is False:
             short_link = res.get("shortenedUrl") or res.get("short_url") or res.get("link")
             if short_link:
@@ -761,7 +749,6 @@ def call_shortlink_api(url_to_shorten):
     except Exception as e:
         print("Lỗi tạo shortlink:", e)
         
-    # Nếu hệ thống API lỗi hoặc sập, trả về trang cảnh báo bảo mật chứ không trả về link Key
     return f"https://google.com/search?q=Hệ+Thống+Vượt+Link+Đang+Bảo+Trì"
 
 @app.route('/start_bypass', methods=['POST'])
@@ -791,14 +778,12 @@ def verify_bypass():
         
     s_data = bypass_sessions[session_id]
     
-    # Nếu chọn gói vượt 2 lần link (24H) mà mới xong bước 1
     if s_data["current_step"] < s_data["steps"]:
         s_data["current_step"] += 1
         return_url = f"{WEB_URL}/verify_bypass?session={session_id}"
         short_url = call_shortlink_api(return_url)
         return redirect(short_url)
         
-    # Hoàn thành đủ bước -> Sinh Key
     game_clean = re.sub(r'[^A-Z0-9_]', '', str(s_data["game"]).upper()[:10])
     hours = "12H" if s_data["steps"] == 1 else "24H"
     random_str = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(5))
@@ -822,7 +807,7 @@ def verify_bypass():
         save_db(db)
         
     send_telegram_event('bypass_success', {'key': key_name, 'game': game_clean, 'hours': hours, 'ip': get_real_ip()})
-    del bypass_sessions[session_id] # Xoá session an toàn
+    del bypass_sessions[session_id]
     
     return f'''
     <!DOCTYPE html><html lang="vi">
@@ -1169,7 +1154,7 @@ def admin_dashboard():
                     <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
                         <table class="table table-hover text-center align-middle mb-0">
                             <thead style="position: sticky; top: 0; z-index: 1;">
-                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Định OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
+                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
                                 {keys_html or '<tr><td colspan="5" class="py-5 text-muted" style="background:#fff;">Chưa có dữ liệu.</td></tr>'}
