@@ -730,20 +730,25 @@ def call_shortlink_api(url_to_shorten):
     api_url = db.get("settings", {}).get("shortlink_api_url", "").strip()
     api_token = db.get("settings", {}).get("shortlink_api_token", "").strip()
     
-    # [FIX TRIỆT ĐỂ]: Ngăn chặn lỗi nhảy thẳng trang tạo key nếu token chưa được điền hoặc sai lệch
     if not api_url or not api_token:
         return f"https://google.com/search?q=Lỗi+Cấu+Hình+API+Rút+Gọn+Từ+Admin"
     
     try:
-        if "api=" in api_url or "token=" in api_url:
+        # Tự động chuẩn hóa URL API nếu thiếu /shortlink/quicklink
+        if "api.layma.net" in api_url and "quicklink" not in api_url:
+            api_url = "https://api.layma.net/api/admin/shortlink/quicklink"
+
+        if "tokenUser=" in api_url or "api=" in api_url or "token=" in api_url:
             full_url = f"{api_url}&url={urllib.parse.quote(url_to_shorten)}"
         else:
-            full_url = f"{api_url}?api={api_token}&url={urllib.parse.quote(url_to_shorten)}"
+            # [CẤU TRÚC CHUẨN LAYMA.NET]: format=json&tokenUser=...&url=...
+            full_url = f"{api_url}?tokenUser={api_token}&format=json&url={urllib.parse.quote(url_to_shorten)}"
             
         res = requests.get(full_url, timeout=12).json()
         
-        if res.get("status") == "success" or res.get("status") == 200 or res.get("error") is False:
-            short_link = res.get("shortenedUrl") or res.get("short_url") or res.get("link")
+        # [VÁ LỖI PHÂN TÍCH LAYMA.NET]: Đọc trường "html" chứa link rút gọn khi success là True
+        if res.get("success") is True or res.get("status") == "success":
+            short_link = res.get("html") or res.get("shortenedUrl") or res.get("short_url") or res.get("link")
             if short_link:
                 return short_link
     except Exception as e:
@@ -931,7 +936,7 @@ def api_verify_core():
             kd["ban_until"] = "permanent"
             save_db(db)
             send_telegram_event('banned', {'key': key, 'ip': client_ip})
-            return jsonify({"status": "banned", "msg": f"⚠️ CẢNH BÁO: Phát hiện sai tài khoản OLM! Key của bạn đã bị Hệ thống khóa vĩnh viễn!", "ban_time": "permanent"})
+            return jsonify({"status": "banned", "msg": f"⚠️ CẢNH BÁO: Phạt hiện sai tài khoản OLM! Key của bạn đã bị Hệ thống khóa vĩnh viễn!", "ban_time": "permanent"})
             
         save_db(db)
         send_telegram_event('login', {'key': key, 'ip': client_ip, 'device_name': device_name, 'android_version': android_version})
