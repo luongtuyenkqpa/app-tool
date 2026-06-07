@@ -381,7 +381,7 @@ def serve_webview_app():
     return resp
 
 # ========================================================
-# TRANG CHỦ MỚI: GIAO DIỆN GET KEY VƯỢT LINK (WHITE LIGHT THEME)
+# TRANG CHỦ MỚI: GIAO DIỆN GET KEY NÂNG CẤP Y HỆT ẢNH
 # ========================================================
 @app.route('/')
 def get_key_portal():
@@ -393,47 +393,343 @@ def get_key_portal():
     return f'''
     <!DOCTYPE html><html lang="vi">
     <head>
-        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>GET KEY VIP - HỆ THỐNG AUTO</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <title>VuaHackVip - Hệ Thống GetKey</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-            body {{ background-color: #f3f4f6; font-family: 'Inter', sans-serif; color: #1f2937; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
-            .get-key-box {{ background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.7); border-radius: 24px; padding: 35px 30px; width: 100%; max-width: 440px; box-shadow: 0 10px 40px rgba(0,0,0,0.04); text-align: center; }}
-            .logo-icon {{ font-size: 36px; color: #111827; margin-bottom: 12px; display: inline-block; }}
-            .form-select {{ background: rgba(249, 250, 251, 0.8) !important; border: 1px solid #e5e7eb !important; color: #111827 !important; padding: 13px 16px; border-radius: 12px; font-weight: 500; margin-bottom: 20px; font-size: 15px; appearance: none; -webkit-appearance: none; text-align: left !important; }}
-            .form-select:focus {{ border-color: #111827 !important; box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.05) !important; }}
-            .btn-getkey {{ background: #111827; color: #ffffff; font-weight: 700; padding: 14px; border-radius: 12px; width: 100%; border: none; transition: all 0.2s ease-in-out; text-transform: uppercase; font-size: 15px; letter-spacing: 0.5px; margin-top: 10px; box-shadow: 0 4px 12px rgba(17, 24, 39, 0.15); }}
-            .btn-getkey:hover {{ transform: translateY(-1px); box-shadow: 0 6px 20px rgba(17, 24, 39, 0.25); background: #1f2937; }}
-            .footer-text {{ font-size: 12px; color: #6b7280; margin-top: 24px; line-height: 1.6; border-top: 1px solid #f3f4f6; padding-top: 16px; }}
-            label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: #4b5563; margin-bottom: 6px; display: block; font-weight: 600; text-align: left; }}
+            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+            
+            /* Cố định màn hình điện thoại chống cuộn thừa */
+            html, body {{ 
+                background-color: #f5f5f5; 
+                font-family: 'Roboto', sans-serif; 
+                margin: 0; 
+                padding: 0; 
+                height: 100vh; 
+                width: 100vw;
+                overflow-x: hidden;
+                overflow-y: auto;
+                position: relative;
+            }}
+            
+            /* Header màu xanh dương đặc trưng của ảnh */
+            .navbar-custom {{
+                background-color: #0066ff;
+                padding: 12px 16px;
+                display: flex;
+                flex-direction: column;
+                position: relative;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            .navbar-top {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                width: 100%;
+            }}
+            .brand-title {{
+                color: #ffffff;
+                font-size: 22px;
+                font-weight: 700;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                text-decoration: none;
+            }}
+            .brand-title img, .brand-title i {{
+                font-size: 22px;
+                color: #ffffff;
+            }}
+            .menu-toggle-btn {{
+                background: transparent;
+                border: 2px solid rgba(255,255,255,0.6);
+                border-radius: 8px;
+                padding: 6px 12px;
+                color: white;
+                font-size: 18px;
+                cursor: pointer;
+            }}
+            .navbar-links {{
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                margin-top: 14px;
+                padding-bottom: 5px;
+            }}
+            .nav-item-link {{
+                color: #ffffff;
+                text-decoration: none;
+                font-weight: 500;
+                font-size: 15px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                opacity: 0.95;
+            }}
+            .nav-item-link:hover {{ opacity: 1; }}
+
+            /* Hộp Welcome Stranger */
+            .welcome-box {{
+                background-color: #e9e9e9;
+                border-radius: 4px;
+                padding: 14px 16px;
+                margin: 16px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                color: #333333;
+                font-size: 15px;
+                border: 1px solid #dddddd;
+            }}
+            .welcome-close {{
+                background: transparent;
+                border: none;
+                font-size: 18px;
+                color: #666666;
+                cursor: pointer;
+            }}
+
+            /* Tìm kiếm tra cứu đơn hàng */
+            .search-box-container {{
+                margin: 0 16px 16px 16px;
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                gap: 6px;
+                color: #666666;
+                font-size: 14px;
+                cursor: pointer;
+            }}
+
+            /* Khối chính Hệ Thống GetKey */
+            .getkey-card {{
+                background: #ffffff;
+                border-radius: 0px;
+                border: 1px solid #dddddd;
+                margin: 0 16px 20px 16px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            }}
+            .getkey-card-header {{
+                padding: 12px 16px;
+                font-weight: 700;
+                font-size: 16px;
+                color: #111111;
+                border-bottom: 1px solid #eeeeee;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                text-transform: uppercase;
+            }}
+            .getkey-card-body {{
+                padding: 20px 16px;
+            }}
+
+            /* Thiết kế các hàng nhập dữ liệu y hệt trong ảnh */
+            .input-group-custom {{
+                display: flex;
+                width: 100%;
+                border: 1px solid #cccccc;
+                border-radius: 6px;
+                margin-bottom: 14px;
+                background-color: #ffffff;
+                overflow: hidden;
+            }}
+            .input-icon-prefix {{
+                background-color: #f0f0f0;
+                width: 46px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                color: #444444;
+                border-right: 1px solid #cccccc;
+                font-size: 16px;
+            }}
+            .select-custom, .control-custom {{
+                flex: 1;
+                border: none !important;
+                background: transparent !important;
+                padding: 10px 12px;
+                font-size: 15px;
+                color: #111111;
+                outline: none;
+                font-weight: 400;
+            }}
+            .control-custom:disabled {{
+                background-color: #f8f8f8 !important;
+                color: #555555;
+            }}
+            .input-suffix-text {{
+                background-color: #f0f0f0;
+                padding: 0 16px;
+                display: flex;
+                align-items: center;
+                color: #222222;
+                font-weight: 400;
+                font-size: 14px;
+                border-left: 1px solid #cccccc;
+            }}
+
+            /* Khu vực nút bấm cuối */
+            .action-buttons-group {{
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 12px;
+                margin-top: 20px;
+            }}
+            .btn-guide {{
+                background-color: #ffffff;
+                color: #0066cc;
+                border: 1px solid #0066cc;
+                border-radius: 6px;
+                padding: 10px;
+                font-weight: 500;
+                font-size: 14px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                text-decoration: none;
+                line-height: 1.3;
+            }}
+            .btn-generate {{
+                background-color: #0055ff;
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 10px;
+                font-weight: 500;
+                font-size: 14px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 2px 4px rgba(0,85,255,0.2);
+                cursor: pointer;
+            }}
+            .btn-generate span, .btn-guide span {{
+                font-size: 14px;
+            }}
+
+            /* Chú thích phía dưới */
+            .info-notice {{
+                font-size: 12px;
+                color: #777777;
+                text-align: center;
+                margin: 15px 16px;
+                line-height: 1.5;
+            }}
+
+            /* Bản quyền chân trang */
+            .footer-copyright {{
+                text-align: center;
+                color: #777777;
+                font-size: 13px;
+                padding: 16px 0;
+                border-top: 1px solid #e0e0e0;
+                background-color: #f5f5f5;
+                margin-top: auto;
+                width: 100%;
+            }}
         </style>
     </head>
     <body>
-        <div class="container d-flex justify-content-center">
-            <div class="get-key-box">
-                <div class="logo-icon"><i class="fas fa-key"></i></div>
-                <h4 class="fw-bold mb-4" style="color: #111827; letter-spacing: -0.5px;">NHẬN KEY VIP SERVER</h4>
-                <form action="/start_bypass" method="POST">
-                    <label><i class="fas fa-gamepad me-1"></i> Chọn Tựa Game</label>
-                    <select name="game" class="form-select" required>
-                        {options_html}
-                    </select>
-                    
-                    <label><i class="fas fa-layer-group me-1"></i> Gói Thời Gian</label>
-                    <select name="steps" class="form-select" required>
-                        <option value="1">Vượt 1 Lần Link ➔ Key 12H VIP</option>
-                        <option value="2">Vượt 2 Lần Link ➔ Key 24H VIP</option>
-                    </select>
 
-                    <button type="submit" class="btn-getkey"><i class="fas fa-rocket me-1"></i> Bắt đầu vượt link</button>
-                </form>
-                <div class="footer-text">
-                    Lưu ý: Thiết bị tối đa cho mỗi Key vượt link là 1 máy.<br>Hoàn thành vượt link, hệ thống tự động trả về mã cấu hình VIP.
-                </div>
+        <div class="navbar-custom">
+            <div class="navbar-top">
+                <a href="/" class="brand-title">
+                    <i class="fas fa-layer-group"></i> VuaHackVip
+                </a>
+                <button class="menu-toggle-btn" onclick="toggleMenu()"><i class="fas fa-bars"></i></button>
+            </div>
+            <div class="navbar-links" id="navbarMenuLinks">
+                <a href="/" class="nav-item-link"><i class="fas fa-gift"></i> Get Free Key</a>
+                <a href="/admin_login" class="nav-item-link"><i class="fas fa-sign-in-alt"></i> Login</a>
+                <a href="#" class="nav-item-link"><i class="fas fa-user-plus"></i> Register</a>
             </div>
         </div>
+
+        <div class="welcome-box" id="welcomeStrangerBox">
+            <span>Welcome Stranger</span>
+            <button class="welcome-close" onclick="closeWelcome()">&times;</button>
+        </div>
+
+        <div class="search-box-container">
+            <i class="fas fa-search"></i> <span>Tra cứu đơn hàng VIP</span>
+        </div>
+
+        <div class="getkey-card">
+            <div class="getkey-card-header">
+                <i class="fas fa-gift"></i> Hệ thống GetKey
+            </div>
+            <div class="getkey-card-body">
+                <form action="/start_bypass" method="POST">
+                    
+                    <div class="input-group-custom">
+                        <div class="input-icon-prefix"><i class="fas fa-gamepad"></i></div>
+                        <select name="game" class="select-custom" required>
+                            <option value="" disabled selected>-- Chọn game --</option>
+                            {options_html}
+                        </select>
+                    </div>
+
+                    <div class="input-group-custom">
+                        <div class="input-icon-prefix"><i class="fas fa-mobile-alt"></i></div>
+                        <input type="text" class="control-custom" value="1" disabled>
+                        <div class="input-suffix-text">Thiết bị</div>
+                    </div>
+
+                    <div class="input-group-custom">
+                        <div class="input-icon-prefix"><i class="far fa-calendar-alt"></i></div>
+                        <input type="text" class="control-custom" value="24 Giờ" disabled>
+                    </div>
+
+                    <div class="input-group-custom">
+                        <div class="input-icon-prefix"><i class="far fa-gem"></i></div>
+                        <select name="steps" class="select-custom" required>
+                            <option value="1">FREE (Vượt quảng cáo gói 12H)</option>
+                            <option value="2">FREE (Vượt quảng cáo gói 24H)</option>
+                        </select>
+                    </div>
+
+                    <div class="action-buttons-group">
+                        <a href="#" class="btn-guide">
+                            <i class="far fa-question-circle mb-1" style="font-size: 16px;"></i>
+                            <span>Hướng dẫn<br>GetKey</span>
+                        </a>
+                        <button type="submit" class="btn-generate">
+                            <i class="fas fa-sign-in-alt mb-1" style="font-size: 16px;"></i>
+                            <span>Generate</span>
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+
+        <div class="info-notice">
+            <i class="fas fa-info-circle"></i> Chọn game và nhấn Generate để bắt đầu.<br>
+            Thiết bị tối đa cho mỗi Key vượt link là 1 máy.
+        </div>
+
+        <div class="footer-copyright">
+            &copy; 2026 - ManhLamDev
+        </div>
+
+        <script>
+            function toggleMenu() {{
+                var menu = document.getElementById("navbarMenuLinks");
+                if (menu.style.display === "none" || menu.style.display === "") {{
+                    menu.style.display = "flex";
+                }} else {{
+                    menu.style.display = "none";
+                }}
+            }}
+            function closeWelcome() {{
+                document.getElementById("welcomeStrangerBox").style.display = "none";
+            }}
+        </script>
     </body>
     </html>
     '''
