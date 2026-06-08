@@ -61,7 +61,16 @@ def send_telegram_event(event_type, data):
         except Exception: pass
     threading.Thread(target=_send, daemon=True).start()
 
-def send_telegram_alert(message): pass 
+# NÂNG CẤP: Kích hoạt hàm cảnh báo Telegram để hệ thống giám sát đẩy lỗi về điện thoại của bạn
+def send_telegram_alert(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
+    def _send_alert():
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": f"🚨 <b>[GIÁM SÁT HỆ THỐNG]</b> 🚨\n\n{message}", "parse_mode": "HTML"}
+            requests.post(url, json=payload, timeout=10)
+        except Exception: pass
+    threading.Thread(target=_send_alert, daemon=True).start()
 
 _needs_tg_backup = False
 def tg_backup_worker():
@@ -124,11 +133,19 @@ def telegram_polling():
 
 threading.Thread(target=telegram_polling, daemon=True).start()
 
+# NÂNG CẤP: Tối ưu hóa luồng giữ thức độc lập liên tục 24/7 chống ngủ đông (gói Free Render) hiệu quả hơn
 def keep_awake():
+    time.sleep(10)
+    send_telegram_alert("🟢 <b>Hệ thống giám sát bảo mật liên tục 24/7 đã kích hoạt thành công!</b>")
     while True:
-        time.sleep(14 * 60)
-        try: requests.get(WEB_URL, timeout=10)
-        except Exception: pass
+        try:
+            # Tự gọi cổng nội bộ của chính mình để tránh bị hoãn luồng chính
+            requests.get(f"http://127.0.0.1:{os.environ.get('PORT', 5000)}/ping", timeout=5)
+            # Tự gọi link Public để báo hiệu cho Render giữ tài nguyên hoạt động liên tục
+            requests.get(WEB_URL, timeout=10)
+        except Exception as e:
+            pass
+        time.sleep(5 * 60) # Cứ 5 phút ping một lần để đảm bảo tuyệt đối không bị ngủ đông
 
 threading.Thread(target=keep_awake, daemon=True).start()
 
@@ -138,6 +155,9 @@ def ping_server(): return "OK", 200
 @app.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, HTTPException): return e
+    # NÂNG CẤP BẢO MẬT: Khi có lỗi logic nghiêm trọng xảy ra, tự động gửi trace lỗi về Telegram của Admin thay vì âm thầm lỗi
+    err_trace = traceback.format_exc()
+    send_telegram_alert(f"⚠️ <b>SERVER PHÁT SINH LỖI NỘI BỘ (ANTI-CRASH CỨU NGUY):</b>\n<code>{escape(str(e))}</code>\n\n<b>Chi tiết lỗi:</b>\n<code>{escape(err_trace[:500])}</code>")
     return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Server Updating</title><style>body {{ background: #f8fafc; color: #0f172a; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin: 0; }} .loader {{ border: 5px solid rgba(15, 23, 42, 0.1); border-top: 5px solid #0f172a; border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; margin-bottom: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.05); }} @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }} h2 {{ letter-spacing: 1px; }}</style></head><body><div class="loader"></div><h2>Đang update online server vui lòng đợi...</h2></body></html>""", 500
 
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
@@ -292,7 +312,10 @@ def firewall_and_csrf():
         if ip in banned_ips: return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL LVT.", 403
         ua = (request.headers.get('User-Agent') or '').lower()
         blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
-        if any(bot in ua for bot in blocked_bots): return "Firewall Blocked.", 403
+        if any(bot in ua for bot in blocked_bots): 
+            # NÂNG CẤP: Gửi thông báo về Telegram ngay khi phát hiện tool quét (nmap, sqlmap...) dò lỗi hệ thống
+            send_telegram_alert(f"🛡️ <b>Tường lửa chặn công cụ quét độc hại!</b>\n🌐 IP: <code>{ip}</code>\n🤖 User-Agent: <code>{escape(ua)}</code>")
+            return "Firewall Blocked.", 403
             
         if request.path.startswith("/admin") and request.path not in ["/admin_login"]:
             if session.get('role') != 'admin': return redirect('/admin_login')
@@ -861,7 +884,16 @@ def api_verify_core():
             for k in stale_ips: api_rate_cache.pop(k, None)
         reqs = api_rate_cache.get(public_ip, [])
         reqs = [t for t in reqs if now - t < 60000]
-        if len(reqs) >= 30: return jsonify({"status": "error", "msg": "Phát hiện lạm dụng API (Spam)! Vui lòng thử lại sau 1 phút."})
+        
+        # NÂNG CẤP BẢO MẬT: Chống Spam API, nếu spam quá nhiều lần, tự động khóa luôn IP đó vào Tường lửa
+        if len(reqs) >= 30: 
+            db = load_db()
+            with db_lock:
+                if public_ip not in db.setdefault("banned_ips", []):
+                    db["banned_ips"].append(public_ip)
+                    save_db(db)
+            send_telegram_alert(f"🚫 <b>ANTI-SPAM DDOS KÍCH HOẠT:</b> Auto ban IP <code>{public_ip}</code> do spam API liên tục vượt giới hạn.")
+            return jsonify({"status": "error", "msg": "Phát hiện lạm dụng API (Spam)! Thiết bị của bạn đã bị đưa vào danh sách đen."})
         reqs.append(now)
         api_rate_cache[public_ip] = reqs
 
@@ -951,7 +983,15 @@ def admin_login():
         with admin_login_lock:
             admin_login_attempts = {k: v for k, v in admin_login_attempts.items() if now - v['time'] < 300} 
             attempts = admin_login_attempts.get(ip, {'count': 0, 'time': now})
-            if attempts['count'] >= 5: return swal_back("Bị Khóa", "Thử lại sau 5 phút!", "error")
+            if attempts['count'] >= 5: 
+                # NÂNG CẤP BẢO MẬT: Khóa IP vĩnh viễn nếu cố tình Bruteforce mật khẩu Admin
+                db = load_db()
+                with db_lock:
+                    if ip not in db.setdefault("banned_ips", []):
+                        db["banned_ips"].append(ip)
+                        save_db(db)
+                send_telegram_alert(f"💥 <b>CẢNH BÁO BRUTEFORCE:</b> IP <code>{ip}</code> cố tình dò mật khẩu Admin sai 5 lần. Hệ thống tự động BAN IP vĩnh viễn!")
+                return swal_back("Bị Khóa", "Bạn đã bị chặn vĩnh viễn do cố tình dò mật khẩu!", "error")
 
             if request.method == 'POST':
                 db = load_db()
@@ -1740,4 +1780,5 @@ try:
 except Exception: app.secret_key = secrets.token_hex(32)
 
 if __name__ == '__main__':
+    # Đảm bảo luồng chạy trơn tru đa luồng trên mọi cổng của Render
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), threaded=True)
