@@ -139,10 +139,11 @@ def keep_awake():
     send_telegram_alert("🟢 <b>Hệ thống giám sát bảo mật liên tục 24/7 đã kích hoạt thành công!</b>")
     while True:
         try:
+            headers = {"User-Agent": "LVT-Core-KeepAlive/3.0"}
             # Tự gọi cổng nội bộ của chính mình để tránh bị hoãn luồng chính
-            requests.get(f"http://127.0.0.1:{os.environ.get('PORT', 5000)}/ping", timeout=5)
+            requests.get(f"http://127.0.0.1:{os.environ.get('PORT', 5000)}/ping", headers=headers, timeout=5)
             # Tự gọi link Public để báo hiệu cho Render giữ tài nguyên hoạt động liên tục
-            requests.get(WEB_URL, timeout=10)
+            requests.get(WEB_URL, headers=headers, timeout=10)
         except Exception as e:
             pass
         time.sleep(5 * 60) # Cứ 5 phút ping một lần để đảm bảo tuyệt đối không bị ngủ đông
@@ -310,7 +311,17 @@ def firewall_and_csrf():
         banned_ips = set(db.get("banned_ips", []))
         ip = get_real_ip()
         if ip in banned_ips: return "⚠️ BẠN ĐÃ BỊ TỪ CHỐI TRUY CẬP BỞI HỆ THỐNG FIREWALL LVT.", 403
+        
+        # [NÂNG CẤP TƯỜNG LỬA THÔNG MINH]: Loại bỏ báo động giả từ các luồng Self-Ping nội bộ hoặc trang Uptime Monitor hợp lệ
+        if request.path == '/ping' or ip == '127.0.0.1' or ip == 'localhost':
+            return
+
         ua = (request.headers.get('User-Agent') or '').lower()
+        
+        # Chấp nhận chuỗi định danh độc quyền từ bot keepalive nội bộ của bạn
+        if 'lvt-core-keepalive' in ua:
+            return
+
         blocked_bots = ['curl', 'postman', 'python', 'nmap', 'sqlmap', 'masscan', 'zgrab', 'wget', 'urllib', 'nikto']
         if any(bot in ua for bot in blocked_bots): 
             # NÂNG CẤP: Gửi thông báo về Telegram ngay khi phát hiện tool quét (nmap, sqlmap...) dò lỗi hệ thống
@@ -1190,7 +1201,7 @@ def admin_dashboard():
                     <div class="table-responsive" style="max-height: 700px; overflow-y:auto;">
                         <table class="table table-hover text-center align-middle mb-0">
                             <thead style="position: sticky; top: 0; z-index: 1;">
-                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Danh OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
+                                <tr><th>Cụm Key Kích Hoạt</th><th>Thời Hạn</th><th>Định Định OLM</th><th>Thiết bị</th><th>Thao Tác Quản Trị</th></tr>
                             </thead>
                             <tbody>
                                 {keys_html or '<tr><td colspan="5" class="py-5 text-muted" style="background:#fff;">Chưa có dữ liệu.</td></tr>'}
