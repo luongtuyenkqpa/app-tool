@@ -1516,12 +1516,69 @@ def admin_files_dashboard():
                     <div class="card h-100" style="border-top: 3px solid #0f172a;">
                         <div class="card-header"><div><i class="fas fa-file-archive"></i> NẠP FILE .PAK (DATA)</div></div>
                         <div class="card-body d-flex flex-column">
-                            <form action="/admin/update_pak" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
+                            <form id="pakUploadForm" action="/admin/update_pak" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
                                 <div class="mb-3 p-3 text-center" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">{pak_status}</div>
                                 <input type="file" name="pak_file" class="form-control mb-2" accept=".pak">
                                 <input type="url" name="pak_url" class="form-control mb-3" placeholder="Hoặc dán Link trực tiếp tải file .pak (Direct URL)...">
+                                <div class="progress mb-3 d-none" id="pakUploadProgressContainer" style="height: 22px; border-radius: 8px;">
+                                    <div id="pakUploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success fw-bold" role="progressbar" style="width: 0%;">0%</div>
+                                </div>
+                                <div id="pakUploadStatusText" class="text-center small mb-2 text-primary fw-bold"></div>
                                 <button type="submit" class="btn-primary-custom mt-auto"><i class="fas fa-cloud-upload-alt"></i> NẠP FILE .PAK</button>
                             </form>
+                            <script>
+                                document.getElementById('pakUploadForm').addEventListener('submit', function(e) {{
+                                    var fileInput = this.querySelector('input[name="pak_file"]');
+                                    var urlInput = this.querySelector('input[name="pak_url"]');
+                                    if (urlInput.value.trim() !== "") {{
+                                        return;
+                                    }}
+                                    if (!fileInput.files || fileInput.files.length === 0) {{
+                                        return;
+                                    }}
+                                    e.preventDefault();
+                                    var formData = new FormData(this);
+                                    var xhr = new XMLHttpRequest();
+                                    var pContainer = document.getElementById('pakUploadProgressContainer');
+                                    var pBar = document.getElementById('pakUploadProgressBar');
+                                    var pStatus = document.getElementById('pakUploadStatusText');
+                                    var btn = this.querySelector('button[type="submit"]');
+                                    
+                                    pContainer.classList.remove('d-none');
+                                    btn.disabled = true;
+                                    
+                                    xhr.upload.addEventListener('progress', function(e) {{
+                                        if (e.lengthComputable) {{
+                                            var percent = Math.round((e.loaded / e.total) * 100);
+                                            pBar.style.width = percent + '%';
+                                            pBar.innerText = percent + '%';
+                                            pStatus.innerText = "Đang nạp dữ liệu: " + (e.loaded / (1024*1024)).toFixed(1) + "MB / " + (e.total / (1024*1024)).toFixed(1) + "MB";
+                                        }}
+                                    }});
+                                    xhr.onreadystatechange = function() {{
+                                        if (xhr.readyState === 4) {{
+                                            btn.disabled = false;
+                                            if (xhr.status === 200) {{
+                                                try {{
+                                                    var res = JSON.parse(xhr.responseText);
+                                                    if (res.status === 'success') {{
+                                                        Swal.fire({{ title: 'Thành Công', html: res.message, icon: 'success', confirmButtonColor: '#0f172a' }}).then(() => {{ window.location.reload(); }});
+                                                    }} else {{
+                                                        Swal.fire({{ title: 'Lỗi', html: res.message, icon: 'error', confirmButtonColor: '#0f172a' }});
+                                                    }}
+                                                }} catch(err) {{
+                                                    window.location.reload();
+                                                }}
+                                            }} else {{
+                                                Swal.fire({{ title: 'Lỗi', html: 'Lỗi kết nối server hoặc kích thước quá giới hạn!', icon: 'error', confirmButtonColor: '#0f172a' }});
+                                            }}
+                                        }}
+                                    }};
+                                    xhr.open('POST', '/admin/update_pak', true);
+                                    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+                                    xhr.send(formData);
+                                }});
+                            </script>
                         </div>
                     </div>
                 </div>
@@ -1715,40 +1772,52 @@ def admin_update_webview():
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp Giao diện WebView thành công!", "success", "/admin/files")
 
-# ========================================================
-# [HÀM ĐÃ ĐƯỢC FIX TRIỆT ĐỂ 2 LỖI NẠP FILE .PAK]
-# ========================================================
 @app.route('/admin/update_pak', methods=['POST'])
 def admin_update_pak():
-    if session.get('role') != 'admin': return redirect('/admin_login')
+    if session.get('role') != 'admin':
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({"status": "error", "message": "Hết phiên làm việc!"}), 401
+        return redirect('/admin_login')
+        
     pak_url = request.form.get('pak_url', '').strip()
     pak_path = './uploaded.pak'
     temp_pak_path = './uploaded.pak.tmp'
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    
     try:
         if pak_url:
-            # FIX LỖI 1: Thêm User-Agent giả lập trình duyệt để bypass lỗi chặn 403 bới Google Drive, OneDrive, Discord,... và tăng timeout cho file nặng
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            r = requests.get(pak_url, headers=headers, stream=True, timeout=60)
+            r = requests.get(pak_url, stream=True, timeout=30)
             r.raise_for_status()
             with open(temp_pak_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=1024 * 1024): # Tăng lên 1MB mỗi chunk để tải & ghi cực nhanh chống nghẽn luồng
-                    if chunk: f.write(chunk)
+                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
             os.replace(temp_pak_path, pak_path)
         else:
-            if 'pak_file' not in request.files or request.files['pak_file'].filename == '': return swal_back("Lỗi", "Chưa chọn file hoặc dán Link URL!", "error")
+            if 'pak_file' not in request.files or request.files['pak_file'].filename == '':
+                if is_ajax: return jsonify({"status": "error", "message": "Chưa chọn file hoặc dán Link URL!"})
+                return swal_back("Lỗi", "Chưa chọn file hoặc dán Link URL!", "error")
+            
             file = request.files['pak_file']
-            # FIX LỖI 2: Loại bỏ vòng lặp stream.read() lỗi thời dễ gãy, thay thế bằng hàm file.save() gốc tối ưu hóa tuyệt đối của Flask
-            file.save(temp_pak_path)
+            # Đọc ghi tuần tự theo cụm chunk size nhỏ (64KB) chống nghẽn bộ nhớ đệm luồng khi nạp file dung lượng cực đại 500MB
+            with open(temp_pak_path, 'wb') as f:
+                while True:
+                    chunk = file.stream.read(64 * 1024) 
+                    if not chunk: break
+                    f.write(chunk)
             os.replace(temp_pak_path, pak_path)
+            
         db = load_db()
         save_db(db)
+        
+        if is_ajax: 
+            return jsonify({"status": "success", "message": "Đã nạp file .PAK thành công!"})
     except Exception as e:
         if os.path.exists(temp_pak_path):
             try: os.remove(temp_pak_path)
             except: pass
-        return swal_back("Lỗi", f"Không thể lưu file .pak: {escape_swal(str(e))}", "error")
+        err_msg = f"Không thể lưu file .pak: {escape_swal(str(e))}"
+        if is_ajax: return jsonify({"status": "error", "message": err_msg})
+        return swal_back("Lỗi", err_msg, "error")
+        
     return swal_redirect("Thành Công", "Đã nạp file .PAK thành công!", "success", "/admin/files")
 
 @app.route('/admin/ban_ip', methods=['POST'])
