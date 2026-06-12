@@ -1715,6 +1715,9 @@ def admin_update_webview():
         save_db(db)
     return swal_redirect("Thành Công", "Đã nạp Giao diện WebView thành công!", "success", "/admin/files")
 
+# ========================================================
+# [HÀM ĐÃ ĐƯỢC FIX TRIỆT ĐỂ 2 LỖI NẠP FILE .PAK]
+# ========================================================
 @app.route('/admin/update_pak', methods=['POST'])
 def admin_update_pak():
     if session.get('role') != 'admin': return redirect('/admin_login')
@@ -1723,19 +1726,21 @@ def admin_update_pak():
     temp_pak_path = './uploaded.pak.tmp'
     try:
         if pak_url:
-            r = requests.get(pak_url, stream=True, timeout=30)
+            # FIX LỖI 1: Thêm User-Agent giả lập trình duyệt để bypass lỗi chặn 403 bới Google Drive, OneDrive, Discord,... và tăng timeout cho file nặng
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            r = requests.get(pak_url, headers=headers, stream=True, timeout=60)
             r.raise_for_status()
             with open(temp_pak_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
+                for chunk in r.iter_content(chunk_size=1024 * 1024): # Tăng lên 1MB mỗi chunk để tải & ghi cực nhanh chống nghẽn luồng
+                    if chunk: f.write(chunk)
             os.replace(temp_pak_path, pak_path)
         else:
             if 'pak_file' not in request.files or request.files['pak_file'].filename == '': return swal_back("Lỗi", "Chưa chọn file hoặc dán Link URL!", "error")
             file = request.files['pak_file']
-            with open(temp_pak_path, 'wb') as f:
-                while True:
-                    chunk = file.stream.read(64 * 1024) 
-                    if not chunk: break
-                    f.write(chunk)
+            # FIX LỖI 2: Loại bỏ vòng lặp stream.read() lỗi thời dễ gãy, thay thế bằng hàm file.save() gốc tối ưu hóa tuyệt đối của Flask
+            file.save(temp_pak_path)
             os.replace(temp_pak_path, pak_path)
         db = load_db()
         save_db(db)
