@@ -118,7 +118,7 @@ def telegram_polling():
                                 continue
                             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage", json={"chat_id": chat_id, "message_id": msg_id})
                             welcome = f"🌟 <b>HỆ THỐNG CẤP PROXY OLM TỰ ĐỘNG</b> 🌟\n\nXin chào <b>{escape(user_first_name)}</b>!\nTruy cập Link Web để tự động cấu hình Proxy & Script:"
-                            keyboard = {"inline_keyboard": [[{"text": "🌐 MỞ TRANG LẤY KEY VÀ PROXY", "web_app": {"url": f"{WEB_URL}/"}}]]}
+                            keyboard = {"inline_keyboard": [[{"text": "🚀 MỞ MINI APP QUẢN LÝ PROXY", "web_app": {"url": f"{WEB_URL}/proxy"}}]]}
                             requests.post(url_base + "/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": keyboard})
         except Exception: pass
         time.sleep(2)
@@ -362,19 +362,26 @@ def check_proxy_status():
         return jsonify({"status": "invalid", "message": msg_login, "ingame_message": ""})
         
     kd = db["keys"][key]
+    
+    # Nâng cấp logic: Trả về durationMs và exp để Frontend Mini App tự tính thời gian
+    duration_ms = kd.get("durationMs", 0)
+    exp_val = kd.get("exp")
+    
     if kd.get("status") == "banned":
         ban_until = kd.get("ban_until", "permanent")
         if ban_until == "permanent" or (isinstance(ban_until, int) and ban_until > now): 
-            return jsonify({"status": "banned", "message": "Key đã bị cấm!", "ingame_message": ""})
+            return jsonify({"status": "banned", "message": "Key đã bị cấm!", "ingame_message": "", "exp": exp_val, "durationMs": duration_ms})
         
     if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: 
-        return jsonify({"status": "expired", "message": msg_login, "ingame_message": ""})
+        return jsonify({"status": "expired", "message": msg_login, "ingame_message": "", "exp": exp_val, "durationMs": duration_ms})
         
     return jsonify({
         "status": "active", 
         "message": msg_login, 
         "ingame_message": msg_ingame,
-        "yaml_url": f"{WEB_URL}/api/proxy.yaml?key={key}"
+        "yaml_url": f"{WEB_URL}/api/proxy.yaml?key={key}",
+        "exp": exp_val,
+        "durationMs": duration_ms
     })
 
 @app.route('/api/proxy.yaml')
@@ -383,21 +390,34 @@ def download_proxy_yaml():
     db = load_db()
     now = int(time.time() * 1000)
     
+    # [NÂNG CẤP THÔNG MINH]: Xử lý lỗi <!DOCTYPE
+    # Nếu Key hết hạn/sai/banned, KHÔNG TRẢ VỀ CHUỖI VĂN BẢN (gây lỗi HTML/<!DOCTYPE trong app).
+    # THAY VÀO ĐÓ: Trả về một file YAML hợp lệ với cấu hình "Chặn mọi kết nối" (MATCH, REJECT).
+    blocker_yaml = "port: 7890\nsocks-port: 7891\nallow-lan: true\nmode: rule\nlog-level: info\nproxies: []\nproxy-groups: []\nrules:\n  - MATCH, REJECT\n"
+    
     if not key or key not in db.get("keys", {}):
-        return "Key không hợp lệ hoặc không được cung cấp.", 403
+        resp = make_response(f"# CẢNH BÁO: KEY KHÔNG HỢP LỆ VUI LÒNG KIỂM TRA LẠI\n{blocker_yaml}")
+        resp.headers['Content-Type'] = 'text/yaml; charset=utf-8'
+        return resp
         
     kd = db["keys"][key]
     if kd.get("status") == "banned":
-        return "Key đã bị khoá.", 403
-    if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: 
-        return "Key đã hết hạn.", 403
+        resp = make_response(f"# CẢNH BÁO: KEY NÀY ĐÃ BỊ ADMIN KHÓA\n{blocker_yaml}")
+        resp.headers['Content-Type'] = 'text/yaml; charset=utf-8'
+        return resp
         
+    if kd.get("exp") != "permanent" and kd.get("exp") != "pending" and kd.get("exp", 0) < now: 
+        resp = make_response(f"# CẢNH BÁO: KEY ĐÃ HẾT HẠN\n{blocker_yaml}")
+        resp.headers['Content-Type'] = 'text/yaml; charset=utf-8'
+        return resp
+        
+    # Chèn biến thông minh theo yêu cầu
     yaml_content = db.get("settings", {}).get("proxy_yaml", "")
     yaml_content = yaml_content.replace("{KEY}", key)
     
     resp = make_response(yaml_content)
     resp.headers['Content-Type'] = 'text/yaml; charset=utf-8'
-    resp.headers['Content-Disposition'] = f'attachment; filename="proxy_{key}.yaml"'
+    resp.headers['Content-Disposition'] = f'attachment; filename="LVT_{key}.yaml"'
     return resp
 
 @app.route('/api/get_script')
@@ -447,18 +467,20 @@ def serve_webview_app():
     else:
         html_content = db.get("settings", {}).get("app_webview_code", "<h1>Hệ thống chưa được nạp giao diện WebView. Vui lòng liên hệ Admin!</h1>")
         
+        # [NÂNG CẤP] Sửa lỗi Webview báo kết nối liên tục, chống spam reload
         auto_check_script = f"""
         <script>
             (function() {{
-                const checkInterval = 5000;
+                const checkInterval = 8000; // Tăng lên 8s để đỡ lag
                 let isLobbyLocked = false;
+                let errorCount = 0;
                 
                 function createLobbyOverlay(msg) {{
                     if(document.getElementById('lvt-lobby-lock')) return;
                     let overlay = document.createElement('div');
                     overlay.id = 'lvt-lobby-lock';
                     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:999999;display:flex;flex-direction:column;justify-content:center;align-items:center;color:#fff;font-family:sans-serif;text-align:center;padding:20px;backdrop-filter:blur(10px);';
-                    overlay.innerHTML = '<h2 style="color:#ef4444;margin-bottom:15px;text-transform:uppercase;">CẢNH BÁO KẾT NỐI</h2><p style="font-size:18px;line-height:1.5;">' + msg + '</p><button onclick="window.location.reload()" style="margin-top:20px;padding:10px 20px;background:#ef4444;color:#fff;border:none;border-radius:8px;font-weight:bold;cursor:pointer;">TẢI LẠI TRANG</button>';
+                    overlay.innerHTML = '<h2 style="color:#ef4444;margin-bottom:15px;text-transform:uppercase;">CẢNH BÁO HỆ THỐNG</h2><p style="font-size:18px;line-height:1.5;" id="lvt-msg-content">' + msg + '</p><button onclick="window.location.reload()" style="margin-top:20px;padding:10px 20px;background:#ef4444;color:#fff;border:none;border-radius:8px;font-weight:bold;cursor:pointer;">TẢI LẠI TRANG</button>';
                     document.body.appendChild(overlay);
                     isLobbyLocked = true;
                 }}
@@ -476,6 +498,8 @@ def serve_webview_app():
                         key = urlParams.get('key') || '';
                     }}
                     
+                    if(!key) return; // FIX: Nếu chưa có key thì không khóa báo lỗi ngay, để họ nhập.
+                    
                     fetch('{WEB_URL}/api/proxy/status?key=' + key)
                     .then(r => r.json())
                     .then(d => {{
@@ -483,8 +507,15 @@ def serve_webview_app():
                             createLobbyOverlay(d.message);
                         }} else {{
                             if(isLobbyLocked) removeLobbyOverlay();
+                            errorCount = 0;
                         }}
-                    }}).catch(e => {{}});
+                    }}).catch(e => {{
+                        errorCount++;
+                        // FIX: Chống spam nếu rớt mạng thật
+                        if(errorCount > 3 && isLobbyLocked) {{
+                            document.getElementById('lvt-msg-content').innerText = "Mất kết nối máy chủ. Đang thử lại...";
+                        }}
+                    }});
                 }}, checkInterval);
             }})();
         </script>
@@ -751,7 +782,7 @@ def get_key_portal():
             </div>
             <div class="navbar-links" id="navbarMenuLinks">
                 <a href="/" class="nav-item-link"><i class="fas fa-gift"></i> Get Free Key</a>
-                <a href="/proxy" class="nav-item-link"><i class="fas fa-shield-alt"></i> Quản Lý Proxy</a>
+                <a href="/proxy" class="nav-item-link"><i class="fas fa-rocket"></i> App Quản Lý Proxy (Cosmic)</a>
                 <a href="/admin_login" class="nav-item-link"><i class="fas fa-sign-in-alt"></i> Login</a>
                 <a href="#" class="nav-item-link"><i class="fas fa-user-plus"></i> Register</a>
             </div>
@@ -843,93 +874,393 @@ def get_key_portal():
 
 @app.route('/proxy')
 def proxy_client_portal():
+    # [NÂNG CẤP GIAO DIỆN VŨ TRỤ - TELEGRAM MINI APP]
     return f'''
     <!DOCTYPE html><html lang="vi">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-        <title>HELY - Quản Lý Proxy</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+        <title>HELY - Cosmic Proxy</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
-            html, body {{ background-color: #f5f5f5; font-family: 'Roboto', sans-serif; margin: 0; padding: 0; height: 100vh; overflow-x: hidden; }}
-            .navbar-custom {{ background-color: #0066ff; padding: 12px 16px; display: flex; flex-direction: column; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-            .navbar-top {{ display: flex; justify-content: space-between; align-items: center; width: 100%; }}
-            .brand-title {{ color: #ffffff; font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 8px; text-decoration: none; }}
-            .menu-toggle-btn {{ background: transparent; border: 2px solid rgba(255,255,255,0.6); border-radius: 8px; padding: 6px 12px; color: white; font-size: 18px; cursor: pointer; }}
-            .navbar-links {{ display: none; flex-direction: column; gap: 12px; margin-top: 14px; padding-bottom: 5px; }}
-            .nav-item-link {{ color: #ffffff; text-decoration: none; font-weight: 500; font-size: 15px; display: flex; align-items: center; gap: 8px; opacity: 0.95; }}
-            .getkey-card {{ background: #ffffff; border: 1px solid #dddddd; margin: 20px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
-            .getkey-card-header {{ padding: 12px 16px; font-weight: 700; font-size: 16px; color: #111111; border-bottom: 1px solid #eeeeee; display: flex; align-items: center; gap: 8px; text-transform: uppercase; }}
-            .getkey-card-body {{ padding: 20px 16px; text-align: center; }}
-            .control-custom {{ width: 100%; border: 1px solid #cccccc; border-radius: 6px; padding: 12px; font-size: 15px; margin-bottom: 15px; outline: none; text-align: center; }}
-            .btn-generate {{ background-color: #0055ff; color: #ffffff; border: none; border-radius: 6px; padding: 12px; font-weight: 500; font-size: 14px; width: 100%; box-shadow: 0 2px 4px rgba(0,85,255,0.2); cursor: pointer; text-transform: uppercase; }}
-            .status-box {{ display: none; background: #eef2ff; border: 1px dashed #6366f1; border-radius: 8px; padding: 15px; margin-top: 20px; text-align: left; }}
-            .btn-clash {{ display: block; background: #10b981; color: white; padding: 12px; border-radius: 6px; text-decoration: none; font-weight: bold; margin-top: 15px; text-align: center; box-shadow: 0 2px 4px rgba(16,185,129,0.3); }}
-            .btn-clash:hover {{ color: white; background: #059669; }}
+            @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap');
+            
+            :root {{
+                --neon-cyan: #00f3ff;
+                --neon-purple: #bf00ff;
+                --dark-space: #0b0f19;
+                --glass-bg: rgba(20, 25, 45, 0.4);
+            }}
+
+            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+            
+            body {{
+                background: radial-gradient(circle at 50% 50%, #1a233a 0%, var(--dark-space) 100%);
+                color: #fff;
+                font-family: 'Rajdhani', sans-serif;
+                min-height: 100vh;
+                overflow-x: hidden;
+                position: relative;
+            }}
+
+            /* Hiệu ứng hạt sao (Particles) */
+            .stars {{
+                position: fixed;
+                top: 0; left: 0; width: 100%; height: 100%;
+                pointer-events: none;
+                z-index: 0;
+            }}
+            .star {{
+                position: absolute;
+                background: #fff;
+                border-radius: 50%;
+                animation: twinkle linear infinite;
+            }}
+            @keyframes twinkle {{
+                0% {{ opacity: 0.2; transform: scale(0.8); }}
+                50% {{ opacity: 1; transform: scale(1.2); box-shadow: 0 0 10px #fff, 0 0 20px var(--neon-cyan); }}
+                100% {{ opacity: 0.2; transform: scale(0.8); }}
+            }}
+
+            .app-container {{
+                position: relative;
+                z-index: 10;
+                padding: 20px;
+                max-width: 500px;
+                margin: 0 auto;
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+            }}
+
+            .header-title {{
+                text-align: center;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 28px;
+                font-weight: 700;
+                margin-bottom: 25px;
+                margin-top: 10px;
+                text-transform: uppercase;
+                background: linear-gradient(90deg, var(--neon-cyan), var(--neon-purple));
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-shadow: 0 0 20px rgba(0, 243, 255, 0.3);
+            }}
+
+            /* TABS */
+            .tabs {{
+                display: flex;
+                background: rgba(0,0,0,0.5);
+                border-radius: 12px;
+                padding: 5px;
+                margin-bottom: 25px;
+                border: 1px solid rgba(255,255,255,0.1);
+            }}
+            .tab-btn {{
+                flex: 1;
+                padding: 12px;
+                text-align: center;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 14px;
+                color: #8892b0;
+                cursor: pointer;
+                border-radius: 8px;
+                transition: 0.3s;
+                font-weight: 700;
+            }}
+            .tab-btn.active {{
+                background: linear-gradient(135deg, rgba(0, 243, 255, 0.2), rgba(191, 0, 255, 0.2));
+                color: #fff;
+                border: 1px solid var(--neon-cyan);
+                box-shadow: inset 0 0 15px rgba(0, 243, 255, 0.2);
+            }}
+
+            .tab-content {{ display: none; animation: fadeIn 0.4s ease; }}
+            .tab-content.active {{ display: block; }}
+            @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+
+            /* GLASS PANEL */
+            .glass-card {{
+                background: var(--glass-bg);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 20px;
+                padding: 25px 20px;
+                box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+                margin-bottom: 20px;
+            }}
+
+            .input-cosmic {{
+                width: 100%;
+                background: rgba(0,0,0,0.3);
+                border: 1px solid rgba(0, 243, 255, 0.3);
+                color: var(--neon-cyan);
+                padding: 16px;
+                border-radius: 12px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 16px;
+                text-align: center;
+                outline: none;
+                transition: 0.3s;
+                letter-spacing: 2px;
+            }}
+            .input-cosmic:focus {{
+                border-color: var(--neon-cyan);
+                box-shadow: 0 0 15px rgba(0, 243, 255, 0.4);
+            }}
+            .input-cosmic::placeholder {{ color: rgba(255,255,255,0.3); letter-spacing: 0; }}
+
+            .btn-action {{
+                width: 100%;
+                padding: 15px;
+                border-radius: 12px;
+                border: none;
+                font-family: 'Orbitron', sans-serif;
+                font-weight: 700;
+                font-size: 16px;
+                color: #fff;
+                cursor: pointer;
+                transition: 0.3s;
+                text-transform: uppercase;
+                margin-top: 15px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                gap: 10px;
+                text-decoration: none;
+            }}
+            .btn-activate {{
+                background: linear-gradient(45deg, #00d2ff 0%, #3a7bd5 100%);
+                box-shadow: 0 5px 20px rgba(0, 210, 255, 0.4);
+            }}
+            .btn-activate:hover {{ transform: scale(1.02); box-shadow: 0 5px 25px rgba(0, 210, 255, 0.6); }}
+            
+            .btn-clash {{
+                background: linear-gradient(45deg, #f12711 0%, #f5af19 100%);
+                box-shadow: 0 5px 20px rgba(241, 39, 17, 0.4);
+                display: none;
+            }}
+            .btn-clash:hover {{ transform: scale(1.02); box-shadow: 0 5px 25px rgba(241, 39, 17, 0.6); }}
+
+            /* Kết quả siêu đẹp */
+            .result-box {{
+                display: none;
+                margin-top: 20px;
+                padding: 20px;
+                background: rgba(10, 20, 30, 0.6);
+                border-left: 4px solid var(--neon-cyan);
+                border-radius: 0 12px 12px 0;
+            }}
+            .status-badge {{
+                display: inline-block;
+                padding: 5px 12px;
+                border-radius: 20px;
+                font-weight: bold;
+                font-size: 14px;
+                text-transform: uppercase;
+                margin-bottom: 10px;
+            }}
+            .badge-active {{ background: rgba(0, 255, 136, 0.2); color: #00ff88; border: 1px solid #00ff88; }}
+            .badge-error {{ background: rgba(255, 0, 85, 0.2); color: #ff0055; border: 1px solid #ff0055; }}
+            
+            /* TAB 2 - QUẢN LÝ KEY */
+            .key-info-item {{
+                background: rgba(0,0,0,0.4);
+                padding: 15px;
+                border-radius: 12px;
+                margin-bottom: 15px;
+                border: 1px solid rgba(255,255,255,0.05);
+                position: relative;
+                overflow: hidden;
+            }}
+            .key-info-item::before {{
+                content: '';
+                position: absolute;
+                left: 0; top: 0; width: 4px; height: 100%;
+                background: var(--neon-purple);
+                box-shadow: 0 0 10px var(--neon-purple);
+            }}
+            .info-label {{ font-size: 14px; color: #8892b0; margin-bottom: 5px; text-transform: uppercase; }}
+            .info-value {{ font-size: 18px; font-weight: bold; color: #fff; font-family: 'Orbitron', sans-serif; }}
+            
+            .floating-logo {{ font-size: 50px; text-align: center; margin-bottom: 10px; animation: float 3s ease-in-out infinite; }}
+            @keyframes float {{ 0% {{ transform: translateY(0px); }} 50% {{ transform: translateY(-10px); }} 100% {{ transform: translateY(0px); }} }}
+            
+            /* Custom SweetAlert Cosmic */
+            div:where(.swal2-container) div:where(.swal2-popup) {{ background: #0b0f19 !important; border: 1px solid var(--neon-cyan); color: #fff; border-radius: 16px; box-shadow: 0 0 30px rgba(0, 243, 255, 0.2); }}
+            div:where(.swal2-container) h2:where(.swal2-title) {{ color: #fff; font-family: 'Orbitron'; }}
         </style>
     </head>
     <body>
-        <div class="navbar-custom">
-            <div class="navbar-top">
-                <a href="/" class="brand-title"><i class="fas fa-layer-group"></i> HELY</a>
-                <button class="menu-toggle-btn" onclick="toggleMenu()"><i class="fas fa-bars"></i></button>
-            </div>
-            <div class="navbar-links" id="navbarMenuLinks">
-                <a href="/" class="nav-item-link"><i class="fas fa-gift"></i> Get Free Key</a>
-                <a href="/proxy" class="nav-item-link"><i class="fas fa-shield-alt"></i> Quản Lý Proxy</a>
-                <a href="/admin_login" class="nav-item-link"><i class="fas fa-sign-in-alt"></i> Login</a>
-            </div>
-        </div>
+        <div class="stars" id="stars-container"></div>
+        
+        <div class="app-container">
+            <div class="floating-logo">🚀</div>
+            <h1 class="header-title">COSMIC PROXY</h1>
 
-        <div class="getkey-card">
-            <div class="getkey-card-header"><i class="fas fa-shield-alt"></i> Tra Cứu & Nạp Proxy Meta</div>
-            <div class="getkey-card-body">
-                <input type="text" id="proxyKey" class="control-custom" placeholder="Nhập Key VIP của bạn..." required>
-                <button type="button" class="btn-generate" onclick="checkKey()"><i class="fas fa-search me-1"></i> Kiểm Tra Key</button>
-                
-                <div id="statusBox" class="status-box">
-                    <h6 class="fw-bold text-dark mb-3 border-bottom pb-2"><i class="fas fa-info-circle text-primary"></i> Trạng Thái Key</h6>
-                    <p class="mb-2 fs-6"><b>Tình trạng:</b> <span id="keyStatusBadge"></span></p>
-                    <p class="mb-2 fs-6"><b>Sảnh Chờ:</b> <span id="lobbyMsg" class="text-danger fw-bold"></span></p>
-                    <p class="mb-2 fs-6"><b>Trong Game:</b> <span id="ingameMsg" class="text-success fw-bold"></span></p>
-                    <a id="clashBtn" href="#" class="btn-clash"><i class="fas fa-download"></i> NẠP PROXY VÀO CLASH META</a>
+            <div class="tabs">
+                <div class="tab-btn active" onclick="switchTab(1)">Nhập Key</div>
+                <div class="tab-btn" onclick="switchTab(2)">Quản Lý Key</div>
+            </div>
+
+            <div id="tab1" class="tab-content active">
+                <div class="glass-card">
+                    <input type="text" id="proxyKey" class="input-cosmic" placeholder="Nhập Key VIP..." autocomplete="off">
+                    <button class="btn-action btn-activate" onclick="checkKey()">
+                        <i class="fas fa-bolt"></i> KÍCH HOẠT HỆ THỐNG
+                    </button>
+                    
+                    <div id="resultBox" class="result-box">
+                        <div id="statusBadge" class="status-badge"></div>
+                        <p style="color: #8892b0; font-size: 15px; margin-bottom: 5px;"><i class="fas fa-shield-alt"></i> Sảnh Chờ: <span id="lobbyMsg" style="color: #fff; font-weight: bold;"></span></p>
+                        <p style="color: #8892b0; font-size: 15px;"><i class="fas fa-gamepad"></i> Trong Game: <span id="ingameMsg" style="color: #00ff88; font-weight: bold;"></span></p>
+                    </div>
+                    
+                    <a id="clashBtn" href="#" class="btn-action btn-clash">
+                        <i class="fas fa-download"></i> NẠP FILE .YAML CLASH META
+                    </a>
+                </div>
+            </div>
+
+            <div id="tab2" class="tab-content">
+                <div class="glass-card" id="manageContent">
+                    <div style="text-align:center; padding: 20px; color: #8892b0;">
+                        <i class="fas fa-key" style="font-size: 40px; margin-bottom: 15px; opacity: 0.5;"></i><br>
+                        Vui lòng kích hoạt Key ở Tab 1 trước.
+                    </div>
                 </div>
             </div>
         </div>
 
         <script>
-            function toggleMenu() {{
-                var menu = document.getElementById("navbarMenuLinks");
-                menu.style.display = (menu.style.display === "none" || menu.style.display === "") ? "flex" : "none";
+            // Khởi tạo Mini App Telegram
+            if (window.Telegram && window.Telegram.WebApp) {{
+                window.Telegram.WebApp.expand();
             }}
+
+            // Tạo hiệu ứng hạt sao
+            const starsContainer = document.getElementById('stars-container');
+            for(let i=0; i<50; i++) {{
+                let star = document.createElement('div');
+                star.className = 'star';
+                let size = Math.random() * 3 + 1;
+                star.style.width = size + 'px';
+                star.style.height = size + 'px';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.animationDuration = (Math.random() * 3 + 2) + 's';
+                star.style.animationDelay = Math.random() * 2 + 's';
+                starsContainer.appendChild(star);
+            }}
+
+            // Logic Tab
+            function switchTab(tabId) {{
+                document.querySelectorAll('.tab-btn').forEach((btn, idx) => {{
+                    btn.classList.toggle('active', idx + 1 === tabId);
+                }});
+                document.querySelectorAll('.tab-content').forEach((content, idx) => {{
+                    content.classList.toggle('active', idx + 1 === tabId);
+                }});
+                if(tabId === 2) updateManageTab();
+            }}
+
+            // Format thời gian
+            function formatTime(ms) {{
+                if(!ms || ms === 'permanent') return 'VĨNH VIỄN';
+                if(ms === 'pending') return 'CHƯA KÍCH HOẠT';
+                let d = new Date(ms);
+                return d.toLocaleString('vi-VN');
+            }}
+
+            // API Check
             function checkKey() {{
                 var key = document.getElementById('proxyKey').value.trim();
-                if(!key) {{ Swal.fire('Lỗi', 'Vui lòng nhập Key!', 'error'); return; }}
+                if(!key) {{ 
+                    Swal.fire({{ title: 'Cảnh Báo', text: 'Thiếu Dữ Liệu! Vui lòng nhập Key.', icon: 'warning', confirmButtonColor: '#00f3ff' }}); 
+                    return; 
+                }}
+                
+                // Hiệu ứng Loading xịn xò
+                Swal.fire({{
+                    title: 'ĐANG ĐỒNG BỘ...',
+                    html: 'Hệ thống đang kết nối với vệ tinh LVT',
+                    allowOutsideClick: false,
+                    didOpen: () => {{ Swal.showLoading(); }}
+                }});
                 
                 fetch('{WEB_URL}/api/proxy/status?key=' + key)
                 .then(r => r.json())
                 .then(d => {{
-                    var box = document.getElementById('statusBox');
+                    Swal.close();
+                    var box = document.getElementById('resultBox');
                     box.style.display = 'block';
                     
                     if(d.status === 'active') {{
-                        document.getElementById('keyStatusBadge').innerHTML = '<span class="badge bg-success">Hoạt Động</span>';
+                        document.getElementById('statusBadge').className = 'status-badge badge-active';
+                        document.getElementById('statusBadge').innerHTML = '<i class="fas fa-check-circle"></i> ĐÃ KÍCH HOẠT (ACTIVE)';
                         document.getElementById('lobbyMsg').innerText = d.message;
                         document.getElementById('ingameMsg').innerText = d.ingame_message;
                         
-                        var clashUrl = "clash://install-config?url=" + encodeURIComponent(d.yaml_url) + "&name=" + encodeURIComponent("LVT_Proxy_" + key);
+                        var clashUrl = "clash://install-config?url=" + encodeURIComponent(d.yaml_url) + "&name=" + encodeURIComponent("Cosmic_" + key);
                         document.getElementById('clashBtn').href = clashUrl;
-                        document.getElementById('clashBtn').style.display = 'block';
+                        document.getElementById('clashBtn').style.display = 'flex';
+                        
+                        // Lưu lại để dùng cho tab quản lý
+                        localStorage.setItem('lvt_saved_key', key);
+                        localStorage.setItem('lvt_saved_data', JSON.stringify(d));
+                        
+                        Swal.fire({{toast: true, position: 'top-end', icon: 'success', title: 'Kích hoạt hoàn tất!', showConfirmButton: false, timer: 2000, background: '#0b0f19', color: '#fff'}});
                     }} else {{
-                        document.getElementById('keyStatusBadge').innerHTML = '<span class="badge bg-danger">Hết Hạn / Bị Khóa / Sai Key</span>';
+                        document.getElementById('statusBadge').className = 'status-badge badge-error';
+                        document.getElementById('statusBadge').innerHTML = '<i class="fas fa-times-circle"></i> LỖI BẢO MẬT (BLOCK)';
                         document.getElementById('lobbyMsg').innerText = d.message;
-                        document.getElementById('ingameMsg').innerText = "---";
+                        document.getElementById('ingameMsg').innerText = "KẾT NỐI BỊ TỪ CHỐI";
                         document.getElementById('clashBtn').style.display = 'none';
+                        
+                        Swal.fire({{ title: 'Thất Bại', text: d.message, icon: 'error', confirmButtonColor: '#ff0055' }});
                     }}
-                }}).catch(e => {{ Swal.fire('Lỗi', 'Lỗi kết nối máy chủ', 'error'); }});
+                }}).catch(e => {{ 
+                    Swal.fire('Lỗi', 'Mất kết nối không gian! Vui lòng thử lại.', 'error'); 
+                }});
+            }}
+
+            function updateManageTab() {{
+                let key = localStorage.getItem('lvt_saved_key');
+                let dataStr = localStorage.getItem('lvt_saved_data');
+                let content = document.getElementById('manageContent');
+                
+                if(!key || !dataStr) return;
+                let d = JSON.parse(dataStr);
+                
+                let expTime = d.exp;
+                let activeTime = (typeof expTime === 'number') ? (expTime - d.durationMs) : 'Vĩnh viễn';
+                
+                content.innerHTML = `
+                    <div class="key-info-item">
+                        <div class="info-label">Current Key</div>
+                        <div class="info-value" style="color: var(--neon-cyan)">${{key}}</div>
+                    </div>
+                    <div class="key-info-item" style="border-left-color: #00ff88;">
+                        <div class="info-label">Thời gian bắt đầu</div>
+                        <div class="info-value">${{formatTime(activeTime)}}</div>
+                    </div>
+                    <div class="key-info-item" style="border-left-color: #ff0055;">
+                        <div class="info-label">Thời gian hết hạn</div>
+                        <div class="info-value">${{formatTime(expTime)}}</div>
+                    </div>
+                    <button class="btn-action" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); font-size: 14px;" onclick="localStorage.removeItem('lvt_saved_key'); location.reload();">XÓA DỮ LIỆU KEY</button>
+                `;
+            }}
+            
+            // Tự load key nếu có
+            window.onload = () => {{
+                let savedKey = localStorage.getItem('lvt_saved_key');
+                if(savedKey) {{
+                    document.getElementById('proxyKey').value = savedKey;
+                }}
             }}
         </script>
     </body>
@@ -1844,10 +2175,11 @@ def admin_proxy_dashboard():
                     <div class="card h-100" style="border-top: 3px solid #0f172a;">
                         <div class="card-header text-dark"><div><i class="fas fa-info-circle"></i> Trạng Thái Auto Kiểm Tra Lõi</div></div>
                         <div class="card-body">
-                            <h5 class="text-dark fw-bold mb-3">Mô Tả Nâng Cấp:</h5>
+                            <h5 class="text-dark fw-bold mb-3">Mô Tả Nâng Cấp (Siêu Cấp):</h5>
                             <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Cập nhật code liên tục:</b> Ngay khi bạn Upload file YAML mới, toàn bộ Client đang chạy sẽ nhận bản cập nhật ngay lập tức qua API động.</p>
-                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Hệ thống Check Key Cực Mạnh:</b> HTML được nạp tự động nhúng tính năng gọi API 5 giây/lần. Khách hết hạn key lập tức văng về màn hình thông báo và bị khóa điều khiển.</p>
-                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Link Clash Meta Độc Quyền:</b> Khách nhập Key ở giao diện ngoài, hệ thống tự động sinh link nạp cấu hình Proxy thẳng vào app.</p>
+                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Chặn Network Triệt Để:</b> Nếu Key hết hạn/banned, server sẽ tự động bơm mã lệnh cắt kết nối vào File YAML trả về để ngăn chặn khách hàng chơi game.</p>
+                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Hệ thống Check Key Cực Mạnh:</b> HTML được nạp tự động nhúng tính năng gọi API 8 giây/lần. Khách hết hạn key lập tức văng về màn hình thông báo và bị khóa điều khiển.</p>
+                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Link Clash Meta Độc Quyền:</b> Khách nhập Key ở giao diện Mini App Vũ Trụ, hệ thống tự động sinh link nạp cấu hình Proxy thẳng vào app.</p>
                             <hr>
                             <div class="p-3 mt-3" style="background:#f1f5f9; border-radius:8px;">
                                 <h6 class="fw-bold mb-2">Gợi ý Placeholder:</h6>
