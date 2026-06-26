@@ -217,6 +217,7 @@ def load_db():
                 data.setdefault("settings", {})
                 
                 if "secret_key" not in data["settings"]: data["settings"]["secret_key"] = secrets.token_hex(32)
+                if "termux_script" not in data["settings"]: data["settings"]["termux_script"] = ""
                 if "script_tiem" not in data["settings"]: data["settings"]["script_tiem"] = ""
                 if "vm_loader" not in data["settings"]: data["settings"]["vm_loader"] = ""
                 if "app_webview_code" not in data["settings"]: data["settings"]["app_webview_code"] = ""
@@ -363,7 +364,6 @@ def check_proxy_status():
         
     kd = db["keys"][key]
     
-    # Nâng cấp logic: Trả về durationMs và exp để Frontend Mini App tự tính thời gian
     duration_ms = kd.get("durationMs", 0)
     exp_val = kd.get("exp")
     
@@ -390,9 +390,6 @@ def download_proxy_yaml():
     db = load_db()
     now = int(time.time() * 1000)
     
-    # [NÂNG CẤP THÔNG MINH]: Xử lý lỗi <!DOCTYPE
-    # Nếu Key hết hạn/sai/banned, KHÔNG TRẢ VỀ CHUỖI VĂN BẢN (gây lỗi HTML/<!DOCTYPE trong app).
-    # THAY VÀO ĐÓ: Trả về một file YAML hợp lệ với cấu hình "Chặn mọi kết nối" (MATCH, REJECT).
     blocker_yaml = "port: 7890\nsocks-port: 7891\nallow-lan: true\nmode: rule\nlog-level: info\nproxies: []\nproxy-groups: []\nrules:\n  - MATCH, REJECT\n"
     
     if not key or key not in db.get("keys", {}):
@@ -411,13 +408,25 @@ def download_proxy_yaml():
         resp.headers['Content-Type'] = 'text/yaml; charset=utf-8'
         return resp
         
-    # Chèn biến thông minh theo yêu cầu
     yaml_content = db.get("settings", {}).get("proxy_yaml", "")
     yaml_content = yaml_content.replace("{KEY}", key)
     
     resp = make_response(yaml_content)
     resp.headers['Content-Type'] = 'text/yaml; charset=utf-8'
     resp.headers['Content-Disposition'] = f'attachment; filename="LVT_{key}.yaml"'
+    return resp
+
+@app.route('/api/termux')
+def get_termux_script():
+    key = request.args.get('key', '').strip()
+    db = load_db()
+    script = db.get("settings", {}).get("termux_script", "")
+    
+    # Hỗ trợ replace các placeholder tự động
+    script = script.replace("{WEB_URL}", WEB_URL).replace("{KEY}", key)
+    
+    resp = make_response(script)
+    resp.headers['Content-Type'] = 'text/plain; charset=utf-8'
     return resp
 
 @app.route('/api/get_script')
@@ -467,11 +476,10 @@ def serve_webview_app():
     else:
         html_content = db.get("settings", {}).get("app_webview_code", "<h1>Hệ thống chưa được nạp giao diện WebView. Vui lòng liên hệ Admin!</h1>")
         
-        # [NÂNG CẤP] Sửa lỗi Webview báo kết nối liên tục, chống spam reload
         auto_check_script = f"""
         <script>
             (function() {{
-                const checkInterval = 8000; // Tăng lên 8s để đỡ lag
+                const checkInterval = 8000;
                 let isLobbyLocked = false;
                 let errorCount = 0;
                 
@@ -498,7 +506,7 @@ def serve_webview_app():
                         key = urlParams.get('key') || '';
                     }}
                     
-                    if(!key) return; // FIX: Nếu chưa có key thì không khóa báo lỗi ngay, để họ nhập.
+                    if(!key) return; 
                     
                     fetch('{WEB_URL}/api/proxy/status?key=' + key)
                     .then(r => r.json())
@@ -511,7 +519,6 @@ def serve_webview_app():
                         }}
                     }}).catch(e => {{
                         errorCount++;
-                        // FIX: Chống spam nếu rớt mạng thật
                         if(errorCount > 3 && isLobbyLocked) {{
                             document.getElementById('lvt-msg-content').innerText = "Mất kết nối máy chủ. Đang thử lại...";
                         }}
@@ -546,229 +553,32 @@ def get_key_portal():
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
-            
-            html, body {{ 
-                background-color: #f5f5f5; 
-                font-family: 'Roboto', sans-serif; 
-                margin: 0; 
-                padding: 0; 
-                height: 100vh; 
-                width: 100vw;
-                overflow-x: hidden;
-                overflow-y: auto;
-                position: relative;
-            }}
-            
-            .navbar-custom {{
-                background-color: #0066ff;
-                padding: 12px 16px;
-                display: flex;
-                flex-direction: column;
-                position: relative;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }}
-            .navbar-top {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                width: 100%;
-            }}
-            .brand-title {{
-                color: #ffffff;
-                font-size: 22px;
-                font-weight: 700;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                text-decoration: none;
-            }}
-            .brand-title img, .brand-title i {{
-                font-size: 22px;
-                color: #ffffff;
-            }}
-            .menu-toggle-btn {{
-                background: transparent;
-                border: 2px solid rgba(255,255,255,0.6);
-                border-radius: 8px;
-                padding: 6px 12px;
-                color: white;
-                font-size: 18px;
-                cursor: pointer;
-            }}
-            .navbar-links {{
-                display: flex;
-                flex-direction: column;
-                gap: 12px;
-                margin-top: 14px;
-                padding-bottom: 5px;
-            }}
-            .nav-item-link {{
-                color: #ffffff;
-                text-decoration: none;
-                font-weight: 500;
-                font-size: 15px;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                opacity: 0.95;
-            }}
+            html, body {{ background-color: #f5f5f5; font-family: 'Roboto', sans-serif; margin: 0; padding: 0; height: 100vh; width: 100vw; overflow-x: hidden; overflow-y: auto; position: relative; }}
+            .navbar-custom {{ background-color: #0066ff; padding: 12px 16px; display: flex; flex-direction: column; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+            .navbar-top {{ display: flex; justify-content: space-between; align-items: center; width: 100%; }}
+            .brand-title {{ color: #ffffff; font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 8px; text-decoration: none; }}
+            .brand-title img, .brand-title i {{ font-size: 22px; color: #ffffff; }}
+            .menu-toggle-btn {{ background: transparent; border: 2px solid rgba(255,255,255,0.6); border-radius: 8px; padding: 6px 12px; color: white; font-size: 18px; cursor: pointer; }}
+            .navbar-links {{ display: flex; flex-direction: column; gap: 12px; margin-top: 14px; padding-bottom: 5px; }}
+            .nav-item-link {{ color: #ffffff; text-decoration: none; font-weight: 500; font-size: 15px; display: flex; align-items: center; gap: 8px; opacity: 0.95; }}
             .nav-item-link:hover {{ opacity: 1; }}
-
-            .welcome-box {{
-                background-color: #e9e9e9;
-                border-radius: 4px;
-                padding: 14px 16px;
-                margin: 16px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                color: #333333;
-                font-size: 15px;
-                border: 1px solid #dddddd;
-            }}
-            .welcome-close {{
-                background: transparent;
-                border: none;
-                font-size: 18px;
-                color: #666666;
-                cursor: pointer;
-            }}
-
-            .search-box-container {{
-                margin: 0 16px 16px 16px;
-                display: flex;
-                justify-content: flex-end;
-                align-items: center;
-                gap: 6px;
-                color: #666666;
-                font-size: 14px;
-                cursor: pointer;
-            }}
-
-            .getkey-card {{
-                background: #ffffff;
-                border-radius: 0px;
-                border: 1px solid #dddddd;
-                margin: 0 16px 20px 16px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            }}
-            .getkey-card-header {{
-                padding: 12px 16px;
-                font-weight: 700;
-                font-size: 16px;
-                color: #111111;
-                border-bottom: 1px solid #eeeeee;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                text-transform: uppercase;
-            }}
-            .getkey-card-body {{
-                padding: 20px 16px;
-            }}
-
-            .input-group-custom {{
-                display: flex;
-                width: 100%;
-                border: 1px solid #cccccc;
-                border-radius: 6px;
-                margin-bottom: 14px;
-                background-color: #ffffff;
-                overflow: hidden;
-            }}
-            .input-icon-prefix {{
-                background-color: #f0f0f0;
-                width: 46px;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                color: #444444;
-                border-right: 1px solid #cccccc;
-                font-size: 16px;
-            }}
-            .select-custom, .control-custom {{
-                flex: 1;
-                border: none !important;
-                background: transparent !important;
-                padding: 10px 12px;
-                font-size: 15px;
-                color: #111111;
-                outline: none;
-                font-weight: 400;
-            }}
-            .control-custom:disabled {{
-                background-color: #f8f8f8 !important;
-                color: #555555;
-            }}
-            .input-device-text {{
-                background-color: #f0f0f0;
-                padding: 0 16px;
-                display: flex;
-                align-items: center;
-                color: #222222;
-                font-weight: 400;
-                font-size: 14px;
-                border-left: 1px solid #cccccc;
-            }}
-
-            .action-buttons-group {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 12px;
-                margin-top: 20px;
-            }}
-            .btn-guide {{
-                background-color: #ffffff;
-                color: #0066cc;
-                border: 1px solid #0066cc;
-                border-radius: 6px;
-                padding: 10px;
-                font-weight: 500;
-                font-size: 14px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                text-decoration: none;
-                line-height: 1.3;
-            }}
-            .btn-generate {{
-                background-color: #0055ff;
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
-                padding: 10px;
-                font-weight: 500;
-                font-size: 14px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                box-shadow: 0 2px 4px rgba(0,85,255,0.2);
-                cursor: pointer;
-            }}
-            .btn-generate span, .btn-guide span {{
-                font-size: 14px;
-            }}
-
-            .info-notice {{
-                font-size: 12px;
-                color: #777777;
-                text-align: center;
-                margin: 15px 16px;
-                line-height: 1.5;
-            }}
-
-            .footer-copyright {{
-                text-align: center;
-                color: #777777;
-                font-size: 13px;
-                padding: 16px 0;
-                border-top: 1px solid #e0e0e0;
-                background-color: #f5f5f5;
-                margin-top: auto;
-                width: 100%;
-            }}
+            .welcome-box {{ background-color: #e9e9e9; border-radius: 4px; padding: 14px 16px; margin: 16px; display: flex; justify-content: space-between; align-items: center; color: #333333; font-size: 15px; border: 1px solid #dddddd; }}
+            .welcome-close {{ background: transparent; border: none; font-size: 18px; color: #666666; cursor: pointer; }}
+            .search-box-container {{ margin: 0 16px 16px 16px; display: flex; justify-content: flex-end; align-items: center; gap: 6px; color: #666666; font-size: 14px; cursor: pointer; }}
+            .getkey-card {{ background: #ffffff; border-radius: 0px; border: 1px solid #dddddd; margin: 0 16px 20px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
+            .getkey-card-header {{ padding: 12px 16px; font-weight: 700; font-size: 16px; color: #111111; border-bottom: 1px solid #eeeeee; display: flex; align-items: center; gap: 8px; text-transform: uppercase; }}
+            .getkey-card-body {{ padding: 20px 16px; }}
+            .input-group-custom {{ display: flex; width: 100%; border: 1px solid #cccccc; border-radius: 6px; margin-bottom: 14px; background-color: #ffffff; overflow: hidden; }}
+            .input-icon-prefix {{ background-color: #f0f0f0; width: 46px; display: flex; justify-content: center; align-items: center; color: #444444; border-right: 1px solid #cccccc; font-size: 16px; }}
+            .select-custom, .control-custom {{ flex: 1; border: none !important; background: transparent !important; padding: 10px 12px; font-size: 15px; color: #111111; outline: none; font-weight: 400; }}
+            .control-custom:disabled {{ background-color: #f8f8f8 !important; color: #555555; }}
+            .input-device-text {{ background-color: #f0f0f0; padding: 0 16px; display: flex; align-items: center; color: #222222; font-weight: 400; font-size: 14px; border-left: 1px solid #cccccc; }}
+            .action-buttons-group {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }}
+            .btn-guide {{ background-color: #ffffff; color: #0066cc; border: 1px solid #0066cc; border-radius: 6px; padding: 10px; font-weight: 500; font-size: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-decoration: none; line-height: 1.3; }}
+            .btn-generate {{ background-color: #0055ff; color: #ffffff; border: none; border-radius: 6px; padding: 10px; font-weight: 500; font-size: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,85,255,0.2); cursor: pointer; }}
+            .btn-generate span, .btn-guide span {{ font-size: 14px; }}
+            .info-notice {{ font-size: 12px; color: #777777; text-align: center; margin: 15px 16px; line-height: 1.5; }}
+            .footer-copyright {{ text-align: center; color: #777777; font-size: 13px; padding: 16px 0; border-top: 1px solid #e0e0e0; background-color: #f5f5f5; margin-top: auto; width: 100%; }}
         </style>
     </head>
     <body>
@@ -841,7 +651,6 @@ def get_key_portal():
                             <span>Generate</span>
                         </button>
                     </div>
-
                 </form>
             </div>
         </div>
@@ -874,7 +683,6 @@ def get_key_portal():
 
 @app.route('/proxy')
 def proxy_client_portal():
-    # [NÂNG CẤP GIAO DIỆN VŨ TRỤ - TELEGRAM MINI APP]
     return f'''
     <!DOCTYPE html><html lang="vi">
     <head>
@@ -886,7 +694,6 @@ def proxy_client_portal():
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap');
-            
             :root {{
                 --neon-cyan: #00f3ff;
                 --neon-purple: #bf00ff;
@@ -905,191 +712,53 @@ def proxy_client_portal():
                 position: relative;
             }}
 
-            /* Hiệu ứng hạt sao (Particles) */
             .stars {{
-                position: fixed;
-                top: 0; left: 0; width: 100%; height: 100%;
-                pointer-events: none;
-                z-index: 0;
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0;
             }}
-            .star {{
-                position: absolute;
-                background: #fff;
-                border-radius: 50%;
-                animation: twinkle linear infinite;
-            }}
+            .star {{ position: absolute; background: #fff; border-radius: 50%; animation: twinkle linear infinite; }}
             @keyframes twinkle {{
                 0% {{ opacity: 0.2; transform: scale(0.8); }}
                 50% {{ opacity: 1; transform: scale(1.2); box-shadow: 0 0 10px #fff, 0 0 20px var(--neon-cyan); }}
                 100% {{ opacity: 0.2; transform: scale(0.8); }}
             }}
 
-            .app-container {{
-                position: relative;
-                z-index: 10;
-                padding: 20px;
-                max-width: 500px;
-                margin: 0 auto;
-                min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-            }}
+            .app-container {{ position: relative; z-index: 10; padding: 20px; max-width: 500px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }}
 
-            .header-title {{
-                text-align: center;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 28px;
-                font-weight: 700;
-                margin-bottom: 25px;
-                margin-top: 10px;
-                text-transform: uppercase;
-                background: linear-gradient(90deg, var(--neon-cyan), var(--neon-purple));
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                text-shadow: 0 0 20px rgba(0, 243, 255, 0.3);
-            }}
+            .header-title {{ text-align: center; font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 700; margin-bottom: 25px; margin-top: 10px; text-transform: uppercase; background: linear-gradient(90deg, var(--neon-cyan), var(--neon-purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0 0 20px rgba(0, 243, 255, 0.3); }}
 
-            /* TABS */
-            .tabs {{
-                display: flex;
-                background: rgba(0,0,0,0.5);
-                border-radius: 12px;
-                padding: 5px;
-                margin-bottom: 25px;
-                border: 1px solid rgba(255,255,255,0.1);
-            }}
-            .tab-btn {{
-                flex: 1;
-                padding: 12px;
-                text-align: center;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 14px;
-                color: #8892b0;
-                cursor: pointer;
-                border-radius: 8px;
-                transition: 0.3s;
-                font-weight: 700;
-            }}
-            .tab-btn.active {{
-                background: linear-gradient(135deg, rgba(0, 243, 255, 0.2), rgba(191, 0, 255, 0.2));
-                color: #fff;
-                border: 1px solid var(--neon-cyan);
-                box-shadow: inset 0 0 15px rgba(0, 243, 255, 0.2);
-            }}
-
+            .tabs {{ display: flex; background: rgba(0,0,0,0.5); border-radius: 12px; padding: 5px; margin-bottom: 25px; border: 1px solid rgba(255,255,255,0.1); }}
+            .tab-btn {{ flex: 1; padding: 12px; text-align: center; font-family: 'Orbitron', sans-serif; font-size: 14px; color: #8892b0; cursor: pointer; border-radius: 8px; transition: 0.3s; font-weight: 700; }}
+            .tab-btn.active {{ background: linear-gradient(135deg, rgba(0, 243, 255, 0.2), rgba(191, 0, 255, 0.2)); color: #fff; border: 1px solid var(--neon-cyan); box-shadow: inset 0 0 15px rgba(0, 243, 255, 0.2); }}
             .tab-content {{ display: none; animation: fadeIn 0.4s ease; }}
             .tab-content.active {{ display: block; }}
             @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
 
-            /* GLASS PANEL */
-            .glass-card {{
-                background: var(--glass-bg);
-                backdrop-filter: blur(12px);
-                -webkit-backdrop-filter: blur(12px);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 20px;
-                padding: 25px 20px;
-                box-shadow: 0 15px 35px rgba(0,0,0,0.4);
-                margin-bottom: 20px;
-            }}
+            .glass-card {{ background: var(--glass-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 20px; padding: 25px 20px; box-shadow: 0 15px 35px rgba(0,0,0,0.4); margin-bottom: 20px; }}
 
-            .input-cosmic {{
-                width: 100%;
-                background: rgba(0,0,0,0.3);
-                border: 1px solid rgba(0, 243, 255, 0.3);
-                color: var(--neon-cyan);
-                padding: 16px;
-                border-radius: 12px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 16px;
-                text-align: center;
-                outline: none;
-                transition: 0.3s;
-                letter-spacing: 2px;
-            }}
-            .input-cosmic:focus {{
-                border-color: var(--neon-cyan);
-                box-shadow: 0 0 15px rgba(0, 243, 255, 0.4);
-            }}
+            .input-cosmic {{ width: 100%; background: rgba(0,0,0,0.3); border: 1px solid rgba(0, 243, 255, 0.3); color: var(--neon-cyan); padding: 16px; border-radius: 12px; font-family: 'Orbitron', sans-serif; font-size: 16px; text-align: center; outline: none; transition: 0.3s; letter-spacing: 2px; }}
+            .input-cosmic:focus {{ border-color: var(--neon-cyan); box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); }}
             .input-cosmic::placeholder {{ color: rgba(255,255,255,0.3); letter-spacing: 0; }}
 
-            .btn-action {{
-                width: 100%;
-                padding: 15px;
-                border-radius: 12px;
-                border: none;
-                font-family: 'Orbitron', sans-serif;
-                font-weight: 700;
-                font-size: 16px;
-                color: #fff;
-                cursor: pointer;
-                transition: 0.3s;
-                text-transform: uppercase;
-                margin-top: 15px;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                gap: 10px;
-                text-decoration: none;
-            }}
-            .btn-activate {{
-                background: linear-gradient(45deg, #00d2ff 0%, #3a7bd5 100%);
-                box-shadow: 0 5px 20px rgba(0, 210, 255, 0.4);
-            }}
+            .btn-action {{ width: 100%; padding: 15px; border-radius: 12px; border: none; font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 16px; color: #fff; cursor: pointer; transition: 0.3s; text-transform: uppercase; margin-top: 15px; display: flex; justify-content: center; align-items: center; gap: 10px; text-decoration: none; }}
+            .btn-activate {{ background: linear-gradient(45deg, #00d2ff 0%, #3a7bd5 100%); box-shadow: 0 5px 20px rgba(0, 210, 255, 0.4); }}
             .btn-activate:hover {{ transform: scale(1.02); box-shadow: 0 5px 25px rgba(0, 210, 255, 0.6); }}
             
-            .btn-clash {{
-                background: linear-gradient(45deg, #f12711 0%, #f5af19 100%);
-                box-shadow: 0 5px 20px rgba(241, 39, 17, 0.4);
-                display: none;
-            }}
+            .btn-clash {{ background: linear-gradient(45deg, #f12711 0%, #f5af19 100%); box-shadow: 0 5px 20px rgba(241, 39, 17, 0.4); display: none; }}
             .btn-clash:hover {{ transform: scale(1.02); box-shadow: 0 5px 25px rgba(241, 39, 17, 0.6); }}
 
-            /* Kết quả siêu đẹp */
-            .result-box {{
-                display: none;
-                margin-top: 20px;
-                padding: 20px;
-                background: rgba(10, 20, 30, 0.6);
-                border-left: 4px solid var(--neon-cyan);
-                border-radius: 0 12px 12px 0;
-            }}
-            .status-badge {{
-                display: inline-block;
-                padding: 5px 12px;
-                border-radius: 20px;
-                font-weight: bold;
-                font-size: 14px;
-                text-transform: uppercase;
-                margin-bottom: 10px;
-            }}
+            .result-box {{ display: none; margin-top: 20px; padding: 20px; background: rgba(10, 20, 30, 0.6); border-left: 4px solid var(--neon-cyan); border-radius: 0 12px 12px 0; }}
+            .status-badge {{ display: inline-block; padding: 5px 12px; border-radius: 20px; font-weight: bold; font-size: 14px; text-transform: uppercase; margin-bottom: 10px; }}
             .badge-active {{ background: rgba(0, 255, 136, 0.2); color: #00ff88; border: 1px solid #00ff88; }}
             .badge-error {{ background: rgba(255, 0, 85, 0.2); color: #ff0055; border: 1px solid #ff0055; }}
             
-            /* TAB 2 - QUẢN LÝ KEY */
-            .key-info-item {{
-                background: rgba(0,0,0,0.4);
-                padding: 15px;
-                border-radius: 12px;
-                margin-bottom: 15px;
-                border: 1px solid rgba(255,255,255,0.05);
-                position: relative;
-                overflow: hidden;
-            }}
-            .key-info-item::before {{
-                content: '';
-                position: absolute;
-                left: 0; top: 0; width: 4px; height: 100%;
-                background: var(--neon-purple);
-                box-shadow: 0 0 10px var(--neon-purple);
-            }}
+            .key-info-item {{ background: rgba(0,0,0,0.4); padding: 15px; border-radius: 12px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.05); position: relative; overflow: hidden; }}
+            .key-info-item::before {{ content: ''; position: absolute; left: 0; top: 0; width: 4px; height: 100%; background: var(--neon-purple); box-shadow: 0 0 10px var(--neon-purple); }}
             .info-label {{ font-size: 14px; color: #8892b0; margin-bottom: 5px; text-transform: uppercase; }}
             .info-value {{ font-size: 18px; font-weight: bold; color: #fff; font-family: 'Orbitron', sans-serif; }}
             
             .floating-logo {{ font-size: 50px; text-align: center; margin-bottom: 10px; animation: float 3s ease-in-out infinite; }}
             @keyframes float {{ 0% {{ transform: translateY(0px); }} 50% {{ transform: translateY(-10px); }} 100% {{ transform: translateY(0px); }} }}
             
-            /* Custom SweetAlert Cosmic */
             div:where(.swal2-container) div:where(.swal2-popup) {{ background: #0b0f19 !important; border: 1px solid var(--neon-cyan); color: #fff; border-radius: 16px; box-shadow: 0 0 30px rgba(0, 243, 255, 0.2); }}
             div:where(.swal2-container) h2:where(.swal2-title) {{ color: #fff; font-family: 'Orbitron'; }}
         </style>
@@ -1136,12 +805,10 @@ def proxy_client_portal():
         </div>
 
         <script>
-            // Khởi tạo Mini App Telegram
             if (window.Telegram && window.Telegram.WebApp) {{
                 window.Telegram.WebApp.expand();
             }}
 
-            // Tạo hiệu ứng hạt sao
             const starsContainer = document.getElementById('stars-container');
             for(let i=0; i<50; i++) {{
                 let star = document.createElement('div');
@@ -1156,7 +823,6 @@ def proxy_client_portal():
                 starsContainer.appendChild(star);
             }}
 
-            // Logic Tab
             function switchTab(tabId) {{
                 document.querySelectorAll('.tab-btn').forEach((btn, idx) => {{
                     btn.classList.toggle('active', idx + 1 === tabId);
@@ -1167,7 +833,6 @@ def proxy_client_portal():
                 if(tabId === 2) updateManageTab();
             }}
 
-            // Format thời gian
             function formatTime(ms) {{
                 if(!ms || ms === 'permanent') return 'VĨNH VIỄN';
                 if(ms === 'pending') return 'CHƯA KÍCH HOẠT';
@@ -1175,22 +840,19 @@ def proxy_client_portal():
                 return d.toLocaleString('vi-VN');
             }}
 
-            // API Check
             function checkKey() {{
                 var key = document.getElementById('proxyKey').value.trim();
                 if(!key) {{ 
-                    Swal.fire({{ title: 'Cảnh Báo', text: 'Thiếu Dữ Liệu! Vui lòng nhập Key.', icon: 'warning', confirmButtonColor: '#00f3ff' }}); 
+                    Swal.fire({{ title: 'Cảnh Báo', text: 'Thiếu Dữ Liệu! Vui lòng nhập Key.', icon: 'warning', confirmButtonColor: '#00f3ff' }});
                     return; 
                 }}
                 
-                // Hiệu ứng Loading xịn xò
                 Swal.fire({{
                     title: 'ĐANG ĐỒNG BỘ...',
                     html: 'Hệ thống đang kết nối với vệ tinh LVT',
                     allowOutsideClick: false,
                     didOpen: () => {{ Swal.showLoading(); }}
                 }});
-                
                 fetch('{WEB_URL}/api/proxy/status?key=' + key)
                 .then(r => r.json())
                 .then(d => {{
@@ -1208,7 +870,6 @@ def proxy_client_portal():
                         document.getElementById('clashBtn').href = clashUrl;
                         document.getElementById('clashBtn').style.display = 'flex';
                         
-                        // Lưu lại để dùng cho tab quản lý
                         localStorage.setItem('lvt_saved_key', key);
                         localStorage.setItem('lvt_saved_data', JSON.stringify(d));
                         
@@ -1237,7 +898,6 @@ def proxy_client_portal():
                 
                 let expTime = d.exp;
                 let activeTime = (typeof expTime === 'number') ? (expTime - d.durationMs) : 'Vĩnh viễn';
-                
                 content.innerHTML = `
                     <div class="key-info-item">
                         <div class="info-label">Current Key</div>
@@ -1255,7 +915,6 @@ def proxy_client_portal():
                 `;
             }}
             
-            // Tự load key nếu có
             window.onload = () => {{
                 let savedKey = localStorage.getItem('lvt_saved_key');
                 if(savedKey) {{
@@ -1478,7 +1137,7 @@ def api_verify_core():
         is_vip = kd.get("vip", False)
         core_code = db.get("settings", {}).get("script_tiem", "")
         note_msg = kd.get("note", "") 
-            
+          
         return jsonify({"status": "ok", "is_vip": is_vip, "core": core_code, "exp": kd["exp"], "devices": len(devices), "max_devs": kd.get("maxDevices", 1), "server_time": now, "note": note_msg})
 
 @app.route('/admin_login', methods=['GET', 'POST'])
@@ -1638,7 +1297,7 @@ def admin_dashboard():
                 <a href="/admin" class="nav-btn active"><i class="fas fa-key"></i> QUẢN LÝ KEY & FIREWALL</a>
                 <a href="/admin/getkey" class="nav-btn"><i class="fas fa-link"></i> QUẢN LÝ VƯỢT LINK (GET KEY)</a>
                 <a href="/admin/files" class="nav-btn"><i class="fas fa-cloud-upload-alt"></i> AUTO NẠP FILE TRÊN MÂY</a>
-                <a href="/admin/proxy" class="nav-btn"><i class="fas fa-shield-alt"></i> PROXY & THÔNG BÁO</a>
+                <a href="/admin/termux" class="nav-btn"><i class="fas fa-terminal"></i> GIAO DIỆN TERMUX</a>
             </div>
 
             <div class="row g-4 mb-4">
@@ -1659,7 +1318,7 @@ def admin_dashboard():
                                     <input type="text" name="manual_key" class="form-control" placeholder="Nhập key tùy ý (Ví dụ: MY_KEY@123!)">
                                 </div>
                                 <div class="col-6" id="qty_box"><label class="text-muted small fw-bold mb-1">Số lượng</label><input type="number" name="quantity" class="form-control" value="1"></div>
-                                
+                               
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Số máy/Key</label><input type="number" name="devices" class="form-control" value="1" required></div>
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Độ dài TG</label><input type="number" name="duration" class="form-control" value="1" required></div>
                                 <div class="col-6"><label class="text-muted small fw-bold mb-1">Đơn vị</label><select name="type" class="form-select"><option value="minute">Phút</option><option value="hour">Giờ</option><option value="day" selected>Ngày</option><option value="month">Tháng</option><option value="permanent">Vĩnh Viễn</option></select></div>
@@ -1817,7 +1476,7 @@ def admin_getkey_dashboard():
                 <a href="/admin" class="nav-btn"><i class="fas fa-key"></i> QUẢN LÝ KEY & FIREWALL</a>
                 <a href="/admin/getkey" class="nav-btn active"><i class="fas fa-link"></i> QUẢN LÝ VƯỢT LINK (GET KEY)</a>
                 <a href="/admin/files" class="nav-btn"><i class="fas fa-cloud-upload-alt"></i> AUTO NẠP FILE TRÊN MÂY</a>
-                <a href="/admin/proxy" class="nav-btn"><i class="fas fa-shield-alt"></i> PROXY & THÔNG BÁO</a>
+                <a href="/admin/termux" class="nav-btn"><i class="fas fa-terminal"></i> GIAO DIỆN TERMUX</a>
             </div>
 
             <div class="row g-4">
@@ -1887,14 +1546,6 @@ def admin_files_dashboard():
     csrf_input = f'<input type="hidden" name="csrf_token" value="{session.get("csrf_token", "")}">'
     
     with db_lock:
-        current_tiem_len = len(db.get("settings", {}).get("script_tiem", ""))
-        if current_tiem_len > 10: tiem_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp File Tiêm (Dung lượng: {current_tiem_len} bytes)</span>'
-        else: tiem_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script Tiêm!</span>'
-
-        current_loader_len = len(db.get("settings", {}).get("vm_loader", ""))
-        if current_loader_len > 10: loader_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Script (Dung lượng: {current_loader_len} bytes)</span>'
-        else: loader_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Script Violentmonkey!</span>'
-
         current_webview_len = len(db.get("settings", {}).get("app_webview_code", ""))
         if current_webview_len > 10: webview_status = f'<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> Đã nạp Giao Diện ({current_webview_len} bytes)</span>'
         else: webview_status = '<span class="text-danger fw-bold"><i class="fas fa-times-circle"></i> Chưa có Giao Diện App!</span>'
@@ -1948,7 +1599,7 @@ def admin_files_dashboard():
                 <a href="/admin" class="nav-btn"><i class="fas fa-key"></i> QUẢN LÝ KEY & FIREWALL</a>
                 <a href="/admin/getkey" class="nav-btn"><i class="fas fa-link"></i> QUẢN LÝ VƯỢT LINK (GET KEY)</a>
                 <a href="/admin/files" class="nav-btn active"><i class="fas fa-cloud-upload-alt"></i> AUTO NẠP FILE TRÊN MÂY</a>
-                <a href="/admin/proxy" class="nav-btn"><i class="fas fa-shield-alt"></i> PROXY & THÔNG BÁO</a>
+                <a href="/admin/termux" class="nav-btn"><i class="fas fa-terminal"></i> GIAO DIỆN TERMUX</a>
             </div>
             
             <div class="card mb-4" style="border-top: 3px solid #10b981;">
@@ -1962,34 +1613,6 @@ def admin_files_dashboard():
             </div>
 
             <div class="row g-4">
-                <div class="col-xl-6 col-lg-6">
-                    <div class="card h-100" style="border-top: 3px solid #0f172a;">
-                        <div class="card-header"><div><i class="fas fa-code"></i> NẠP SCRIPT TIÊM GỐC</div></div>
-                        <div class="card-body d-flex flex-column">
-                            <form action="/admin/update_script_tiem" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <div class="mb-3 p-3 text-center" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">{tiem_status}</div>
-                                <input type="file" name="script_file" class="form-control mb-2" accept=".js,.txt">
-                                <textarea name="script_text" class="form-control mb-3 flex-grow-1" rows="4" placeholder="Hoặc dán trực tiếp mã nguồn vào đây..."></textarea>
-                                <button type="submit" class="btn-primary-custom mt-auto"><i class="fas fa-cloud-upload-alt"></i> NẠP FILE SCRIPT TIÊM</button>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="col-xl-6 col-lg-6">
-                    <div class="card h-100" style="border-top: 3px solid #0f172a;">
-                        <div class="card-header"><div><i class="fas fa-certificate"></i> NẠP SCRIPT VIOLENTMONKEY LOADER</div></div>
-                        <div class="card-body d-flex flex-column">
-                            <form action="/admin/update_vm_loader" method="POST" enctype="multipart/form-data" class="h-100 d-flex flex-column">{csrf_input}
-                                <div class="mb-3 p-3 text-center" style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">{loader_status}</div>
-                                <input type="file" name="loader_file" class="form-control mb-2" accept=".js,.txt">
-                                <textarea name="loader_text" class="form-control mb-3 flex-grow-1" rows="4" placeholder="Hoặc dán trực tiếp mã nguồn vào đây..."></textarea>
-                                <button type="submit" class="btn-primary-custom mt-auto"><i class="fas fa-cloud-upload-alt"></i> NẠP SCRIPT LOADER</button>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-                
                 <div class="col-xl-6 col-lg-6">
                     <div class="card h-100" style="border-top: 3px solid #0f172a;">
                         <div class="card-header">
@@ -2044,7 +1667,6 @@ def admin_files_dashboard():
                                     
                                     pContainer.classList.remove('d-none');
                                     btn.disabled = true;
-                                    
                                     xhr.upload.addEventListener('progress', function(e) {{
                                         if (e.lengthComputable) {{
                                             var percent = Math.round((e.loaded / e.total) * 100);
@@ -2088,22 +1710,19 @@ def admin_files_dashboard():
     </html>
     '''
 
-@app.route('/admin/proxy')
-def admin_proxy_dashboard():
+@app.route('/admin/termux')
+def admin_termux_dashboard():
     if session.get('role') != 'admin': return redirect('/admin_login')
     db = load_db()
     csrf_input = f'<input type="hidden" name="csrf_token" value="{session.get("csrf_token", "")}">'
     settings = db.get("settings", {})
-    
-    proxy_yaml = escape(settings.get("proxy_yaml", ""))
-    msg_login = escape(settings.get("msg_login", "VUI LÒNG KÍCH HOẠT KEY ĐỂ VÀO GAME!"))
-    msg_ingame = escape(settings.get("msg_ingame", "SẴN SÀNG CHIẾN ĐẤU - KEY ĐANG HOẠT ĐỘNG"))
+    termux_script = escape(settings.get("termux_script", ""))
     
     return f'''
     <!DOCTYPE html><html lang="vi">
     <head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>LVT C-Panel - Proxy & Thông Báo</title>
+        <title>LVT C-Panel - Giao Diện Termux</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -2136,36 +1755,24 @@ def admin_proxy_dashboard():
                 <a href="/admin" class="nav-btn"><i class="fas fa-key"></i> QUẢN LÝ KEY & FIREWALL</a>
                 <a href="/admin/getkey" class="nav-btn"><i class="fas fa-link"></i> QUẢN LÝ VƯỢT LINK (GET KEY)</a>
                 <a href="/admin/files" class="nav-btn"><i class="fas fa-cloud-upload-alt"></i> AUTO NẠP FILE TRÊN MÂY</a>
-                <a href="/admin/proxy" class="nav-btn active"><i class="fas fa-shield-alt"></i> PROXY & THÔNG BÁO</a>
+                <a href="/admin/termux" class="nav-btn active"><i class="fas fa-terminal"></i> GIAO DIỆN TERMUX</a>
             </div>
 
             <div class="row g-4">
                 <div class="col-xl-6 col-lg-12">
                     <div class="card h-100" style="border-top: 3px solid #10b981;">
-                        <div class="card-header"><div><i class="fas fa-file-code"></i> Nạp Code Proxy (file.yaml) Tự Động</div></div>
+                        <div class="card-header"><div><i class="fas fa-file-code"></i> Nạp File Code Termux Cấu Hình Động</div></div>
                         <div class="card-body">
-                            <form action="/admin/update_proxy_settings" method="POST" enctype="multipart/form-data">{csrf_input}
+                            <form action="/admin/update_termux" method="POST" enctype="multipart/form-data">{csrf_input}
                                 <div class="mb-3">
-                                    <label class="text-muted small fw-bold mb-1">Tải file .yaml lên</label>
-                                    <input type="file" name="proxy_file" class="form-control" accept=".yaml,.yml,.txt">
+                                    <label class="text-muted small fw-bold mb-1">Tải file (.py, .sh, .txt) lên</label>
+                                    <input type="file" name="termux_file" class="form-control" accept=".py,.sh,.txt">
                                 </div>
                                 <div class="mb-3">
-                                    <label class="text-muted small fw-bold mb-1">Hoặc dán trực tiếp mã nguồn YAML</label>
-                                    <textarea name="proxy_yaml" class="form-control font-monospace" rows="12" placeholder="Dán nội dung cấu hình Clash Meta vào đây. Bạn có thể chèn từ khóa {{KEY}} để nó tự động thay bằng Key của khách hàng...">{proxy_yaml}</textarea>
+                                    <label class="text-muted small fw-bold mb-1">Hoặc dán trực tiếp mã nguồn script Termux</label>
+                                    <textarea name="termux_text" class="form-control font-monospace" rows="14" placeholder="Dán nội dung script của bạn vào đây. Các biến hỗ trợ sẽ tự động được thay thế...">{termux_script}</textarea>
                                 </div>
-                                
-                                <h5 class="fw-bold mt-4 mb-3 border-bottom pb-2">TÙY CHỈNH THÔNG BÁO AUTO CHECK</h5>
-                                <div class="mb-3">
-                                    <label class="text-muted small fw-bold mb-1">Thông Báo Ở Sảnh Chờ Game (Khi hết hạn / Sai Key)</label>
-                                    <textarea name="msg_login" class="form-control text-danger fw-bold" rows="2" placeholder="VUI LÒNG KÍCH HOẠT KEY ĐỂ VÀO GAME!">{msg_login}</textarea>
-                                    <small class="text-muted">Tính năng: Nếu khách hàng đang chơi mà key chết/hết hạn, màn hình sẽ tự động bị khóa và hiện thông báo này giống như đang kẹt ở sảnh chờ.</small>
-                                </div>
-                                <div class="mb-4">
-                                    <label class="text-muted small fw-bold mb-1">Thông Báo Khi Đã Vào Trong Game (Nhân vật đang đứng)</label>
-                                    <textarea name="msg_ingame" class="form-control text-success fw-bold" rows="2" placeholder="SẴN SÀNG CHIẾN ĐẤU - KEY ĐANG HOẠT ĐỘNG">{msg_ingame}</textarea>
-                                </div>
-
-                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU CẤU HÌNH PROXY</button>
+                                <button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> LƯU MÃ NGUỒN TERMUX</button>
                             </form>
                         </div>
                     </div>
@@ -2173,17 +1780,20 @@ def admin_proxy_dashboard():
 
                 <div class="col-xl-6 col-lg-12">
                     <div class="card h-100" style="border-top: 3px solid #0f172a;">
-                        <div class="card-header text-dark"><div><i class="fas fa-info-circle"></i> Trạng Thái Auto Kiểm Tra Lõi</div></div>
+                        <div class="card-header text-dark"><div><i class="fas fa-info-circle"></i> Trạng Thái Auto Thay Đổi Chức Năng</div></div>
                         <div class="card-body">
-                            <h5 class="text-dark fw-bold mb-3">Mô Tả Nâng Cấp (Siêu Cấp):</h5>
-                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Cập nhật code liên tục:</b> Ngay khi bạn Upload file YAML mới, toàn bộ Client đang chạy sẽ nhận bản cập nhật ngay lập tức qua API động.</p>
-                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Chặn Network Triệt Để:</b> Nếu Key hết hạn/banned, server sẽ tự động bơm mã lệnh cắt kết nối vào File YAML trả về để ngăn chặn khách hàng chơi game.</p>
-                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Hệ thống Check Key Cực Mạnh:</b> HTML được nạp tự động nhúng tính năng gọi API 8 giây/lần. Khách hết hạn key lập tức văng về màn hình thông báo và bị khóa điều khiển.</p>
-                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Link Clash Meta Độc Quyền:</b> Khách nhập Key ở giao diện Mini App Vũ Trụ, hệ thống tự động sinh link nạp cấu hình Proxy thẳng vào app.</p>
+                            <h5 class="text-dark fw-bold mb-3">Mô Tả Chức Năng:</h5>
+                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Cấu Hình Động:</b> File mã nguồn này sẽ được phân phối qua API tự động. Khi khách hàng tải file từ hệ thống, dữ liệu chức năng, tên game và các thông tin khác sẽ được tự thay đổi cho phù hợp.</p>
+                            <p class="text-muted"><i class="fas fa-check text-success"></i> <b>Cập Nhật Tức Thời:</b> Mọi thay đổi tại đây sẽ được đẩy thẳng xuống toàn bộ người dùng đang tải code từ hệ thống.</p>
+                        
                             <hr>
                             <div class="p-3 mt-3" style="background:#f1f5f9; border-radius:8px;">
-                                <h6 class="fw-bold mb-2">Gợi ý Placeholder:</h6>
-                                <p class="small text-dark mb-0">Trong mã nguồn file.yaml, bạn có thể nhập thẳng chuỗi <code>{{KEY}}</code>. Khi server truyền file xuống máy khách, chuỗi này sẽ tự động thay bằng Key thực tế của họ.</p>
+                                <h6 class="fw-bold mb-2">Các Biến Hỗ Trợ (Placeholder):</h6>
+                                <p class="small text-dark mb-1">Bạn có thể chèn các đoạn mã sau trực tiếp vào script, server sẽ <b>tự động thay thế</b> chúng trước khi trả code về máy khách:</p>
+                                <ul class="small text-dark mb-0">
+                                    <li><code>{{KEY}}</code> - Sẽ tự động lấy Mã Key của khách hàng truyền vào.</li>
+                                    <li><code>{{WEB_URL}}</code> - Sẽ tự động đổi thành tên miền URL hiện tại của Server (vd: {WEB_URL}).</li>
+                                </ul>
                             </div>
                         </div>
                     </div>
@@ -2194,27 +1804,22 @@ def admin_proxy_dashboard():
     </html>
     '''
 
-@app.route('/admin/update_proxy_settings', methods=['POST'])
-def admin_update_proxy_settings():
+@app.route('/admin/update_termux', methods=['POST'])
+def admin_update_termux():
     if session.get('role') != 'admin': return redirect('/admin_login')
     db = load_db()
     
-    yaml_content = request.form.get('proxy_yaml', '').strip()
-    if 'proxy_file' in request.files and request.files['proxy_file'].filename != '':
-        try: yaml_content = request.files['proxy_file'].read().decode('utf-8')
-        except: return swal_back("Lỗi", "File YAML không hợp lệ", "error")
+    script_content = request.form.get('termux_text', '').strip()
+    if 'termux_file' in request.files and request.files['termux_file'].filename != '':
+        try: script_content = request.files['termux_file'].read().decode('utf-8')
+        except: return swal_back("Lỗi", "File không hợp lệ", "error")
         
-    msg_login = request.form.get("msg_login", "VUI LÒNG KÍCH HOẠT KEY ĐỂ VÀO GAME!").strip()
-    msg_ingame = request.form.get("msg_ingame", "SẴN SÀNG CHIẾN ĐẤU - KEY ĐANG HOẠT ĐỘNG").strip()
-    
     with db_lock:
         s = db.setdefault("settings", {})
-        s["proxy_yaml"] = yaml_content
-        s["msg_login"] = msg_login
-        s["msg_ingame"] = msg_ingame
+        s["termux_script"] = script_content
         save_db(db)
         
-    return swal_redirect("Thành Công", "Đã nạp file YAML và lưu cấu hình thông báo Proxy thành công!", "success", "/admin/proxy")
+    return swal_redirect("Thành Công", "Đã nạp file Termux thành công!", "success", "/admin/termux")
 
 @app.route('/admin/toggle_maintenance', methods=['POST'])
 def admin_toggle_maintenance():
@@ -2355,34 +1960,6 @@ def admin_restore_db():
             _last_mtime_check = time.time()
     except Exception as e: return swal_back("Lỗi", f"Định dạng file không hợp lệ hoặc lỗi khôi phục: {escape_swal(str(e))}", "error")
     return swal_redirect("Khôi Phục Thành Công", "Đã khôi phục toàn bộ Key và Dữ Liệu gốc thành công!", "success", "/admin")
-
-@app.route('/admin/update_script_tiem', methods=['POST'])
-def admin_update_script_tiem():
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    script_content = request.form.get('script_text', '').strip()
-    if not script_content and 'script_file' in request.files and request.files['script_file'].filename != '':
-        try: script_content = request.files['script_file'].read().decode('utf-8')
-        except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
-    if not script_content: return swal_back("Lỗi", "Vui lòng chọn File hoặc dán Mã Nguồn!", "error")
-    db = load_db()
-    with db_lock:
-        db.setdefault("settings", {})["script_tiem"] = script_content
-        save_db(db)
-    return swal_redirect("Thành Công", "Đã nạp Script Tiêm thành công!", "success", "/admin/files")
-
-@app.route('/admin/update_vm_loader', methods=['POST'])
-def admin_update_vm_loader():
-    if session.get('role') != 'admin': return redirect('/admin_login')
-    script_content = request.form.get('loader_text', '').strip()
-    if not script_content and 'loader_file' in request.files and request.files['loader_file'].filename != '':
-        try: script_content = request.files['loader_file'].read().decode('utf-8')
-        except: return swal_back("Lỗi", "File không hợp lệ (.js/.txt)", "error")
-    if not script_content: return swal_back("Lỗi", "Vui lòng chọn File hoặc dán Mã Nguồn!", "error")
-    db = load_db()
-    with db_lock:
-        db.setdefault("settings", {})["vm_loader"] = script_content
-        save_db(db)
-    return swal_redirect("Thành Công", "Đã nạp Script Loader thành công!", "success", "/admin/files")
 
 @app.route('/admin/update_webview', methods=['POST'])
 def admin_update_webview():
