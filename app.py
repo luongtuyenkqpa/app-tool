@@ -396,6 +396,27 @@ def api_list():
 @app.route('/ping')
 def ping(): return "OK", 200
 
+# Pre-computed fake response để trả lời cực nhanh
+_FAKE_CACHE = None
+_FAKE_CACHE_TIME = 0
+
+def get_cached_fake():
+    global _FAKE_CACHE, _FAKE_CACHE_TIME
+    now = time.time()
+    if _FAKE_CACHE is None or now - _FAKE_CACHE_TIME > 60:
+        _FAKE_CACHE = json.dumps({
+            "status": "ok", "code": 0, "message": "success",
+            "maintenance": False, "server_status": "online",
+            "region": "VN", "version": "1.105.1",
+            "data": {
+                "is_white": True, "login_open": True,
+                "server_time": int(now),
+                "cdn_url": "", "patch_version": "1.105.1"
+            }
+        }, ensure_ascii=False)
+        _FAKE_CACHE_TIME = now
+    return _FAKE_CACHE
+
 @app.route('/', methods=['GET','POST','OPTIONS'])
 @app.route('/<path:path>', methods=['GET','POST','OPTIONS'])
 def game_handler(path=''):
@@ -425,20 +446,28 @@ def game_handler(path=''):
 
     if path.endswith(('.txt', '.xml')):
         return cors_resp("OK", 200, "text/plain")
-    return cors_resp(get_fake_resp(), 200)
+
+    # Trả cached response cực nhanh
+    r = make_response(get_cached_fake(), 200)
+    r.headers['Content-Type'] = 'application/json; charset=utf-8'
+    r.headers['Access-Control-Allow-Origin'] = '*'
+    r.headers['Cache-Control'] = 'no-cache'
+    return r
 
 # =====================================================
 # KEEP ALIVE
 # =====================================================
 def keep_alive():
-    time.sleep(30)
+    """Ping liên tục để Render không ngủ"""
+    import urllib.request
+    url = "https://app-tool-trlp.onrender.com/ping"
+    time.sleep(10)
     while True:
         try:
-            import urllib.request
-            urllib.request.urlopen("https://app-tool-trlp.onrender.com/ping", timeout=10)
+            urllib.request.urlopen(url, timeout=10)
         except Exception:
             pass
-        time.sleep(10 * 60)
+        time.sleep(4 * 60)  # Ping mỗi 4 phút (Render ngủ sau 15p)
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
