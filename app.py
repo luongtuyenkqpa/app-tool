@@ -4,328 +4,307 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-app.secret_key = os.environ.get("SECRET_KEY", "gameauth_secret_2026")
+app.secret_key = os.environ.get("SECRET_KEY", "ffmax_pro_2026_auth")
 
-# =====================================================
-# DATABASE
-# =====================================================
 DB_FILE = "db.json"
 db_lock = threading.Lock()
 log_history = []
 log_lock = threading.Lock()
-
 GLOBAL_DB = {"verified": {}, "blocked": {}}
 
 def load_db():
     global GLOBAL_DB
     try:
         if os.path.exists(DB_FILE):
-            with open(DB_FILE, 'r') as f:
+            with open(DB_FILE, 'r', encoding='utf-8') as f:
                 GLOBAL_DB = json.load(f)
-    except Exception:
-        GLOBAL_DB = {"verified": {}, "blocked": {}}
-    return GLOBAL_DB
+                if "verified" not in GLOBAL_DB: GLOBAL_DB["verified"] = {}
+                if "blocked" not in GLOBAL_DB: GLOBAL_DB["blocked"] = {}
+    except: GLOBAL_DB = {"verified": {}, "blocked": {}}
 
 def save_db():
     try:
-        with open(DB_FILE, 'w') as f:
+        with open(DB_FILE, 'w', encoding='utf-8') as f:
             json.dump(GLOBAL_DB, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
+    except: pass
 
 load_db()
 
-def add_log(account_id, status):
-    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+def add_log(uid, status):
+    ts = time.strftime('%d/%m %H:%M:%S')
     with log_lock:
-        log_history.insert(0, {"time": ts, "id": account_id, "status": status})
-        if len(log_history) > 50:
-            log_history.pop()
+        log_history.insert(0, {"time": ts, "id": uid, "status": status})
+        if len(log_history) > 150: log_history.pop()
 
-def check_verified(account_id):
+def check_verified(uid):
     with db_lock:
-        exp = GLOBAL_DB.get("verified", {}).get(str(account_id))
-        if exp and exp > time.time():
-            return True
-        elif exp:
-            GLOBAL_DB["verified"].pop(str(account_id), None)
+        exp = GLOBAL_DB["verified"].get(str(uid))
+        if exp and exp > time.time(): return True
+        if exp:
+            del GLOBAL_DB["verified"][str(uid)]
             save_db()
         return False
 
-def add_verified(account_id, hours=1):
+def get_remaining(uid):
+    exp = GLOBAL_DB["verified"].get(str(uid), 0)
+    return max(0, int(exp - time.time()))
+
+def add_verified(uid, seconds):
     with db_lock:
-        GLOBAL_DB.setdefault("verified", {})[str(account_id)] = time.time() + hours * 3600
-        GLOBAL_DB.setdefault("blocked", {}).pop(str(account_id), None)
+        GLOBAL_DB["verified"][str(uid)] = time.time() + seconds
+        GLOBAL_DB["blocked"].pop(str(uid), None)
         save_db()
 
-def remove_verified(account_id):
+def extend_verified(uid, seconds):
     with db_lock:
-        GLOBAL_DB.get("verified", {}).pop(str(account_id), None)
+        current = GLOBAL_DB["verified"].get(str(uid), time.time())
+        if current < time.time(): current = time.time()
+        GLOBAL_DB["verified"][str(uid)] = current + seconds
         save_db()
 
-def add_blocked(account_id):
+def remove_verified(uid):
     with db_lock:
-        if str(account_id) not in GLOBAL_DB.get("blocked", {}):
-            GLOBAL_DB.setdefault("blocked", {})[str(account_id)] = int(time.time())
+        GLOBAL_DB["verified"].pop(str(uid), None)
+        save_db()
+
+def add_blocked(uid):
+    with db_lock:
+        if str(uid) not in GLOBAL_DB["blocked"]:
+            GLOBAL_DB["blocked"][str(uid)] = int(time.time())
             save_db()
 
-# =====================================================
-# FAKE JSON RESPONSE
-# =====================================================
-def get_fake_resp():
-    return {
-        "status": "ok", "code": 0, "message": "success",
-        "maintenance": False, "server_status": "online",
-        "region": "VN", "version": "1.105.1",
-        "data": {
-            "is_white": True, "login_open": True,
-            "server_time": int(time.time()),
-            "cdn_url": "", "patch_version": "1.105.1"
-        }
-    }
-
-def cors_resp(data, status=200, ctype="application/json"):
-    if isinstance(data, str):
-        r = make_response(data, status)
-    else:
-        r = make_response(json.dumps(data, ensure_ascii=False), status)
-    r.headers['Content-Type'] = ctype + '; charset=utf-8'
-    r.headers['Access-Control-Allow-Origin'] = '*'
-    r.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    r.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-    r.headers['Cache-Control'] = 'no-cache'
-    return r
-
-def get_account_id():
-    for k in ['id', 'accountId', 'account_id', 'uid']:
-        v = request.args.get(k)
-        if v: return v.strip()
-    try:
-        data = request.get_json(silent=True) or {}
-        for k in ['id', 'accountId', 'account_id', 'uid']:
-            v = data.get(k) or data.get('data', {}).get(k)
-            if v: return str(v).strip()
-    except Exception:
-        pass
-    for k in ['id', 'accountId', 'uid']:
-        v = request.form.get(k)
-        if v: return v.strip()
-    return None
-
-# =====================================================
-# WEB ADMIN HTML
-# =====================================================
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
-def get_admin_html():
-    now = time.time()
-    db = GLOBAL_DB
+def fmt_remaining(secs):
+    if secs <= 0: return "Hết hạn"
+    d, r = divmod(secs, 86400)
+    h, r = divmod(r, 3600)
+    m, s = divmod(r, 60)
+    parts = []
+    if d: parts.append(f"{d} Ngày")
+    if h: parts.append(f"{h} Giờ")
+    if m: parts.append(f"{m} Phút")
+    if not parts: parts.append(f"{s} Giây")
+    return " ".join(parts)
 
-    # Stats
-    verified_items = db.get("verified", {})
-    blocked_items = db.get("blocked", {})
-    active_count = sum(1 for exp in verified_items.values() if exp > now)
-    blocked_count = len([bid for bid in blocked_items if str(bid) not in verified_items or verified_items.get(str(bid), 0) <= now])
-
-    # Verified rows
-    verified_rows = ""
-    for uid, exp in sorted(verified_items.items(), key=lambda x: x[1], reverse=True):
-        is_active = exp > now
-        remaining_sec = max(0, int(exp - now))
-        h, m = remaining_sec // 3600, (remaining_sec % 3600) // 60
-        remaining_str = f"{h}h {m}m" if is_active else "Hết hạn"
-        exp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp))
-        badge = f'<span class="badge-active">● ACTIVE</span>' if is_active else '<span class="badge-expired">✗ HẾT HẠN</span>'
-        verified_rows += f"""<tr>
-            <td class="id-cell">{uid}</td>
-            <td>{exp_str}</td>
-            <td>{remaining_str}</td>
-            <td>{badge}</td>
-            <td>
-                <a href="/admin/delete?id={uid}" class="btn-del" onclick="return confirm('Xóa ID {uid}?')">XÓA</a>
-            </td>
-        </tr>"""
-    if not verified_rows:
-        verified_rows = '<tr><td colspan="5" class="empty-row">Chưa có ID nào được kích hoạt</td></tr>'
-
-    # Blocked rows
-    blocked_rows = ""
-    for bid, btime in sorted(blocked_items.items(), key=lambda x: x[1], reverse=True):
-        if str(bid) in verified_items and verified_items[str(bid)] > now:
-            continue
-        btime_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(btime))
-        blocked_rows += f"""<tr>
-            <td class="id-cell warn">{bid}</td>
-            <td>{btime_str}</td>
-            <td>
-                <a href="/admin/add?id={bid}&hours=1" class="btn-act1h">1 GIỜ</a>
-                <a href="/admin/add?id={bid}&hours=24" class="btn-act24h">24 GIỜ</a>
-            </td>
-        </tr>"""
-    if not blocked_rows:
-        blocked_rows = '<tr><td colspan="3" class="empty-row">Không có ID nào đang bị chặn</td></tr>'
-
-    # Log rows
-    log_rows = ""
-    with log_lock:
-        for log in log_history[:20]:
-            color = "#00dcc8" if "THÀNH CÔNG" in log['status'] else "#ff4444" if "CHẶN" in log['status'] else "#f0a500"
-            log_rows += f'<tr><td class="log-time">{log["time"]}</td><td class="log-id">{log["id"]}</td><td style="color:{color}">{log["status"]}</td></tr>'
-    if not log_rows:
-        log_rows = '<tr><td colspan="3" class="empty-row">Chưa có log nào</td></tr>'
-
-    return f"""<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="refresh" content="15">
-<title>Hệ Thống Quản Trị Xác Thực</title>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#0b0c10;color:#66fcf1;font-family:'Consolas',monospace;padding:16px}}
-h1{{text-align:center;font-size:20px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 15px #66fcf1;margin-bottom:4px;color:#66fcf1}}
-.subtitle{{text-align:center;font-size:11px;color:#45a29e;margin-bottom:16px}}
-.auto-refresh{{text-align:right;font-size:10px;color:#444;margin-bottom:8px}}
-.stats{{display:flex;gap:10px;margin-bottom:16px}}
-.stat-box{{flex:1;background:rgba(15,20,30,0.95);border-radius:10px;padding:14px;text-align:center}}
-.stat-box.green{{border:1px solid #00dcc8;box-shadow:0 0 12px rgba(0,220,200,0.2)}}
-.stat-box.red{{border:1px solid #ff4444;box-shadow:0 0 12px rgba(255,68,68,0.2)}}
-.stat-box.yellow{{border:1px solid #f0a500;box-shadow:0 0 12px rgba(240,165,0,0.2)}}
-.stat-num{{font-size:32px;font-weight:bold}}
-.stat-num.green{{color:#00dcc8}}
-.stat-num.red{{color:#ff4444}}
-.stat-num.yellow{{color:#f0a500}}
-.stat-label{{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-top:4px}}
-.card{{background:rgba(15,20,30,0.95);border:1px solid #45a29e;border-radius:10px;padding:14px;margin-bottom:14px;box-shadow:0 0 12px rgba(69,162,158,0.2)}}
-.card.warn{{border-color:#f0a500;box-shadow:0 0 12px rgba(240,165,0,0.15)}}
-.card-title{{font-size:12px;letter-spacing:1px;text-transform:uppercase;padding-bottom:10px;border-bottom:1px solid rgba(69,162,158,0.3);margin-bottom:12px;color:#45a29e}}
-.card-title.warn{{color:#f0a500;border-color:rgba(240,165,0,0.3)}}
-.form-row{{display:flex;gap:8px;margin-bottom:10px}}
-.form-input{{flex:1;background:#1f2833;color:#66fcf1;border:1px solid #45a29e;border-radius:6px;padding:10px;font-size:13px;outline:none}}
-.form-input:focus{{border-color:#66fcf1;box-shadow:0 0 8px rgba(102,252,241,0.3)}}
-.form-input.small{{width:80px;flex:none}}
-.btn-submit{{background:transparent;border:2px solid #66fcf1;color:#66fcf1;padding:10px 16px;border-radius:6px;font-weight:bold;font-size:12px;text-transform:uppercase;cursor:pointer;white-space:nowrap;transition:all 0.2s}}
-.btn-submit:hover{{background:#66fcf1;color:#0b0c10}}
-table{{width:100%;border-collapse:collapse;font-size:12px}}
-th{{color:#66fcf1;text-transform:uppercase;font-size:10px;letter-spacing:1px;padding:8px 6px;border-bottom:2px solid rgba(102,252,241,0.3);text-align:left}}
-td{{padding:8px 6px;border-bottom:1px solid rgba(69,162,158,0.15);color:#c5c6c7;vertical-align:middle}}
-.id-cell{{color:#00dcc8;font-weight:bold}}
-.id-cell.warn{{color:#f0a500}}
-.empty-row{{text-align:center;color:#444;padding:16px!important}}
-.badge-active{{background:transparent;border:1px solid #00dcc8;color:#00dcc8;padding:3px 8px;border-radius:4px;font-size:10px;box-shadow:0 0 6px rgba(0,220,200,0.4)}}
-.badge-expired{{background:transparent;border:1px solid #ff4444;color:#ff4444;padding:3px 8px;border-radius:4px;font-size:10px}}
-.btn-del{{background:transparent;border:1px solid #ff4444;color:#ff4444;padding:4px 10px;border-radius:4px;font-size:11px;text-decoration:none;transition:all 0.2s}}
-.btn-del:hover{{background:#ff4444;color:#fff}}
-.btn-act1h{{background:transparent;border:1px solid #f0a500;color:#f0a500;padding:4px 8px;border-radius:4px;font-size:11px;text-decoration:none;margin-right:4px;transition:all 0.2s}}
-.btn-act1h:hover{{background:#f0a500;color:#000}}
-.btn-act24h{{background:transparent;border:1px solid #00dcc8;color:#00dcc8;padding:4px 8px;border-radius:4px;font-size:11px;text-decoration:none;transition:all 0.2s}}
-.btn-act24h:hover{{background:#00dcc8;color:#000}}
-.log-time{{color:#555;font-size:11px}}
-.log-id{{color:#66fcf1}}
-.logout{{text-align:right;margin-bottom:8px}}
-.logout a{{color:#ff4444;font-size:12px;text-decoration:none;border:1px solid #ff4444;padding:4px 10px;border-radius:4px}}
-</style>
-</head>
-<body>
-<div class="logout"><a href="/admin/logout">ĐĂNG XUẤT</a></div>
-<h1>🛡️ Hệ Thống Quản Trị Xác Thực</h1>
-<p class="subtitle">Free Fire MAX Auth Server</p>
-<div class="auto-refresh">🔄 Tự động làm mới sau 15 giây</div>
-
-<div class="stats">
-  <div class="stat-box green"><div class="stat-num green">{active_count}</div><div class="stat-label">ID Đang Hoạt Động</div></div>
-  <div class="stat-box red"><div class="stat-num red">{blocked_count}</div><div class="stat-label">ID Đang Bị Chặn</div></div>
-  <div class="stat-box yellow"><div class="stat-num yellow">{len(log_history)}</div><div class="stat-label">Log Gần Nhất</div></div>
-</div>
-
-<div class="card">
-  <div class="card-title">➕ Kích Hoạt ID Mới</div>
-  <form action="/admin/add" method="GET">
-    <div class="form-row">
-      <input type="text" name="id" class="form-input" placeholder="Nhập ID Game..." required>
-      <input type="number" name="hours" class="form-input small" value="1" min="1" placeholder="Giờ">
-      <button type="submit" class="btn-submit">THÊM VÀO HỆ THỐNG</button>
-    </div>
-  </form>
-</div>
-
-<div class="card">
-  <div class="card-title">📋 Danh Sách ID Được Duyệt</div>
-  <table>
-    <thead><tr><th>ID Game</th><th>Hết Hạn Lúc</th><th>Còn Lại</th><th>Trạng Thái</th><th>Hành Động</th></tr></thead>
-    <tbody>{verified_rows}</tbody>
-  </table>
-</div>
-
-<div class="card warn">
-  <div class="card-title warn">🚨 ID Đang Bị Chặn (Cần Kích Hoạt)</div>
-  <table>
-    <thead><tr><th>ID Game</th><th>Lần Chặn Đầu</th><th>Kích Hoạt Nhanh</th></tr></thead>
-    <tbody>{blocked_rows}</tbody>
-  </table>
-</div>
-
-<div class="card">
-  <div class="card-title">📡 Nhật Ký Máy Chủ</div>
-  <table>
-    <thead><tr><th>Thời Gian</th><th>ID</th><th>Trạng Thái</th></tr></thead>
-    <tbody>{log_rows}</tbody>
-  </table>
-</div>
-</body>
-</html>"""
-
-LOGIN_HTML = """<!DOCTYPE html>
+# =====================================================
+# GIAO DIỆN WEB ADMIN (NÂNG CẤP PRO)
+# =====================================================
+ADMIN_HTML = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Đăng Nhập Admin</title>
+<title>Admin Dashboard Pro</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#0b0c10;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:'Consolas',monospace}
-.card{background:rgba(15,20,30,0.95);border:1px solid #45a29e;border-radius:12px;padding:32px;width:300px;box-shadow:0 0 20px rgba(69,162,158,0.3)}
-h2{color:#66fcf1;text-align:center;margin-bottom:24px;font-size:16px;text-transform:uppercase;letter-spacing:2px}
-input{width:100%;background:#1f2833;color:#66fcf1;border:1px solid #45a29e;border-radius:6px;padding:12px;font-size:14px;margin-bottom:14px;outline:none}
-input:focus{border-color:#66fcf1}
-button{width:100%;background:transparent;border:2px solid #66fcf1;color:#66fcf1;padding:12px;border-radius:6px;font-weight:bold;font-size:13px;text-transform:uppercase;cursor:pointer;transition:all 0.2s}
-button:hover{background:#66fcf1;color:#0b0c10}
-.err{color:#ff4444;text-align:center;font-size:12px;margin-top:8px}
+:root {--bg:#0f172a;--surface:#1e293b;--primary:#3b82f6;--secondary:#0ea5e9;--success:#10b981;--danger:#ef4444;--warn:#f59e0b;--text:#f8fafc;--text-muted:#94a3b8;--border:#334155;}
+* {margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+body {background:var(--bg);color:var(--text);padding:20px;min-height:100vh;}
+.container {max-width:1100px;margin:0 auto;}
+.header {display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--border);}
+.header h1 {font-size:22px;font-weight:800;background:linear-gradient(to right,var(--secondary),var(--success));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.header .logout {color:var(--danger);text-decoration:none;font-weight:600;padding:8px 16px;border:1px solid var(--danger);border-radius:8px;transition:0.2s;}
+.header .logout:hover {background:var(--danger);color:#fff;}
+.stats {display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px;}
+.stat-card {background:var(--surface);padding:20px;border-radius:12px;border:1px solid var(--border);text-align:center;box-shadow:0 4px 6px rgba(0,0,0,0.1);}
+.stat-card h3 {font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}
+.stat-card .num {font-size:32px;font-weight:800;}
+.stat-card.active .num {color:var(--success);}
+.stat-card.blocked .num {color:var(--danger);}
+.stat-card.logs .num {color:var(--warn);}
+.card {background:var(--surface);border-radius:12px;border:1px solid var(--border);margin-bottom:24px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.1);}
+.card-header {padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center;}
+.card-body {padding:20px;}
+form {display:flex;gap:10px;flex-wrap:wrap;}
+input, select {background:var(--bg);color:var(--text);border:1px solid var(--border);padding:10px 14px;border-radius:8px;outline:none;font-size:14px;transition:0.2s;}
+input:focus, select:focus {border-color:var(--primary);box-shadow:0 0 0 3px rgba(59,130,246,0.2);}
+.btn {padding:10px 16px;border-radius:8px;font-weight:600;border:none;cursor:pointer;transition:0.2s;font-size:14px;}
+.btn-primary {background:var(--primary);color:#fff;}
+.btn-primary:hover {background:#2563eb;}
+.btn-success {background:var(--success);color:#fff;}
+.btn-success:hover {background:#059669;}
+.btn-danger {background:transparent;border:1px solid var(--danger);color:var(--danger);}
+.btn-danger:hover {background:var(--danger);color:#fff;}
+.table-wrapper {overflow-x:auto;}
+table {width:100%;border-collapse:collapse;text-align:left;}
+th, td {padding:14px 20px;border-bottom:1px solid var(--border);white-space:nowrap;}
+th {color:var(--text-muted);font-size:12px;text-transform:uppercase;font-weight:600;background:rgba(0,0,0,0.2);}
+td {font-size:14px;}
+.uid {font-family:monospace;color:var(--secondary);font-size:15px;font-weight:600;}
+.badge {padding:4px 8px;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:0.5px;}
+.badge-ok {background:rgba(16,185,129,0.1);color:var(--success);border:1px solid var(--success);}
+.badge-err {background:rgba(239,68,68,0.1);color:var(--danger);border:1px solid var(--danger);}
+.time-left {color:var(--success);font-weight:600;}
+.time-exp {color:var(--danger);font-weight:600;}
+.flex-actions {display:flex;gap:6px;}
+.quick-btn {text-decoration:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;color:#fff;}
+.qb-min {background:#64748b;}
+.qb-hr {background:var(--warn);}
+.qb-day {background:var(--success);}
+.qb-mo {background:var(--primary);}
+.quick-btn:hover {opacity:0.8;}
+.auto-refresh {font-size:12px;color:var(--text-muted);}
+@media (max-width:768px) {
+    .header {flex-direction:column;gap:12px;}
+    form {flex-direction:column;}
+    input, select, .btn {width:100%;}
+}
 </style>
+<script>setTimeout(()=>window.location.reload(), 20000);</script>
 </head>
 <body>
-<div class="card">
-<h2>🛡️ Admin Login</h2>
-<form method="POST">
-<input type="password" name="password" placeholder="Mật khẩu..." required autofocus>
-<button type="submit">ĐĂNG NHẬP</button>
-{error}
-</form>
+<div class="container">
+    <div class="header">
+        <h1>🛡️ ADMIN SYSTEM PRO</h1>
+        <div>
+            <span class="auto-refresh">🔄 Tự làm mới sau 20s | </span>
+            <a href="/admin/logout" class="logout">ĐĂNG XUẤT</a>
+        </div>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card active"><h3>Đang Hoạt Động</h3><div class="num">{{active}}</div></div>
+        <div class="stat-card blocked"><h3>Bị Chặn Gần Đây</h3><div class="num">{{blocked}}</div></div>
+        <div class="stat-card logs"><h3>Tổng Log</h3><div class="num">{{logs}}</div></div>
+    </div>
+
+    <div class="card">
+        <div class="card-header" style="color:var(--secondary)">⚡ KÍCH HOẠT ID MỚI</div>
+        <div class="card-body">
+            <form action="/admin/add" method="GET">
+                <input type="text" name="id" placeholder="Nhập ID Game..." required style="flex:1;min-width:200px">
+                <input type="number" name="val" value="1" min="1" required style="width:80px">
+                <select name="unit">
+                    <option value="minutes">Phút</option>
+                    <option value="hours">Giờ</option>
+                    <option value="days" selected>Ngày</option>
+                    <option value="months">Tháng</option>
+                </select>
+                <button type="submit" class="btn btn-primary">KÍCH HOẠT NGAY</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">📋 DANH SÁCH ID ĐÃ DUYỆT</div>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>ID Game</th><th>Thời Gian Còn Lại</th><th>Trạng Thái</th><th>Gia Hạn (Cộng Dồn)</th><th>Thao Tác</th></tr></thead>
+                <tbody>{{verified_rows}}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card" style="border-color:var(--danger)">
+        <div class="card-header" style="color:var(--danger)">🚨 ID ĐANG BỊ CHẶN Ở SẢNH (CẦN DUYỆT)</div>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>ID Game</th><th>Lần Bị Chặn Cuối</th><th>Duyệt Nhanh</th></tr></thead>
+                <tbody>{{blocked_rows}}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">📡 NHẬT KÝ MÁY CHỦ</div>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>Thời Gian</th><th>ID Game</th><th>Trạng Thái</th></tr></thead>
+                <tbody>{{log_rows}}</tbody>
+            </table>
+        </div>
+    </div>
 </div>
 </body>
 </html>"""
 
+LOGIN_HTML = """<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Login</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}body{background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;} .box{background:#1e293b;padding:40px;border-radius:16px;border:1px solid #334155;width:100%;max-width:360px;box-shadow:0 10px 25px rgba(0,0,0,0.5);} h2{color:#3b82f6;text-align:center;margin-bottom:24px;} input{width:100%;padding:12px;margin-bottom:16px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#fff;outline:none;} input:focus{border-color:#3b82f6;} button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;} button:hover{background:#2563eb;} .err{color:#ef4444;text-align:center;font-size:14px;margin-top:16px;}</style></head><body><div class="box"><h2>🛡️ ADMIN LOGIN</h2><form method="POST"><input type="password" name="password" placeholder="Nhập mật khẩu..." required autofocus><button type="submit">ĐĂNG NHẬP</button>{{error}}</form></div></body></html>"""
+
+UNIT_SECONDS = {"minutes": 60, "hours": 3600, "days": 86400, "months": 2592000}
+
+def render_admin():
+    now = time.time()
+    db = GLOBAL_DB
+    verified = db.get("verified", {})
+    blocked_db = db.get("blocked", {})
+    active_count = sum(1 for e in verified.values() if e > now)
+    blocked_count = sum(1 for bid in blocked_db if str(bid) not in verified or verified.get(str(bid),0) <= now)
+
+    vrows = ""
+    for uid, exp in sorted(verified.items(), key=lambda x: x[1], reverse=True):
+        is_ok = exp > now
+        rem = fmt_remaining(max(0, int(exp - now)))
+        badge = '<span class="badge badge-ok">✅ HOẠT ĐỘNG</span>' if is_ok else '<span class="badge badge-err">❌ HẾT HẠN</span>'
+        vrows += f"""<tr>
+<td class="uid">{uid}</td>
+<td class="{'time-left' if is_ok else 'time-exp'}">{rem}</td>
+<td>{badge}</td>
+<td>
+  <form action="/admin/extend" method="GET" style="display:flex;gap:4px;flex-wrap:nowrap;margin:0">
+    <input type="hidden" name="id" value="{uid}">
+    <input type="number" name="val" value="1" min="1" style="width:60px;padding:6px;margin:0">
+    <select name="unit" style="padding:6px;margin:0">
+      <option value="minutes">Phút</option>
+      <option value="hours">Giờ</option>
+      <option value="days" selected>Ngày</option>
+      <option value="months">Tháng</option>
+    </select>
+    <button type="submit" class="btn btn-success" style="padding:6px 12px">+</button>
+  </form>
+</td>
+<td><a href="/admin/delete?id={uid}" class="btn btn-danger" onclick="return confirm('Xóa quyền truy cập của ID {uid}?')" style="text-decoration:none;padding:6px 12px;">XÓA</a></td>
+</tr>"""
+    if not vrows: vrows = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Chưa có ID nào được cấp quyền</td></tr>'
+
+    brows = ""
+    for bid, bt in sorted(blocked_db.items(), key=lambda x: x[1], reverse=True):
+        if str(bid) in verified and verified[str(bid)] > now: continue
+        bt_str = time.strftime('%d/%m %H:%M', time.localtime(bt))
+        brows += f"""<tr>
+<td class="uid" style="color:var(--danger)">{bid}</td>
+<td style="color:var(--text-muted)">{bt_str}</td>
+<td class="flex-actions">
+  <a href="/admin/add?id={bid}&val=30&unit=minutes" class="quick-btn qb-min">30 Phút</a>
+  <a href="/admin/add?id={bid}&val=1&unit=hours" class="quick-btn qb-hr">1 Giờ</a>
+  <a href="/admin/add?id={bid}&val=1&unit=days" class="quick-btn qb-day">1 Ngày</a>
+  <a href="/admin/add?id={bid}&val=1&unit=months" class="quick-btn qb-mo">1 Tháng</a>
+</td>
+</tr>"""
+    if not brows: brows = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted)">Hiện không có ai bị chặn</td></tr>'
+
+    lrows = ""
+    with log_lock:
+        for log in log_history[:50]:
+            color = "var(--success)" if "THÀNH CÔNG" in log['status'] else ("var(--danger)" if "CHẶN" in log['status'] else "var(--warn)")
+            lrows += f'<tr><td style="color:var(--text-muted)">{log["time"]}</td><td class="uid">{log["id"]}</td><td style="color:{color};font-weight:600">{log["status"]}</td></tr>'
+    if not lrows: lrows = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted)">Chưa có nhật ký hoạt động</td></tr>'
+
+    return (ADMIN_HTML
+        .replace("{{active}}", str(active_count))
+        .replace("{{blocked}}", str(blocked_count))
+        .replace("{{logs}}", str(len(log_history)))
+        .replace("{{verified_rows}}", vrows)
+        .replace("{{blocked_rows}}", brows)
+        .replace("{{log_rows}}", lrows))
+
 # =====================================================
 # ADMIN ROUTES
 # =====================================================
-
-@app.route('/admin/login', methods=['GET', 'POST'])
-@app.route('/admin_login', methods=['GET', 'POST'])
+@app.route('/admin/login', methods=['GET','POST'])
+@app.route('/admin_login', methods=['GET','POST'])
 def admin_login():
     if request.method == 'POST':
-        pw = request.form.get('password', '')
-        if pw == ADMIN_PASSWORD:
+        if request.form.get('password') == ADMIN_PASSWORD:
             session['admin'] = True
             return redirect('/admin')
-        return LOGIN_HTML.replace('{error}', '<div class="err">❌ Sai mật khẩu!</div>')
-    return LOGIN_HTML.replace('{error}', '')
+        return LOGIN_HTML.replace("{{error}}", '<div class="err">❌ Sai mật khẩu truy cập!</div>')
+    return LOGIN_HTML.replace("{{error}}", "")
 
 @app.route('/admin')
 def admin_panel():
-    if not session.get('admin'):
-        return redirect('/admin/login')
-    return get_admin_html()
+    if not session.get('admin'): return redirect('/admin/login')
+    return render_admin()
 
 @app.route('/admin/logout')
 def admin_logout():
@@ -334,146 +313,152 @@ def admin_logout():
 
 @app.route('/admin/add')
 def admin_add():
-    if not session.get('admin'):
-        return redirect('/admin/login')
-    uid = request.args.get('id', '').strip()
-    hours = float(request.args.get('hours', 1))
+    if not session.get('admin'): return redirect('/admin/login')
+    uid = request.args.get('id','').strip()
+    val = int(request.args.get('val', 1))
+    unit = request.args.get('unit', 'days')
     if uid:
-        add_verified(uid, hours)
-        add_log(uid, f"✅ Admin kích hoạt ({hours}h)")
+        secs = val * UNIT_SECONDS.get(unit, 86400)
+        add_verified(uid, secs)
+        unit_vn = {"minutes":"Phút","hours":"Giờ","days":"Ngày","months":"Tháng"}.get(unit, unit)
+        add_log(uid, f"✅ Đã Duyệt: {val} {unit_vn}")
+    return redirect('/admin')
+
+@app.route('/admin/extend')
+def admin_extend():
+    if not session.get('admin'): return redirect('/admin/login')
+    uid = request.args.get('id','').strip()
+    val = int(request.args.get('val', 1))
+    unit = request.args.get('unit', 'days')
+    if uid:
+        secs = val * UNIT_SECONDS.get(unit, 86400)
+        extend_verified(uid, secs)
+        unit_vn = {"minutes":"Phút","hours":"Giờ","days":"Ngày","months":"Tháng"}.get(unit, unit)
+        add_log(uid, f"⏰ Cộng Dồn: {val} {unit_vn}")
     return redirect('/admin')
 
 @app.route('/admin/delete')
 def admin_delete():
-    if not session.get('admin'):
-        return redirect('/admin/login')
-    uid = request.args.get('id', '').strip()
+    if not session.get('admin'): return redirect('/admin/login')
+    uid = request.args.get('id','').strip()
     if uid:
         remove_verified(uid)
-        add_log(uid, "🗑️ Admin đã xóa")
+        add_log(uid, "🗑️ Hủy Quyền Kích Hoạt")
     return redirect('/admin')
 
 # =====================================================
-# ADMIN API (token-based, dùng từ Termux)
+# GAME LOGIC - FIX ĐƠ LOAD GAME & HIỂN THỊ THÔNG BÁO XANH
 # =====================================================
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "admin123")
+FAKE_JSON_BASE = {
+    "status": "ok", "code": 0, "message": "success",
+    "maintenance": False, "server_status": "online",
+    "region": "VN", "version": "1.105.1",
+    "data": {"is_white": True, "login_open": True, "server_time": 0, "cdn_url": "", "patch_version": "1.105.1"}
+}
 
-def check_token():
-    t = request.headers.get("X-Admin-Token") or request.args.get("token")
-    return t == ADMIN_TOKEN
+def game_resp(body, status=200, ctype="application/json"):
+    r = make_response(body, status)
+    r.headers.update({
+        'Content-Type': f'{ctype}; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, User-Agent, Accept',
+        'Cache-Control': 'no-cache, no-store',
+        'Pragma': 'no-cache'
+    })
+    return r
 
-@app.route('/api/add', methods=['GET', 'POST'])
-def api_add():
-    if not check_token(): return jsonify({"error": "Unauthorized"}), 401
-    uid = request.args.get('id') or (request.get_json(silent=True) or {}).get('id')
-    hours = float(request.args.get('hours', 1))
-    if not uid: return jsonify({"error": "Missing id"}), 400
-    add_verified(uid, hours)
-    add_log(uid, f"✅ API kích hoạt ({hours}h)")
-    return jsonify({"ok": True, "id": uid, "hours": hours})
-
-@app.route('/api/remove', methods=['GET', 'POST'])
-def api_remove():
-    if not check_token(): return jsonify({"error": "Unauthorized"}), 401
-    uid = request.args.get('id') or (request.get_json(silent=True) or {}).get('id')
-    if not uid: return jsonify({"error": "Missing id"}), 400
-    remove_verified(uid)
-    return jsonify({"ok": True, "id": uid})
-
-@app.route('/api/list')
-def api_list():
-    if not check_token(): return jsonify({"error": "Unauthorized"}), 401
-    now = time.time()
-    verified = {uid: {"expires": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp)),
-                      "remaining_min": max(0, int((exp-now)/60)), "active": exp > now}
-               for uid, exp in GLOBAL_DB.get("verified", {}).items()}
-    return jsonify({"verified": verified, "blocked": list(GLOBAL_DB.get("blocked", {}).keys())})
-
-# =====================================================
-# GAME ROUTES
-# =====================================================
+def get_uid():
+    # Lọc tìm UID cẩn thận để tránh nhầm lẫn config rác
+    for k in ['id','accountId','account_id','uid','userId','openId']:
+        v = request.args.get(k)
+        if v and v.strip() and v.strip() != "null" and len(v.strip()) > 3: return v.strip()
+    try:
+        d = request.get_json(force=True, silent=True) or {}
+        for k in ['id','accountId','account_id','uid','openId']:
+            v = d.get(k) or d.get('data',{}).get(k)
+            if v and str(v).strip() != "null": return str(v).strip()
+    except: pass
+    for k in ['id','accountId','uid']:
+        v = request.form.get(k)
+        if v and v.strip() and v.strip() != "null": return v.strip()
+    return None
 
 @app.route('/ping')
 def ping(): return "OK", 200
 
-# Pre-computed fake response để trả lời cực nhanh
-_FAKE_CACHE = None
-_FAKE_CACHE_TIME = 0
-
-def get_cached_fake():
-    global _FAKE_CACHE, _FAKE_CACHE_TIME
-    now = time.time()
-    if _FAKE_CACHE is None or now - _FAKE_CACHE_TIME > 60:
-        _FAKE_CACHE = json.dumps({
-            "status": "ok", "code": 0, "message": "success",
-            "maintenance": False, "server_status": "online",
-            "region": "VN", "version": "1.105.1",
-            "data": {
-                "is_white": True, "login_open": True,
-                "server_time": int(now),
-                "cdn_url": "", "patch_version": "1.105.1"
-            }
-        }, ensure_ascii=False)
-        _FAKE_CACHE_TIME = now
-    return _FAKE_CACHE
-
 @app.route('/', methods=['GET','POST','OPTIONS'])
 @app.route('/<path:path>', methods=['GET','POST','OPTIONS'])
 def game_handler(path=''):
-    # Bỏ qua admin routes
-    if path.startswith('admin') or path.startswith('api/'):
-        from flask import abort
-        abort(404)
+    if path.startswith(('admin', 'api/')):
+        from flask import abort; abort(404)
 
     if request.method == 'OPTIONS':
-        return cors_resp('', 200)
+        return game_resp('', 200)
 
-    uid = get_account_id()
+    # 1. FIX ĐƠ LOAD GAME (CỰC KỲ QUAN TRỌNG)
+    # Nếu client tải file tĩnh (.json, .xml, .bundle...), LUÔN trả về HTTP 200 hợp lệ để % tiếp tục chạy.
+    path_lower = path.lower()
+    is_static_file = any(path_lower.endswith(ext) for ext in ['.txt', '.xml', '.json', '.u3d', '.bundle', '.bytes', '.png'])
+    
+    uid = get_uid()
+
     if uid:
         if check_verified(uid):
-            add_log(uid, "✅ ĐĂNG NHẬP THÀNH CÔNG")
-            exp = GLOBAL_DB.get("verified", {}).get(str(uid), 0)
-            resp = {**get_fake_resp(), "status": "verified", "code": 0,
-                   "remaining_seconds": max(0, int(exp - time.time()))}
-            return cors_resp(resp, 200)
+            add_log(uid, "✅ VÀO SẢNH THÀNH CÔNG")
+            resp = FAKE_JSON_BASE.copy()
+            resp.update({"status":"verified", "code":0, "remaining_seconds": get_remaining(uid)})
+            resp["data"]["server_time"] = int(time.time())
+            return game_resp(json.dumps(resp, ensure_ascii=False), 200)
         else:
+            # Nếu chưa kích hoạt hoặc hết hạn
             add_blocked(uid)
-            add_log(uid, "🚫 BỊ CHẶN: Chưa kích hoạt")
-            msg = (f"Account ID: {uid} is Not Verified!\n\n"
-                   f"Vui lòng kích hoạt ID để vào game.\n"
-                   f"Đăng nhập máy chủ thất bại: 400")
-            return cors_resp(msg, 400, "text/html")
+            add_log(uid, "🚫 BỊ CHẶN Ở SẢNH")
+            
+            # Nếu request là xin lấy file tĩnh, vẫn cho nó lấy để qua đoạn load %
+            if is_static_file:
+                resp = FAKE_JSON_BASE.copy()
+                resp["data"]["server_time"] = int(time.time())
+                return game_resp(json.dumps(resp, ensure_ascii=False), 200)
+            
+            # 2. XỬ LÝ CHẶN SẢNH ĐĂNG NHẬP VỚI THÔNG BÁO MÀU XANH LÁ (Unity Rich Text)
+            # Dùng màu lục sáng #00ff00 hoặc #00ff88 để game hiển thị
+            block_msg = (
+                f"<color=#00ff88><b>ID: {uid} CHƯA KÍCH HOẠT</b></color>\n\n"
+                f"Tài khoản của bạn chưa được cấp quyền.\n"
+                f"Vui lòng liên hệ Admin để kích hoạt ID!\n\n"
+                f"<i>Lỗi máy chủ: 400</i>"
+            )
+            # Trả về 400 text/html để game móc ra thông báo báo lỗi ở màn hình đăng nhập
+            return game_resp(block_msg, 400, "text/html")
 
-    if path.endswith(('.txt', '.xml')):
-        return cors_resp("OK", 200, "text/plain")
-
-    # Trả cached response cực nhanh
-    r = make_response(get_cached_fake(), 200)
-    r.headers['Content-Type'] = 'application/json; charset=utf-8'
-    r.headers['Access-Control-Allow-Origin'] = '*'
-    r.headers['Cache-Control'] = 'no-cache'
-    return r
+    # Mặc định cho mọi request không có UID (game đang load % tài nguyên khởi tạo)
+    resp = FAKE_JSON_BASE.copy()
+    resp["data"]["server_time"] = int(time.time())
+    
+    # Fake file txt/xml nếu được yêu cầu
+    if path_lower.endswith('.txt') or path_lower.endswith('.xml'):
+        return game_resp("OK", 200, "text/plain")
+        
+    return game_resp(json.dumps(resp, ensure_ascii=False), 200)
 
 # =====================================================
-# KEEP ALIVE
+# KEEP ALIVE - Chống sập Render
 # =====================================================
 def keep_alive():
-    """Ping liên tục để Render không ngủ"""
     import urllib.request
-    url = "https://app-tool-trlp.onrender.com/ping"
-    time.sleep(10)
+    time.sleep(15)
     while True:
         try:
-            urllib.request.urlopen(url, timeout=10)
-        except Exception:
-            pass
-        time.sleep(4 * 60)  # Ping mỗi 4 phút (Render ngủ sau 15p)
+            # Đổi URL bên dưới thành URL Render thực tế của bạn để tự nó ping chính nó
+            urllib.request.urlopen("http://127.0.0.1:" + str(os.environ.get('PORT', 5000)) + "/ping", timeout=8)
+        except: pass
+        time.sleep(3 * 60) # Ping mỗi 3 phút
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print(f"🚀 Server: http://localhost:{port}")
-    print(f"🔗 Admin : http://localhost:{port}/admin")
-    print(f"🔑 Pass  : {ADMIN_PASSWORD}")
+    print(f"🚀 GAME PROXY START: http://localhost:{port}")
+    print(f"🔗 ADMIN DASHBOARD: http://localhost:{port}/admin (Pass: {ADMIN_PASSWORD})")
     app.run(host='0.0.0.0', port=port, threaded=True)
