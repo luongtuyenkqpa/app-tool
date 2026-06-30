@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: app-tool-trlp
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120 --keep-alive 5
+    healthCheckPath: /ping
+    envVars:
+      - key: ADMIN_PASSWORD
+        value: admin123
+      - key: SECRET_KEY
+        value: ffmax_auth_2026_secret
+      - key: PYTHON_VERSION
+        value: 3.11.0
