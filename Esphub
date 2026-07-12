@@ -1,0 +1,104 @@
+-- Khởi tạo dịch vụ cần thiết
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Tạo giao diện (UI) hiển thị số lượng kẻ địch
+local ScreenGui = Instance.new("ScreenGui")
+local CountLabel = Instance.new("TextLabel")
+
+ScreenGui.Name = "EnemyCounterGui"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
+
+CountLabel.Size = UDim2.new(0, 220, 0, 40)
+CountLabel.Position = UDim2.new(0.5, -110, 0, 10) -- Nằm chính giữa phía trên cùng màn hình
+CountLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+CountLabel.BackgroundTransparency = 0.3
+CountLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+CountLabel.Font = Enum.Font.SourceSansBold
+CountLabel.TextSize = 20
+CountLabel.Text = "Đang quét đối thủ..."
+
+-- Bo góc cho bảng số lượng
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = CountLabel
+CountLabel.Parent = ScreenGui
+
+-- Hàm kiểm tra xem một người chơi có phải là ĐỐI THỦ hay không
+-- (Tùy thuộc vào cơ chế phân phe của game, mặc định kiểm tra qua Team)
+local function isEnemy(player)
+    if player == LocalPlayer then return false end
+    
+    -- Cách 1: Kiểm tra qua Team (Phổ biến nhất trong Roblox)
+    if LocalPlayer.Team and player.Team then
+        return LocalPlayer.Team ~= player.Team
+    end
+    
+    -- Cách 2: Nếu game không dùng Team mà dùng thuộc tính khác (Ví dụ StringValue trong Character)
+    -- Bạn có thể điều chỉnh điều kiện ở đây nếu game trốn tìm này lưu phe theo cách đặc biệt.
+    return true -- Mặc định coi tất cả người khác là đối thủ nếu game không phân Team rõ ràng bằng hệ thống Roblox
+end
+
+-- Hàm tạo ESP Highlight (Khung viền phát sáng) xung quanh đối thủ
+local function createESP(player)
+    local function applyHighlight(character)
+        -- Chờ nhân vật tải xong hoàn toàn
+        local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 5)
+        if not humanoidRootPart then return end
+        
+        -- Nếu đã có ESP rồi thì không tạo trùng
+        if character:FindFirstChild("EnemyESP") then return end
+        
+        -- Tạo hiệu ứng Highlight phát sáng xuyên tường
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "EnemyESP"
+        highlight.Parent = character
+        highlight.FillColor = Color3.fromRGB(255, 0, 0) -- Màu đỏ bên trong
+        highlight.FillTransparency = 0.5
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255) -- Viền trắng
+        highlight.OutlineTransparency = 0
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop -- Luôn hiển thị xuyên tường
+    end
+
+    if player.Character then
+        applyHighlight(player.Character)
+    end
+    player.CharacterAdded:Connect(applyHighlight)
+end
+
+-- Hàm cập nhật trạng thái ESP và Đếm số lượng kẻ địch theo thời gian thực
+local function updateLoop()
+    local enemyCount = 0
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if isEnemy(player) then
+            enemyCount = enemyCount + 1
+            
+            -- Thêm ESP nếu chưa có
+            if player.Character and not player.Character:FindFirstChild("EnemyESP") then
+                createESP(player)
+            end
+        else
+            -- Nếu đổi phe hoặc đồng đội, xóa ESP đi (nếu có)
+            if player.Character and player.Character:FindFirstChild("EnemyESP") then
+                player.Character.EnemyESP:Destroy()
+            end
+        end
+    end
+    
+    -- Cập nhật chữ trên màn hình
+    CountLabel.Text = "Số lượng địch: " .. tostring(enemyCount)
+end
+
+-- Chạy vòng lặp cập nhật liên tục (mỗi frame hình)
+local renderConnection = RunService.RenderStepped:Connect(updateLoop)
+
+-- Dọn dẹp script khi người chơi thoát hoặc khi bạn muốn dừng script
+LocalPlayer.OnTeleport:Connect(function()
+    renderConnection:Disconnect()
+    ScreenGui:Destroy()
+end)
