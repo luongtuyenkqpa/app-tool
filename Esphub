@@ -1,104 +1,271 @@
--- Khởi tạo dịch vụ cần thiết
+-- ESP Script for Chameleon (Roblox)
+-- Features: Enemy ESP Box, Name Tag, Distance, Counter
+-- Compatible with Synapse X, KRNL, Fluxus, Delta
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local CoreGui = game:GetService("CoreGui")
+local Camera = workspace.CurrentCamera
 
 local LocalPlayer = Players.LocalPlayer
+local ESP_Enabled = true
+local ESP_Objects = {}
+local EnemyCount = 0
 
--- Tạo giao diện (UI) hiển thị số lượng kẻ địch
+-- ============================
+-- CONFIG
+-- ============================
+local CONFIG = {
+    BoxColor      = Color3.fromRGB(255, 50, 50),    -- Màu box kẻ địch
+    NameColor     = Color3.fromRGB(255, 255, 255),  -- Màu tên
+    DistanceColor = Color3.fromRGB(255, 200, 0),    -- Màu khoảng cách
+    CounterColor  = Color3.fromRGB(0, 255, 100),    -- Màu bộ đếm
+    BoxThickness  = 1.5,
+    ShowBox       = true,
+    ShowName      = true,
+    ShowDistance  = true,
+    ShowCounter   = true,
+    MaxDistance   = 1000,
+    TeamCheck     = false, -- true = chỉ highlight team khác
+}
+
+-- ============================
+-- GUI COUNTER (góc màn hình)
+-- ============================
 local ScreenGui = Instance.new("ScreenGui")
-local CountLabel = Instance.new("TextLabel")
-
-ScreenGui.Name = "EnemyCounterGui"
-ScreenGui.Parent = CoreGui
+ScreenGui.Name = "ESP_GUI"
 ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-CountLabel.Size = UDim2.new(0, 220, 0, 40)
-CountLabel.Position = UDim2.new(0.5, -110, 0, 10) -- Nằm chính giữa phía trên cùng màn hình
-CountLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-CountLabel.BackgroundTransparency = 0.3
-CountLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-CountLabel.Font = Enum.Font.SourceSansBold
-CountLabel.TextSize = 20
-CountLabel.Text = "Đang quét đối thủ..."
+local CounterFrame = Instance.new("Frame")
+CounterFrame.Size = UDim2.new(0, 180, 0, 50)
+CounterFrame.Position = UDim2.new(0, 10, 0, 10)
+CounterFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+CounterFrame.BackgroundTransparency = 0.3
+CounterFrame.BorderSizePixel = 0
+CounterFrame.Parent = ScreenGui
 
--- Bo góc cho bảng số lượng
 local UICorner = Instance.new("UICorner")
 UICorner.CornerRadius = UDim.new(0, 8)
-UICorner.Parent = CountLabel
-CountLabel.Parent = ScreenGui
+UICorner.Parent = CounterFrame
 
--- Hàm kiểm tra xem một người chơi có phải là ĐỐI THỦ hay không
--- (Tùy thuộc vào cơ chế phân phe của game, mặc định kiểm tra qua Team)
-local function isEnemy(player)
-    if player == LocalPlayer then return false end
-    
-    -- Cách 1: Kiểm tra qua Team (Phổ biến nhất trong Roblox)
-    if LocalPlayer.Team and player.Team then
-        return LocalPlayer.Team ~= player.Team
-    end
-    
-    -- Cách 2: Nếu game không dùng Team mà dùng thuộc tính khác (Ví dụ StringValue trong Character)
-    -- Bạn có thể điều chỉnh điều kiện ở đây nếu game trốn tìm này lưu phe theo cách đặc biệt.
-    return true -- Mặc định coi tất cả người khác là đối thủ nếu game không phân Team rõ ràng bằng hệ thống Roblox
-end
+local CounterLabel = Instance.new("TextLabel")
+CounterLabel.Size = UDim2.new(1, 0, 1, 0)
+CounterLabel.BackgroundTransparency = 1
+CounterLabel.TextColor3 = CONFIG.CounterColor
+CounterLabel.TextScaled = true
+CounterLabel.Font = Enum.Font.GothamBold
+CounterLabel.Text = "👁 Kẻ Địch: 0"
+CounterLabel.Parent = CounterFrame
 
--- Hàm tạo ESP Highlight (Khung viền phát sáng) xung quanh đối thủ
-local function createESP(player)
-    local function applyHighlight(character)
-        -- Chờ nhân vật tải xong hoàn toàn
-        local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 5)
-        if not humanoidRootPart then return end
-        
-        -- Nếu đã có ESP rồi thì không tạo trùng
-        if character:FindFirstChild("EnemyESP") then return end
-        
-        -- Tạo hiệu ứng Highlight phát sáng xuyên tường
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "EnemyESP"
-        highlight.Parent = character
-        highlight.FillColor = Color3.fromRGB(255, 0, 0) -- Màu đỏ bên trong
-        highlight.FillTransparency = 0.5
-        highlight.OutlineColor = Color3.fromRGB(255, 255, 255) -- Viền trắng
-        highlight.OutlineTransparency = 0
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop -- Luôn hiển thị xuyên tường
-    end
+-- Toggle Button
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 180, 0, 36)
+ToggleBtn.Position = UDim2.new(0, 10, 0, 68)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+ToggleBtn.BackgroundTransparency = 0.2
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Text = "ESP: BẬT"
+ToggleBtn.TextScaled = true
+ToggleBtn.BorderSizePixel = 0
+ToggleBtn.Parent = ScreenGui
 
-    if player.Character then
-        applyHighlight(player.Character)
-    end
-    player.CharacterAdded:Connect(applyHighlight)
-end
+local UICorner2 = Instance.new("UICorner")
+UICorner2.CornerRadius = UDim.new(0, 8)
+UICorner2.Parent = ToggleBtn
 
--- Hàm cập nhật trạng thái ESP và Đếm số lượng kẻ địch theo thời gian thực
-local function updateLoop()
-    local enemyCount = 0
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if isEnemy(player) then
-            enemyCount = enemyCount + 1
-            
-            -- Thêm ESP nếu chưa có
-            if player.Character and not player.Character:FindFirstChild("EnemyESP") then
-                createESP(player)
-            end
-        else
-            -- Nếu đổi phe hoặc đồng đội, xóa ESP đi (nếu có)
-            if player.Character and player.Character:FindFirstChild("EnemyESP") then
-                player.Character.EnemyESP:Destroy()
+ToggleBtn.MouseButton1Click:Connect(function()
+    ESP_Enabled = not ESP_Enabled
+    if ESP_Enabled then
+        ToggleBtn.Text = "ESP: BẬT"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    else
+        ToggleBtn.Text = "ESP: TẮT"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        -- Xóa hết drawings
+        for _, obj in pairs(ESP_Objects) do
+            for _, drawing in pairs(obj) do
+                if drawing.Remove then drawing:Remove() end
             end
         end
+        ESP_Objects = {}
     end
-    
-    -- Cập nhật chữ trên màn hình
-    CountLabel.Text = "Số lượng địch: " .. tostring(enemyCount)
+end)
+
+ScreenGui.Parent = game:GetService("CoreGui")
+
+-- ============================
+-- DRAWING HELPERS
+-- ============================
+local function NewDrawing(type, props)
+    local d = Drawing.new(type)
+    for k, v in pairs(props) do
+        d[k] = v
+    end
+    return d
 end
 
--- Chạy vòng lặp cập nhật liên tục (mỗi frame hình)
-local renderConnection = RunService.RenderStepped:Connect(updateLoop)
+local function CreateESP(player)
+    local drawings = {
+        -- Box (4 lines)
+        BoxTop    = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor, Visible = false }),
+        BoxBottom = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor, Visible = false }),
+        BoxLeft   = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor, Visible = false }),
+        BoxRight  = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor, Visible = false }),
+        -- Name
+        NameTag   = NewDrawing("Text", { Size = 14, Color = CONFIG.NameColor, Center = true, Outline = true, OutlineColor = Color3.new(0,0,0), Visible = false, Font = 2 }),
+        -- Distance
+        DistTag   = NewDrawing("Text", { Size = 12, Color = CONFIG.DistanceColor, Center = true, Outline = true, OutlineColor = Color3.new(0,0,0), Visible = false, Font = 2 }),
+    }
+    ESP_Objects[player] = drawings
+end
 
--- Dọn dẹp script khi người chơi thoát hoặc khi bạn muốn dừng script
-LocalPlayer.OnTeleport:Connect(function()
-    renderConnection:Disconnect()
-    ScreenGui:Destroy()
+local function RemoveESP(player)
+    if ESP_Objects[player] then
+        for _, d in pairs(ESP_Objects[player]) do
+            if d.Remove then d:Remove() end
+        end
+        ESP_Objects[player] = nil
+    end
+end
+
+-- ============================
+-- WORLD TO SCREEN
+-- ============================
+local function GetBoundingBox(character)
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+
+    local size = Vector3.new(4, 5.5, 0)
+    local cf = hrp.CFrame
+
+    local corners = {
+        cf * CFrame.new(-size.X/2,  size.Y/2, 0),
+        cf * CFrame.new( size.X/2,  size.Y/2, 0),
+        cf * CFrame.new(-size.X/2, -size.Y/2, 0),
+        cf * CFrame.new( size.X/2, -size.Y/2, 0),
+    }
+
+    local minX, minY = math.huge, math.huge
+    local maxX, maxY = -math.huge, -math.huge
+    local onScreen = false
+
+    for _, c in ipairs(corners) do
+        local screen, vis = Camera:WorldToViewportPoint(c.Position)
+        if vis then
+            onScreen = true
+            minX = math.min(minX, screen.X)
+            minY = math.min(minY, screen.Y)
+            maxX = math.max(maxX, screen.X)
+            maxY = math.max(maxY, screen.Y)
+        end
+    end
+
+    if not onScreen then return nil end
+    return minX, minY, maxX, maxY
+end
+
+-- ============================
+-- UPDATE LOOP
+-- ============================
+local function UpdateESP()
+    EnemyCount = 0
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+
+        -- Team check (tuỳ chọn)
+        if CONFIG.TeamCheck and player.Team == LocalPlayer.Team then
+            RemoveESP(player)
+            continue
+        end
+
+        local character = player.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+        if not ESP_Objects[player] then
+            CreateESP(player)
+        end
+
+        local drawings = ESP_Objects[player]
+
+        if not ESP_Enabled or not character or not hrp
+            or not humanoid or humanoid.Health <= 0 then
+            for _, d in pairs(drawings) do d.Visible = false end
+            continue
+        end
+
+        -- Khoảng cách
+        local lhrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local dist = lhrp and (hrp.Position - lhrp.Position).Magnitude or 0
+
+        if dist > CONFIG.MaxDistance then
+            for _, d in pairs(drawings) do d.Visible = false end
+            continue
+        end
+
+        EnemyCount = EnemyCount + 1
+
+        local minX, minY, maxX, maxY = GetBoundingBox(character)
+
+        if not minX then
+            for _, d in pairs(drawings) do d.Visible = false end
+            continue
+        end
+
+        local tl = Vector2.new(minX, minY)
+        local tr = Vector2.new(maxX, minY)
+        local bl = Vector2.new(minX, maxY)
+        local br = Vector2.new(maxX, maxY)
+
+        -- Vẽ Box
+        if CONFIG.ShowBox then
+            drawings.BoxTop.From    = tl; drawings.BoxTop.To    = tr; drawings.BoxTop.Visible    = true
+            drawings.BoxBottom.From = bl; drawings.BoxBottom.To = br; drawings.BoxBottom.Visible = true
+            drawings.BoxLeft.From   = tl; drawings.BoxLeft.To   = bl; drawings.BoxLeft.Visible   = true
+            drawings.BoxRight.From  = tr; drawings.BoxRight.To  = br; drawings.BoxRight.Visible  = true
+        end
+
+        -- Tên
+        if CONFIG.ShowName then
+            drawings.NameTag.Position = Vector2.new((minX + maxX) / 2, minY - 16)
+            drawings.NameTag.Text = player.DisplayName
+            drawings.NameTag.Visible = true
+        end
+
+        -- Khoảng cách
+        if CONFIG.ShowDistance then
+            drawings.DistTag.Position = Vector2.new((minX + maxX) / 2, maxY + 2)
+            drawings.DistTag.Text = string.format("[%.0f m]", dist)
+            drawings.DistTag.Visible = true
+        end
+    end
+
+    -- Cập nhật counter
+    CounterLabel.Text = string.format("👁 Kẻ Địch: %d", EnemyCount)
+end
+
+-- ============================
+-- PLAYER EVENTS
+-- ============================
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        RemoveESP(p)
+    end)
 end)
+
+Players.PlayerRemoving:Connect(function(p)
+    RemoveESP(p)
+end)
+
+-- ============================
+-- MAIN LOOP
+-- ============================
+RunService.RenderStepped:Connect(function()
+    if ESP_Enabled then
+        UpdateESP()
+    end
+end)
+
+print("✅ ESP Chameleon loaded! Toggle bằng nút trên màn hình.")
