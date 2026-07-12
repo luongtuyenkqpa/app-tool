@@ -1,52 +1,62 @@
--- ESP Script for Chameleon (Roblox)
--- Features: Enemy ESP Box, Name Tag, Distance, Counter
--- Compatible with Synapse X, KRNL, Fluxus, Delta
+-- ESP + MENU Script for Paint & Seek / Chameleon
+-- Version 2.0 FULL | Complete & Merged
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local Camera = workspace.CurrentCamera
-
 local LocalPlayer = Players.LocalPlayer
+
+-- ============================
+-- STATES
+-- ============================
 local ESP_Enabled = true
+local ShowBox = true
+local ShowName = true
+local ShowDistance = true
+local ShowTeammates = false
 local ESP_Objects = {}
 local EnemyCount = 0
+local MenuOpen = false
 
--- ============================
--- CONFIG
--- ============================
 local CONFIG = {
-    BoxColor      = Color3.fromRGB(255, 50, 50),    -- Màu box kẻ địch
-    NameColor     = Color3.fromRGB(255, 255, 255),  -- Màu tên
-    DistanceColor = Color3.fromRGB(255, 200, 0),    -- Màu khoảng cách
-    CounterColor  = Color3.fromRGB(0, 255, 100),    -- Màu bộ đếm
+    BoxColor      = Color3.fromRGB(255, 50, 50),
+    NameColor     = Color3.fromRGB(255, 255, 255),
+    DistanceColor = Color3.fromRGB(255, 200, 0),
+    CounterColor  = Color3.fromRGB(0, 255, 100),
     BoxThickness  = 1.5,
-    ShowBox       = true,
-    ShowName      = true,
-    ShowDistance  = true,
-    ShowCounter   = true,
     MaxDistance   = 1000,
-    TeamCheck     = false, -- true = chỉ highlight team khác
 }
 
 -- ============================
--- GUI COUNTER (góc màn hình)
+-- CLEANUP CŨ
+-- ============================
+pcall(function()
+    if game:GetService("CoreGui"):FindFirstChild("ESP_MENU_GUI") then
+        game:GetService("CoreGui"):FindFirstChild("ESP_MENU_GUI"):Destroy()
+    end
+end)
+
+-- ============================
+-- MAIN SCREENGUI
 -- ============================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ESP_GUI"
+ScreenGui.Name = "ESP_MENU_GUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = game:GetService("CoreGui")
 
+-- ============================
+-- COUNTER BAR
+-- ============================
 local CounterFrame = Instance.new("Frame")
-CounterFrame.Size = UDim2.new(0, 180, 0, 50)
+CounterFrame.Size = UDim2.new(0, 160, 0, 38)
 CounterFrame.Position = UDim2.new(0, 10, 0, 10)
-CounterFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-CounterFrame.BackgroundTransparency = 0.3
+CounterFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+CounterFrame.BackgroundTransparency = 0.2
 CounterFrame.BorderSizePixel = 0
 CounterFrame.Parent = ScreenGui
-
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 8)
-UICorner.Parent = CounterFrame
+Instance.new("UICorner", CounterFrame).CornerRadius = UDim.new(0, 10)
 
 local CounterLabel = Instance.new("TextLabel")
 CounterLabel.Size = UDim2.new(1, 0, 1, 0)
@@ -57,67 +67,237 @@ CounterLabel.Font = Enum.Font.GothamBold
 CounterLabel.Text = "👁 Kẻ Địch: 0"
 CounterLabel.Parent = CounterFrame
 
--- Toggle Button
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(0, 180, 0, 36)
-ToggleBtn.Position = UDim2.new(0, 10, 0, 68)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-ToggleBtn.BackgroundTransparency = 0.2
-ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.Text = "ESP: BẬT"
-ToggleBtn.TextScaled = true
-ToggleBtn.BorderSizePixel = 0
-ToggleBtn.Parent = ScreenGui
+-- ============================
+-- MENU TOGGLE BUTTON (kéo được)
+-- ============================
+local MenuBtn = Instance.new("TextButton")
+MenuBtn.Size = UDim2.new(0, 50, 0, 50)
+MenuBtn.Position = UDim2.new(1, -60, 0.5, -25)
+MenuBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+MenuBtn.BackgroundTransparency = 0.1
+MenuBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MenuBtn.Font = Enum.Font.GothamBold
+MenuBtn.Text = "☰"
+MenuBtn.TextSize = 22
+MenuBtn.BorderSizePixel = 0
+MenuBtn.Parent = ScreenGui
+Instance.new("UICorner", MenuBtn).CornerRadius = UDim.new(0, 12)
 
-local UICorner2 = Instance.new("UICorner")
-UICorner2.CornerRadius = UDim.new(0, 8)
-UICorner2.Parent = ToggleBtn
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(100, 100, 255)
+stroke.Thickness = 1.5
+stroke.Parent = MenuBtn
 
-ToggleBtn.MouseButton1Click:Connect(function()
-    ESP_Enabled = not ESP_Enabled
-    if ESP_Enabled then
-        ToggleBtn.Text = "ESP: BẬT"
-        ToggleBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-    else
-        ToggleBtn.Text = "ESP: TẮT"
-        ToggleBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-        -- Xóa hết drawings
-        for _, obj in pairs(ESP_Objects) do
-            for _, drawing in pairs(obj) do
-                if drawing.Remove then drawing:Remove() end
-            end
+-- Drag MenuBtn
+do
+    local dragging, dragStart, startPos
+    MenuBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = MenuBtn.Position
         end
-        ESP_Objects = {}
+    end)
+    MenuBtn.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - dragStart
+            MenuBtn.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    MenuBtn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
+
+-- ============================
+-- MENU PANEL
+-- ============================
+local MenuPanel = Instance.new("Frame")
+MenuPanel.Size = UDim2.new(0, 220, 0, 340)
+MenuPanel.Position = UDim2.new(1, -290, 0.5, -170)
+MenuPanel.BackgroundColor3 = Color3.fromRGB(12, 12, 25)
+MenuPanel.BackgroundTransparency = 0.05
+MenuPanel.BorderSizePixel = 0
+MenuPanel.Visible = false
+MenuPanel.Parent = ScreenGui
+Instance.new("UICorner", MenuPanel).CornerRadius = UDim.new(0, 14)
+
+local panelStroke = Instance.new("UIStroke")
+panelStroke.Color = Color3.fromRGB(80, 80, 200)
+panelStroke.Thickness = 1.5
+panelStroke.Parent = MenuPanel
+
+-- Header
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, 42)
+Header.BackgroundColor3 = Color3.fromRGB(30, 30, 70)
+Header.BorderSizePixel = 0
+Header.Parent = MenuPanel
+Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 14)
+
+local HeaderLabel = Instance.new("TextLabel")
+HeaderLabel.Size = UDim2.new(1, -10, 1, 0)
+HeaderLabel.Position = UDim2.new(0, 10, 0, 0)
+HeaderLabel.BackgroundTransparency = 1
+HeaderLabel.TextColor3 = Color3.fromRGB(180, 180, 255)
+HeaderLabel.Font = Enum.Font.GothamBold
+HeaderLabel.TextSize = 15
+HeaderLabel.Text = "⚡ ESP MENU v2.0"
+HeaderLabel.TextXAlignment = Enum.TextXAlignment.Left
+HeaderLabel.Parent = Header
+
+-- Close Button
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -35, 0, 6)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Text = "✕"
+CloseBtn.TextSize = 14
+CloseBtn.BorderSizePixel = 0
+CloseBtn.Parent = MenuPanel
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
+
+-- ============================
+-- TOGGLE BUTTON HELPER
+-- ============================
+local function CreateToggle(parent, yPos, labelText, defaultState, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -20, 0, 38)
+    row.Position = UDim2.new(0, 10, 0, yPos)
+    row.BackgroundColor3 = Color3.fromRGB(20, 20, 40)
+    row.BorderSizePixel = 0
+    row.Parent = parent
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.65, 0, 1, 0)
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.Text = labelText
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    local state = defaultState
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0, 54, 0, 26)
+    toggleBtn.Position = UDim2.new(1, -64, 0.5, -13)
+    toggleBtn.BackgroundColor3 = state and Color3.fromRGB(50, 200, 80) or Color3.fromRGB(120, 40, 40)
+    toggleBtn.BorderSizePixel = 0
+    toggleBtn.Text = state and "BẬT" or "TẮT"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.TextSize = 12
+    toggleBtn.Parent = row
+    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 13)
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        state = not state
+        TweenService:Create(toggleBtn, TweenInfo.new(0.15), {
+            BackgroundColor3 = state and Color3.fromRGB(50, 200, 80) or Color3.fromRGB(120, 40, 40)
+        }):Play()
+        toggleBtn.Text = state and "BẬT" or "TẮT"
+        callback(state)
+    end)
+
+    return toggleBtn
+end
+
+-- ============================
+-- CÁC NÚT TOGGLE TRONG MENU
+-- ============================
+local startY = 50
+
+CreateToggle(MenuPanel, startY,       "👁  ESP Tổng",      true,  function(v) ESP_Enabled   = v end)
+CreateToggle(MenuPanel, startY + 46,  "📦  Hiện Box",      true,  function(v) ShowBox       = v end)
+CreateToggle(MenuPanel, startY + 92,  "🏷️  Hiện Tên",      true,  function(v) ShowName      = v end)
+CreateToggle(MenuPanel, startY + 138, "📏  Khoảng Cách",   true,  function(v) ShowDistance  = v end)
+CreateToggle(MenuPanel, startY + 184, "🤝  Hiện Đồng Đội", false, function(v) ShowTeammates = v end)
+
+-- Divider
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(1, -20, 0, 1)
+divider.Position = UDim2.new(0, 10, 0, startY + 232)
+divider.BackgroundColor3 = Color3.fromRGB(60, 60, 120)
+divider.BorderSizePixel = 0
+divider.Parent = MenuPanel
+
+-- Clear All ESP Button
+local ClearBtn = Instance.new("TextButton")
+ClearBtn.Size = UDim2.new(1, -20, 0, 36)
+ClearBtn.Position = UDim2.new(0, 10, 0, startY + 242)
+ClearBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+ClearBtn.BorderSizePixel = 0
+ClearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ClearBtn.Font = Enum.Font.GothamBold
+ClearBtn.TextSize = 13
+ClearBtn.Text = "🗑️  Xóa Toàn Bộ ESP"
+ClearBtn.Parent = MenuPanel
+Instance.new("UICorner", ClearBtn).CornerRadius = UDim.new(0, 9)
+
+ClearBtn.MouseButton1Click:Connect(function()
+    for _, obj in pairs(ESP_Objects) do
+        for _, d in pairs(obj) do
+            if d.Remove then d:Remove() end
+        end
     end
+    ESP_Objects = {}
+    EnemyCount = 0
+    CounterLabel.Text = "👁 Kẻ Địch: 0"
 end)
 
-ScreenGui.Parent = game:GetService("CoreGui")
+-- ============================
+-- MENU OPEN / CLOSE LOGIC
+-- ============================
+MenuBtn.MouseButton1Click:Connect(function()
+    MenuOpen = not MenuOpen
+    MenuPanel.Visible = MenuOpen
+    local btnPos = MenuBtn.Position
+    MenuPanel.Position = UDim2.new(
+        btnPos.X.Scale,
+        btnPos.X.Offset - 230,
+        btnPos.Y.Scale,
+        btnPos.Y.Offset - 80
+    )
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    MenuOpen = false
+    MenuPanel.Visible = false
+end)
 
 -- ============================
 -- DRAWING HELPERS
 -- ============================
-local function NewDrawing(type, props)
-    local d = Drawing.new(type)
-    for k, v in pairs(props) do
-        d[k] = v
-    end
+local function NewDrawing(dtype, props)
+    local d = Drawing.new(dtype)
+    for k, v in pairs(props) do d[k] = v end
     return d
 end
 
 local function CreateESP(player)
-    local drawings = {
-        -- Box (4 lines)
-        BoxTop    = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor, Visible = false }),
-        BoxBottom = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor, Visible = false }),
-        BoxLeft   = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor, Visible = false }),
-        BoxRight  = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor, Visible = false }),
-        -- Name
-        NameTag   = NewDrawing("Text", { Size = 14, Color = CONFIG.NameColor, Center = true, Outline = true, OutlineColor = Color3.new(0,0,0), Visible = false, Font = 2 }),
-        -- Distance
+    ESP_Objects[player] = {
+        BoxTop    = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor,     Visible = false }),
+        BoxBottom = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor,     Visible = false }),
+        BoxLeft   = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor,     Visible = false }),
+        BoxRight  = NewDrawing("Line", { Thickness = CONFIG.BoxThickness, Color = CONFIG.BoxColor,     Visible = false }),
+        NameTag   = NewDrawing("Text", { Size = 14, Color = CONFIG.NameColor,     Center = true, Outline = true, OutlineColor = Color3.new(0,0,0), Visible = false, Font = 2 }),
         DistTag   = NewDrawing("Text", { Size = 12, Color = CONFIG.DistanceColor, Center = true, Outline = true, OutlineColor = Color3.new(0,0,0), Visible = false, Font = 2 }),
     }
-    ESP_Objects[player] = drawings
 end
 
 local function RemoveESP(player)
@@ -130,26 +310,22 @@ local function RemoveESP(player)
 end
 
 -- ============================
--- WORLD TO SCREEN
+-- BOUNDING BOX
 -- ============================
 local function GetBoundingBox(character)
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
-
     local size = Vector3.new(4, 5.5, 0)
     local cf = hrp.CFrame
-
     local corners = {
         cf * CFrame.new(-size.X/2,  size.Y/2, 0),
         cf * CFrame.new( size.X/2,  size.Y/2, 0),
         cf * CFrame.new(-size.X/2, -size.Y/2, 0),
         cf * CFrame.new( size.X/2, -size.Y/2, 0),
     }
-
     local minX, minY = math.huge, math.huge
     local maxX, maxY = -math.huge, -math.huge
     local onScreen = false
-
     for _, c in ipairs(corners) do
         local screen, vis = Camera:WorldToViewportPoint(c.Position)
         if vis then
@@ -160,13 +336,12 @@ local function GetBoundingBox(character)
             maxY = math.max(maxY, screen.Y)
         end
     end
-
     if not onScreen then return nil end
     return minX, minY, maxX, maxY
 end
 
 -- ============================
--- UPDATE LOOP
+-- UPDATE ESP LOOP
 -- ============================
 local function UpdateESP()
     EnemyCount = 0
@@ -174,21 +349,17 @@ local function UpdateESP()
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
 
-        -- Team check (tuỳ chọn)
-        if CONFIG.TeamCheck and player.Team == LocalPlayer.Team then
+        if not ShowTeammates and player.Team == LocalPlayer.Team then
             RemoveESP(player)
             continue
         end
 
+        if not ESP_Objects[player] then CreateESP(player) end
+
+        local drawings  = ESP_Objects[player]
         local character = player.Character
-        local hrp = character and character:FindFirstChild("HumanoidRootPart")
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-
-        if not ESP_Objects[player] then
-            CreateESP(player)
-        end
-
-        local drawings = ESP_Objects[player]
+        local hrp       = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid  = character and character:FindFirstChildOfClass("Humanoid")
 
         if not ESP_Enabled or not character or not hrp
             or not humanoid or humanoid.Health <= 0 then
@@ -196,7 +367,6 @@ local function UpdateESP()
             continue
         end
 
-        -- Khoảng cách
         local lhrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         local dist = lhrp and (hrp.Position - lhrp.Position).Magnitude or 0
 
@@ -208,7 +378,6 @@ local function UpdateESP()
         EnemyCount = EnemyCount + 1
 
         local minX, minY, maxX, maxY = GetBoundingBox(character)
-
         if not minX then
             for _, d in pairs(drawings) do d.Visible = false end
             continue
@@ -219,30 +388,24 @@ local function UpdateESP()
         local bl = Vector2.new(minX, maxY)
         local br = Vector2.new(maxX, maxY)
 
-        -- Vẽ Box
-        if CONFIG.ShowBox then
-            drawings.BoxTop.From    = tl; drawings.BoxTop.To    = tr; drawings.BoxTop.Visible    = true
-            drawings.BoxBottom.From = bl; drawings.BoxBottom.To = br; drawings.BoxBottom.Visible = true
-            drawings.BoxLeft.From   = tl; drawings.BoxLeft.To   = bl; drawings.BoxLeft.Visible   = true
-            drawings.BoxRight.From  = tr; drawings.BoxRight.To  = br; drawings.BoxRight.Visible  = true
-        end
+        -- Box
+        local boxVis = ShowBox and ESP_Enabled
+        drawings.BoxTop.From    = tl; drawings.BoxTop.To    = tr; drawings.BoxTop.Visible    = boxVis
+        drawings.BoxBottom.From = bl; drawings.BoxBottom.To = br; drawings.BoxBottom.Visible = boxVis
+        drawings.BoxLeft.From   = tl; drawings.BoxLeft.To   = bl; drawings.BoxLeft.Visible   = boxVis
+        drawings.BoxRight.From  = tr; drawings.BoxRight.To  = br; drawings.BoxRight.Visible  = boxVis
 
-        -- Tên
-        if CONFIG.ShowName then
-            drawings.NameTag.Position = Vector2.new((minX + maxX) / 2, minY - 16)
-            drawings.NameTag.Text = player.DisplayName
-            drawings.NameTag.Visible = true
-        end
+        -- Name
+        drawings.NameTag.Position = Vector2.new((minX + maxX) / 2, minY - 16)
+        drawings.NameTag.Text     = player.DisplayName
+        drawings.NameTag.Visible  = ShowName and ESP_Enabled
 
-        -- Khoảng cách
-        if CONFIG.ShowDistance then
-            drawings.DistTag.Position = Vector2.new((minX + maxX) / 2, maxY + 2)
-            drawings.DistTag.Text = string.format("[%.0f m]", dist)
-            drawings.DistTag.Visible = true
-        end
+        -- Distance
+        drawings.DistTag.Position = Vector2.new((minX + maxX) / 2, maxY + 2)
+        drawings.DistTag.Text     = string.format("[%.0f m]", dist)
+        drawings.DistTag.Visible  = ShowDistance and ESP_Enabled
     end
 
-    -- Cập nhật counter
     CounterLabel.Text = string.format("👁 Kẻ Địch: %d", EnemyCount)
 end
 
@@ -263,9 +426,7 @@ end)
 -- MAIN LOOP
 -- ============================
 RunService.RenderStepped:Connect(function()
-    if ESP_Enabled then
-        UpdateESP()
-    end
+    UpdateESP()
 end)
 
-print("✅ ESP Chameleon loaded! Toggle bằng nút trên màn hình.")
+print("✅ ESP Menu v2.0 FULL loaded! Nhấn ☰ bên phải để mở menu.")
