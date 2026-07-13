@@ -1,23 +1,33 @@
--- ESP v4.0 | Auto-Hook | No CoreGui Needed
--- Tự động phát hiện game và hiển thị UI
+-- ESP v5.0 | Paint & Seek Hook | Học từ BloxFruit method
+-- PlaceId detect + PlayerGui inject (không cần CoreGui)
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+--> BƯỚC 1: Detect đúng game
+local PLACE_IDS = {
+    -- Paint & Seek các version
+    [6516141123] = true,
+    [7534807541] = true,
+    [104430143966986] = true, -- version mới nhất
+}
+
+local isCorrectGame = PLACE_IDS[game.PlaceId] or true
+-- (để true để chạy mọi game, đổi thành false nếu chỉ muốn Paint&Seek)
+
+--> BƯỚC 2: Đợi game load xong hoàn toàn
+local Players      = game:GetService("Players")
+local RunService   = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local Camera = workspace.CurrentCamera
-local LocalPlayer = Players.LocalPlayer
+local Camera       = workspace.CurrentCamera
+local LocalPlayer  = Players.LocalPlayer
 
--- ============================
--- AUTO WAIT FOR CHARACTER
--- ============================
-if not LocalPlayer.Character then
-    LocalPlayer.CharacterAdded:Wait()
-end
-task.wait(1)
+-- Đợi character + PlayerGui sẵn sàng
+repeat task.wait(0.1) until LocalPlayer.Character
+    and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    and LocalPlayer:FindFirstChild("PlayerGui")
 
--- ============================
--- CONFIG
--- ============================
+task.wait(0.5)
+print("[ESP] Game detected, PlayerGui ready!")
+
+--> BƯỚC 3: Config
 local CFG = {
     BoxColor  = Color3.fromRGB(255, 50, 50),
     NameColor = Color3.fromRGB(255, 255, 255),
@@ -27,107 +37,67 @@ local CFG = {
 }
 
 local STATE = {
-    ESP      = true,
-    Box      = true,
-    Name     = true,
-    Dist     = true,
-    Team     = false,
+    ESP  = true,
+    Box  = true,
+    Name = true,
+    Dist = true,
+    Team = false,
 }
 
-local Cache   = {}
+local Cache    = {}
 local MenuOpen = false
 
--- ============================
--- CLEANUP MỌI THỨ CŨ
--- ============================
-local function CleanupOld()
-    for _, name in ipairs({"ESP_V3_GUI","ESP_MENU_GUI","ESP_V4_GUI"}) do
-        pcall(function() game:GetService("CoreGui")[name]:Destroy() end)
-        pcall(function() LocalPlayer.PlayerGui[name]:Destroy() end)
-    end
-    -- Xóa BillboardGui cũ
-    for _, pl in ipairs(Players:GetPlayers()) do
-        pcall(function()
-            local chr = pl.Character
-            if chr then
-                local hrp = chr:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    local old = hrp:FindFirstChild("ESP_BB")
-                    if old then old:Destroy() end
-                end
-            end
-        end)
-    end
+--> BƯỚC 4: Cleanup hoàn toàn
+for _, n in ipairs({"ESP_V3_GUI","ESP_MENU_GUI","ESP_V4_GUI","ESP_V5_GUI"}) do
+    pcall(function() game:GetService("CoreGui")[n]:Destroy() end)
+    pcall(function() LocalPlayer.PlayerGui[n]:Destroy() end)
 end
-CleanupOld()
-task.wait(0.2)
-
--- ============================
--- SMART GUI PARENT
--- ============================
-local SG = Instance.new("ScreenGui")
-SG.Name = "ESP_V4_GUI"
-SG.ResetOnSpawn = false
-SG.IgnoreGuiInset = true
-SG.DisplayOrder = 99999
-SG.ZIndexBehavior = Enum.ZIndexBehavior.Global
-
--- Thử parent theo thứ tự ưu tiên
-local function TryParent(gui)
-    local targets = {
-        function() return game:GetService("CoreGui") end,
-        function() return LocalPlayer:WaitForChild("PlayerGui", 3) end,
-    }
-    for _, fn in ipairs(targets) do
-        local ok, target = pcall(fn)
-        if ok and target then
-            local ok2 = pcall(function() gui.Parent = target end)
-            if ok2 and gui.Parent then
-                warn("✅ GUI parented to: " .. target.Name)
-                return true
+for _, pl in ipairs(Players:GetPlayers()) do
+    pcall(function()
+        local h = pl.Character and pl.Character:FindFirstChild("HumanoidRootPart")
+        if h then
+            for _, bb in ipairs(h:GetChildren()) do
+                if bb.Name:find("ESP") then bb:Destroy() end
             end
         end
-    end
-    return false
+    end)
 end
+task.wait(0.1)
 
-if not TryParent(SG) then
-    SG.Parent = game:GetService("CoreGui")
-end
+--> BƯỚC 5: Inject vào PlayerGui (KHÔNG dùng CoreGui - đây là key fix!)
+local SG = Instance.new("ScreenGui")
+SG.Name            = "ESP_V5_GUI"
+SG.ResetOnSpawn    = false
+SG.IgnoreGuiInset  = true
+SG.DisplayOrder    = 99999
+SG.ZIndexBehavior  = Enum.ZIndexBehavior.Global
 
--- ============================
--- HELPER
--- ============================
-local function New(cls, props, par)
+-- Inject thẳng vào PlayerGui như BloxFruit method
+SG.Parent = LocalPlayer.PlayerGui
+print("[ESP] GUI injected to PlayerGui: " .. tostring(SG.Parent ~= nil))
+
+--> BƯỚC 6: Helper functions
+local function N(cls, props, par)
     local o = Instance.new(cls)
-    for k,v in pairs(props) do
-        pcall(function() o[k] = v end)
-    end
+    for k,v in pairs(props) do pcall(function() o[k]=v end) end
     if par then o.Parent = par end
     return o
 end
-local function Corner(p, r)
-    New("UICorner", {CornerRadius=UDim.new(0, r or 10)}, p)
-end
-local function Stroke(p, c, t)
-    New("UIStroke", {Color=c, Thickness=t or 1.5}, p)
-end
+local function C(p,r) N("UICorner",{CornerRadius=UDim.new(0,r or 10)},p) end
+local function S(p,c,t) N("UIStroke",{Color=c,Thickness=t or 1.5},p) end
 
--- ============================
--- COUNTER BAR
--- ============================
-local CBar = New("Frame", {
-    Size=UDim2.new(0,180,0,46),
-    Position=UDim2.new(0,10,0,60),
+--> BƯỚC 7: Counter Bar
+local CBar = N("Frame",{
+    Size=UDim2.new(0,185,0,48),
+    Position=UDim2.new(0,12,0,62),
     BackgroundColor3=Color3.fromRGB(6,6,18),
     BackgroundTransparency=0,
     BorderSizePixel=0,
     ZIndex=1000,
-}, SG)
-Corner(CBar, 12)
-Stroke(CBar, Color3.fromRGB(70,70,200), 2)
+},SG)
+C(CBar,12) S(CBar,Color3.fromRGB(60,60,200),2)
 
-local CLabel = New("TextLabel", {
+local CLabel = N("TextLabel",{
     Size=UDim2.new(1,0,1,0),
     BackgroundTransparency=1,
     TextColor3=CFG.HitColor,
@@ -135,436 +105,325 @@ local CLabel = New("TextLabel", {
     Font=Enum.Font.GothamBold,
     Text="👁  Kẻ Địch: 0",
     ZIndex=1001,
-}, CBar)
+},CBar)
 
--- ============================
--- MENU PANEL
--- ============================
-local Panel = New("Frame", {
-    Size=UDim2.new(0,240,0,370),
-    Position=UDim2.new(0,80,0,110),
+--> BƯỚC 8: Menu Panel
+local Panel = N("Frame",{
+    Size=UDim2.new(0,245,0,380),
+    Position=UDim2.new(0,82,0,118),
     BackgroundColor3=Color3.fromRGB(8,8,20),
     BackgroundTransparency=0,
     BorderSizePixel=0,
     Visible=false,
     ZIndex=2000,
-}, SG)
-Corner(Panel, 16)
-Stroke(Panel, Color3.fromRGB(80,80,220), 2)
+},SG)
+C(Panel,16) S(Panel,Color3.fromRGB(80,80,220),2)
 
 -- Header
-local Head = New("Frame", {
+local Head = N("Frame",{
     Size=UDim2.new(1,0,0,50),
     BackgroundColor3=Color3.fromRGB(20,20,80),
-    BorderSizePixel=0,
-    ZIndex=2001,
-}, Panel)
-Corner(Head, 16)
+    BorderSizePixel=0,ZIndex=2001,
+},Panel)
+C(Head,16)
 
-New("TextLabel", {
+N("TextLabel",{
     Size=UDim2.new(1,-55,1,0),
     Position=UDim2.new(0,14,0,0),
     BackgroundTransparency=1,
     TextColor3=Color3.fromRGB(200,200,255),
     Font=Enum.Font.GothamBold,
     TextSize=15,
-    Text="⚡ ESP MENU v4.0",
+    Text="⚡ ESP v5.0 | Paint&Seek",
     TextXAlignment=Enum.TextXAlignment.Left,
     ZIndex=2002,
-}, Head)
+},Head)
 
-local XBtn = New("TextButton", {
+local XBtn = N("TextButton",{
     Size=UDim2.new(0,36,0,36),
     Position=UDim2.new(1,-42,0,7),
     BackgroundColor3=Color3.fromRGB(200,35,35),
     TextColor3=Color3.fromRGB(255,255,255),
     Font=Enum.Font.GothamBold,
-    Text="✕", TextSize=16,
+    Text="✕",TextSize=16,
     BorderSizePixel=0,
     AutoButtonColor=false,
     ZIndex=2002,
-}, Panel)
-Corner(XBtn, 9)
+},Panel)
+C(XBtn,9)
 
--- ============================
--- TOGGLE FACTORY
--- ============================
-local function MakeToggle(panel, yOff, icon, label, init, cb)
-    local row = New("Frame", {
+--> BƯỚC 9: Toggle factory
+local function MakeToggle(yOff, icon, lbl, init, cb)
+    local row = N("Frame",{
         Size=UDim2.new(1,-16,0,46),
         Position=UDim2.new(0,8,0,yOff),
-        BackgroundColor3=Color3.fromRGB(15,15,36),
-        BorderSizePixel=0,
-        ZIndex=2001,
-    }, panel)
-    Corner(row, 10)
+        BackgroundColor3=Color3.fromRGB(14,14,35),
+        BorderSizePixel=0,ZIndex=2001,
+    },Panel)
+    C(row,10)
 
-    New("TextLabel", {
+    N("TextLabel",{
         Size=UDim2.new(0.58,0,1,0),
         Position=UDim2.new(0,12,0,0),
         BackgroundTransparency=1,
         TextColor3=Color3.fromRGB(235,235,235),
-        Font=Enum.Font.Gotham,
-        TextSize=13,
-        Text=icon.."  "..label,
+        Font=Enum.Font.Gotham,TextSize=13,
+        Text=icon.."  "..lbl,
         TextXAlignment=Enum.TextXAlignment.Left,
         ZIndex=2002,
-    }, row)
+    },row)
 
     local st = init
-    local btn = New("TextButton", {
+    local btn = N("TextButton",{
         Size=UDim2.new(0,65,0,34),
         Position=UDim2.new(1,-73,0.5,-17),
-        BackgroundColor3=st
-            and Color3.fromRGB(38,190,68)
-            or  Color3.fromRGB(140,28,28),
+        BackgroundColor3=st and Color3.fromRGB(38,190,68) or Color3.fromRGB(140,28,28),
         TextColor3=Color3.fromRGB(255,255,255),
         Font=Enum.Font.GothamBold,
-        Text=st and "BẬT" or "TẮT",
-        TextSize=14,
-        BorderSizePixel=0,
-        AutoButtonColor=false,
-        ZIndex=2002,
-    }, row)
-    Corner(btn, 17)
+        Text=st and "BẬT" or "TẮT",TextSize=14,
+        BorderSizePixel=0,AutoButtonColor=false,ZIndex=2002,
+    },row)
+    C(btn,17)
 
-    local function toggle()
-        st = not st
-        btn.Text = st and "BẬT" or "TẮT"
-        TweenService:Create(btn, TweenInfo.new(0.1), {
-            BackgroundColor3 = st
-                and Color3.fromRGB(38,190,68)
-                or  Color3.fromRGB(140,28,28)
+    local function tog()
+        st=not st
+        btn.Text=st and "BẬT" or "TẮT"
+        TweenService:Create(btn,TweenInfo.new(0.1),{
+            BackgroundColor3=st and Color3.fromRGB(38,190,68) or Color3.fromRGB(140,28,28)
         }):Play()
         cb(st)
     end
-
-    btn.MouseButton1Click:Connect(toggle)
-    btn.TouchTap:Connect(toggle)
-    btn.Activated:Connect(toggle)
+    btn.MouseButton1Click:Connect(tog)
+    btn.TouchTap:Connect(tog)
+    btn.Activated:Connect(tog)
 end
 
--- ============================
--- TOGGLES
--- ============================
-local S = 58
-MakeToggle(Panel, S,     "👁", "ESP Tổng",     true,  function(v) STATE.ESP  = v end)
-MakeToggle(Panel, S+54,  "📦", "Hiện Box",     true,  function(v) STATE.Box  = v end)
-MakeToggle(Panel, S+108, "🏷️","Hiện Tên",     true,  function(v) STATE.Name = v end)
-MakeToggle(Panel, S+162, "📏", "Khoảng Cách", true,  function(v) STATE.Dist = v end)
-MakeToggle(Panel, S+216, "🤝", "Đồng Đội",    false, function(v) STATE.Team = v end)
+local SY = 58
+MakeToggle(SY,    "👁","ESP Tổng",    true,  function(v) STATE.ESP =v end)
+MakeToggle(SY+52, "📦","Hiện Box",    true,  function(v) STATE.Box =v end)
+MakeToggle(SY+104,"🏷️","Hiện Tên",   true,  function(v) STATE.Name=v end)
+MakeToggle(SY+156,"📏","Khoảng Cách",true,  function(v) STATE.Dist=v end)
+MakeToggle(SY+208,"🤝","Đồng Đội",   false, function(v) STATE.Team=v end)
 
--- Divider
-New("Frame", {
-    Size=UDim2.new(1,-16,0,1),
-    Position=UDim2.new(0,8,0,S+272),
-    BackgroundColor3=Color3.fromRGB(55,55,140),
-    BorderSizePixel=0, ZIndex=2001,
-}, Panel)
+N("Frame",{
+    Size=UDim2.new(1,-16,0,1),Position=UDim2.new(0,8,0,SY+264),
+    BackgroundColor3=Color3.fromRGB(55,55,140),BorderSizePixel=0,ZIndex=2001,
+},Panel)
 
--- Clear Button
-local ClrBtn = New("TextButton", {
-    Size=UDim2.new(1,-16,0,44),
-    Position=UDim2.new(0,8,0,S+282),
+local ClrBtn = N("TextButton",{
+    Size=UDim2.new(1,-16,0,44),Position=UDim2.new(0,8,0,SY+274),
     BackgroundColor3=Color3.fromRGB(190,35,35),
     TextColor3=Color3.fromRGB(255,255,255),
-    Font=Enum.Font.GothamBold,
-    TextSize=14,
+    Font=Enum.Font.GothamBold,TextSize=14,
     Text="🗑️  Xóa Toàn Bộ ESP",
-    BorderSizePixel=0,
-    AutoButtonColor=false,
-    ZIndex=2002,
-}, Panel)
-Corner(ClrBtn, 11)
+    BorderSizePixel=0,AutoButtonColor=false,ZIndex=2002,
+},Panel)
+C(ClrBtn,11)
 
--- ============================
--- MENU BUTTON (☰)
--- ============================
-local MBtn = New("TextButton", {
-    Size=UDim2.new(0,62,0,62),
-    Position=UDim2.new(0,10,0,114),
+--> BƯỚC 10: Menu Button ☰
+local MBtn = N("TextButton",{
+    Size=UDim2.new(0,64,0,64),
+    Position=UDim2.new(0,12,0,118),
     BackgroundColor3=Color3.fromRGB(18,18,55),
     BackgroundTransparency=0,
     TextColor3=Color3.fromRGB(255,255,255),
     Font=Enum.Font.GothamBold,
-    Text="☰",
-    TextSize=30,
-    BorderSizePixel=0,
-    AutoButtonColor=false,
-    ZIndex=1500,
-}, SG)
-Corner(MBtn, 16)
-Stroke(MBtn, Color3.fromRGB(110,110,255), 2)
+    Text="☰",TextSize=30,
+    BorderSizePixel=0,AutoButtonColor=false,ZIndex=1500,
+},SG)
+C(MBtn,16) S(MBtn,Color3.fromRGB(110,110,255),2)
 
--- ============================
--- OPEN / CLOSE LOGIC
--- ============================
-local function CalcPanelPos()
-    local bx = MBtn.Position.X.Offset
-    local by = MBtn.Position.Y.Offset
-    local sw = Camera.ViewportSize.X
-    local sh = Camera.ViewportSize.Y
-    local px = (bx + 260 > sw) and math.max(4, bx - 248) or (bx + 70)
-    local py = math.clamp(by, 10, sh - 380)
-    return UDim2.new(0, px, 0, py)
+--> BƯỚC 11: Open/Close
+local function Pos()
+    local bx=MBtn.Position.X.Offset
+    local by=MBtn.Position.Y.Offset
+    local sw=Camera.ViewportSize.X
+    local sh=Camera.ViewportSize.Y
+    local px=(bx+260>sw) and math.max(4,bx-253) or (bx+72)
+    local py=math.clamp(by,10,sh-390)
+    return UDim2.new(0,px,0,py)
 end
 
-local function OpenMenu()
-    MenuOpen = not MenuOpen
-    Panel.Visible = MenuOpen
-    if MenuOpen then
-        Panel.Position = CalcPanelPos()
-        -- Animate
-        Panel.BackgroundTransparency = 1
-        TweenService:Create(Panel, TweenInfo.new(0.18), {
-            BackgroundTransparency = 0
-        }):Play()
-    end
+local function Open()
+    MenuOpen=not MenuOpen
+    Panel.Visible=MenuOpen
+    if MenuOpen then Panel.Position=Pos() end
 end
-
-local function CloseMenu()
-    MenuOpen = false
-    Panel.Visible = false
+local function Close()
+    MenuOpen=false Panel.Visible=false
 end
-
--- Kết nối cả 3 event
-MBtn.MouseButton1Click:Connect(OpenMenu)
-MBtn.TouchTap:Connect(OpenMenu)
-MBtn.Activated:Connect(OpenMenu)
-
-XBtn.MouseButton1Click:Connect(CloseMenu)
-XBtn.TouchTap:Connect(CloseMenu)
-XBtn.Activated:Connect(CloseMenu)
-
--- Clear ESP
 local function DoClear()
-    for pl, data in pairs(Cache) do
-        pcall(function() data.bb:Destroy() end)
-    end
-    Cache = {}
-    CLabel.Text = "👁  Kẻ Địch: 0"
+    for _,d in pairs(Cache) do pcall(function() d.bb:Destroy() end) end
+    Cache={}
+    CLabel.Text="👁  Kẻ Địch: 0"
 end
-ClrBtn.MouseButton1Click:Connect(DoClear)
-ClrBtn.TouchTap:Connect(DoClear)
-ClrBtn.Activated:Connect(DoClear)
 
--- ============================
--- DRAG MENU BUTTON
--- ============================
+for _,fn in ipairs({
+    {MBtn, Open},
+    {XBtn, Close},
+    {ClrBtn, DoClear},
+}) do
+    fn[1].MouseButton1Click:Connect(fn[2])
+    fn[1].TouchTap:Connect(fn[2])
+    fn[1].Activated:Connect(fn[2])
+end
+
+--> BƯỚC 12: Drag
 do
-    local drag, ds, bs = false, nil, nil
+    local drag,ds,bs=false,nil,nil
     MBtn.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.Touch
-        or i.UserInputType == Enum.UserInputType.MouseButton1 then
-            drag = true
-            ds   = i.Position
-            bs   = MBtn.Position
+        if i.UserInputType==Enum.UserInputType.Touch
+        or i.UserInputType==Enum.UserInputType.MouseButton1 then
+            drag=true ds=i.Position bs=MBtn.Position
         end
     end)
     MBtn.InputChanged:Connect(function(i)
         if not drag then return end
-        if i.UserInputType == Enum.UserInputType.Touch
-        or i.UserInputType == Enum.UserInputType.MouseMovement then
-            local d = i.Position - ds
-            if math.abs(d.X) > 5 or math.abs(d.Y) > 5 then
-                MBtn.Position = UDim2.new(0, bs.X.Offset+d.X, 0, bs.Y.Offset+d.Y)
-                if MenuOpen then
-                    Panel.Position = CalcPanelPos()
-                end
+        if i.UserInputType==Enum.UserInputType.Touch
+        or i.UserInputType==Enum.UserInputType.MouseMovement then
+            local d=i.Position-ds
+            if math.abs(d.X)>5 or math.abs(d.Y)>5 then
+                MBtn.Position=UDim2.new(0,bs.X.Offset+d.X,0,bs.Y.Offset+d.Y)
+                if MenuOpen then Panel.Position=Pos() end
             end
         end
     end)
     MBtn.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.Touch
-        or i.UserInputType == Enum.UserInputType.MouseButton1 then
-            drag = false
+        if i.UserInputType==Enum.UserInputType.Touch
+        or i.UserInputType==Enum.UserInputType.MouseButton1 then
+            drag=false
         end
     end)
 end
 
--- ============================
--- BILLBOARD ESP
--- ============================
-local function GetESP(player)
-    if Cache[player] then return Cache[player] end
-    local chr = player.Character
-    local hrp = chr and chr:FindFirstChild("HumanoidRootPart")
+--> BƯỚC 13: Billboard ESP
+local function GetESP(pl)
+    if Cache[pl] then return Cache[pl] end
+    local chr=pl.Character
+    local hrp=chr and chr:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
 
-    -- Xóa cái cũ nếu có
-    local old = hrp:FindFirstChild("ESP_BB")
-    if old then old:Destroy() end
+    pcall(function()
+        local old=hrp:FindFirstChild("ESP_BB")
+        if old then old:Destroy() end
+    end)
 
-    local bb = New("BillboardGui", {
+    local bb=N("BillboardGui",{
         Name="ESP_BB",
-        Size=UDim2.new(0, 90, 0, 115),
-        StudsOffset=Vector3.new(0, 3.2, 0),
+        Size=UDim2.new(0,95,0,120),
+        StudsOffset=Vector3.new(0,3.2,0),
         AlwaysOnTop=true,
         Active=false,
         ResetOnSpawn=false,
         Enabled=true,
-    }, hrp)
+    },hrp)
 
-    -- Tên player
-    local nameL = New("TextLabel", {
+    local nameL=N("TextLabel",{
         Size=UDim2.new(1,0,0,20),
         Position=UDim2.new(0,0,0,0),
         BackgroundTransparency=1,
         TextColor3=CFG.NameColor,
         Font=Enum.Font.GothamBold,
         TextSize=15,
-        Text=player.DisplayName,
+        Text=pl.DisplayName,
         TextStrokeTransparency=0.4,
         TextStrokeColor3=Color3.new(0,0,0),
-    }, bb)
+    },bb)
 
-    -- Khoảng cách
-    local distL = New("TextLabel", {
+    local distL=N("TextLabel",{
         Size=UDim2.new(1,0,0,18),
         Position=UDim2.new(0,0,1,-18),
         BackgroundTransparency=1,
         TextColor3=CFG.DistColor,
         Font=Enum.Font.GothamBold,
-        TextSize=13,
-        Text="",
+        TextSize=13,Text="",
         TextStrokeTransparency=0.4,
         TextStrokeColor3=Color3.new(0,0,0),
-    }, bb)
+    },bb)
 
-    -- Box (4 đường viền dùng Frame mỏng)
-    local boxC = New("Frame", {
+    local boxC=N("Frame",{
         Size=UDim2.new(1,0,1,-22),
         Position=UDim2.new(0,0,0,21),
         BackgroundTransparency=1,
         BorderSizePixel=0,
-    }, bb)
-    New("UIStroke", {
-        Color=CFG.BoxColor,
-        Thickness=2,
+    },bb)
+    N("UIStroke",{
+        Color=CFG.BoxColor,Thickness=2,
         ApplyStrokeMode=Enum.ApplyStrokeMode.Border,
-    }, boxC)
+    },boxC)
 
-    Cache[player] = {bb=bb, nameL=nameL, distL=distL, boxC=boxC}
-    return Cache[player]
+    Cache[pl]={bb=bb,nameL=nameL,distL=distL,boxC=boxC}
+    return Cache[pl]
 end
 
-local function RemoveESP(player)
-    if not Cache[player] then return end
-    pcall(function() Cache[player].bb:Destroy() end)
-    Cache[player] = nil
+local function RemESP(pl)
+    if not Cache[pl] then return end
+    pcall(function() Cache[pl].bb:Destroy() end)
+    Cache[pl]=nil
 end
 
--- ============================
--- AUTO HOOK: gắn ESP khi character spawn
--- ============================
-local function HookPlayer(player)
-    -- Hook CharacterAdded
-    player.CharacterAdded:Connect(function(chr)
-        task.wait(0.8) -- Đợi character load xong
-        RemoveESP(player)
+--> BƯỚC 14: Hook players (BloxFruit method)
+local function HookPl(pl)
+    pl.CharacterAdded:Connect(function()
+        task.wait(1)
+        RemESP(pl)
     end)
-    -- Nếu đã có character rồi
-    if player.Character then
-        -- ESP sẽ tự tạo trong UpdateESP
-    end
 end
 
--- Hook tất cả player hiện tại
-for _, pl in ipairs(Players:GetPlayers()) do
-    if pl ~= LocalPlayer then
-        HookPlayer(pl)
-    end
+for _,pl in ipairs(Players:GetPlayers()) do
+    if pl~=LocalPlayer then HookPl(pl) end
 end
+Players.PlayerAdded:Connect(HookPl)
+Players.PlayerRemoving:Connect(RemESP)
 
--- Hook player mới vào
-Players.PlayerAdded:Connect(function(pl)
-    HookPlayer(pl)
-end)
-
-Players.PlayerRemoving:Connect(RemoveESP)
-
--- ============================
--- UPDATE LOOP
--- ============================
-local enemyN = 0
+--> BƯỚC 15: Update loop
 RunService.RenderStepped:Connect(function()
-    enemyN = 0
-
-    for _, pl in ipairs(Players:GetPlayers()) do
-        if pl == LocalPlayer then continue end
-
-        -- Team filter
-        local sameTeam = pl.Team ~= nil and pl.Team == LocalPlayer.Team
-        if not STATE.Team and sameTeam then
-            RemoveESP(pl); continue
+    local cnt=0
+    for _,pl in ipairs(Players:GetPlayers()) do
+        if pl==LocalPlayer then continue end
+        if not STATE.Team and pl.Team==LocalPlayer.Team then
+            RemESP(pl) continue
         end
-
-        local chr = pl.Character
-        local hrp = chr and chr:FindFirstChild("HumanoidRootPart")
-        local hum = chr and chr:FindFirstChildOfClass("Humanoid")
-
-        -- Không có character hoặc đã chết
-        if not chr or not hrp or not hum or hum.Health <= 0 then
-            RemoveESP(pl); continue
+        local chr=pl.Character
+        local hrp=chr and chr:FindFirstChild("HumanoidRootPart")
+        local hum=chr and chr:FindFirstChildOfClass("Humanoid")
+        if not chr or not hrp or not hum or hum.Health<=0 then
+            RemESP(pl) continue
         end
-
-        -- Khoảng cách
-        local lhrp = LocalPlayer.Character
-            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        local dist = lhrp
-            and (hrp.Position - lhrp.Position).Magnitude
-            or 0
-
-        if dist > CFG.MaxDist then
-            RemoveESP(pl); continue
-        end
-
-        -- ESP tắt thì ẩn billboard
+        local lhrp=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local dist=lhrp and (hrp.Position-lhrp.Position).Magnitude or 0
+        if dist>CFG.MaxDist then RemESP(pl) continue end
         if not STATE.ESP then
-            if Cache[pl] then
-                pcall(function() Cache[pl].bb.Enabled = false end)
-            end
+            if Cache[pl] then pcall(function() Cache[pl].bb.Enabled=false end) end
             continue
         end
-
-        enemyN += 1
-
-        local data = GetESP(pl)
-        if not data then continue end
-
+        cnt+=1
+        local d=GetESP(pl)
+        if not d then continue end
         pcall(function()
-            data.bb.Enabled = true
-
-            -- Tên
-            data.nameL.Visible = STATE.Name
-            data.nameL.Text = pl.DisplayName
-
-            -- Dist
-            data.distL.Visible = STATE.Dist
-            data.distL.Text = string.format("[%.0f m]", dist)
-
-            -- Box
-            data.boxC.Visible = STATE.Box
+            d.bb.Enabled=true
+            d.nameL.Visible=STATE.Name
+            d.nameL.Text=pl.DisplayName
+            d.distL.Visible=STATE.Dist
+            d.distL.Text=string.format("[%.0f m]",dist)
+            d.boxC.Visible=STATE.Box
         end)
     end
-
-    CLabel.Text = string.format("👁  Kẻ Địch: %d", enemyN)
+    CLabel.Text=string.format("👁  Kẻ Địch: %d",cnt)
 end)
 
--- ============================
--- AUTO CHECK GUI ALIVE
--- ============================
--- Nếu GUI bị xóa thì re-parent
+--> BƯỚC 16: Watchdog giữ GUI sống
 task.spawn(function()
-    while task.wait(3) do
-        if not SG.Parent then
-            pcall(function() SG.Parent = game:GetService("CoreGui") end)
-            if not SG.Parent then
-                pcall(function() SG.Parent = LocalPlayer.PlayerGui end)
-            end
+    while task.wait(2) do
+        if not SG or not SG.Parent then
+            pcall(function() SG.Parent=LocalPlayer.PlayerGui end)
+        end
+        -- Đảm bảo MBtn luôn visible
+        if SG and SG.Parent then
+            pcall(function() MBtn.Visible=true end)
         end
     end
 end)
 
-warn("✅ ESP v4.0 AUTO-HOOK loaded!")
-warn("👆 Nhấn nút ☰ ở trái màn hình để mở menu")
+warn("✅ ESP v5.0 loaded! Inject: "..tostring(SG.Parent and SG.Parent.Name))
+warn("👆 Bấm ☰ ở trái màn hình")
