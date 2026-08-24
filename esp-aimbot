@@ -1,0 +1,807 @@
+--// Advanced Debug Menu v4.0 - Chameleon Edition (FIXED + HORIZONTAL UI)
+--// PlaceId: 110808833601416
+--// ESP + Aimbot thông minh theo vai trò H/S của game Chameleon
+--// FIX: Toggle hoạt động đúng | Checkbox tùy chỉnh thủ công | Menu ngang
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera      = workspace.CurrentCamera
+
+--==================================================
+-- CẤU HÌNH - CHỈNH SỬA Ở ĐÂY
+--==================================================
+
+local CONFIG = {
+    ESP_COLOR_ENEMY         = Color3.fromRGB(255, 60, 60),
+    ESP_COLOR_ALLY          = Color3.fromRGB(60, 180, 255),
+    ESP_FILL_TRANSPARENCY   = 0.60,
+    ESP_MAX_DISTANCE        = 600,
+    NAME_TAG_SIZE           = 14,
+    AIM_FOV                 = 160,
+    AIM_SMOOTH              = 0.10,
+    AIM_TARGET_PART         = "HumanoidRootPart",
+    AIM_SHOW_FOV_CIRCLE     = true,
+    AIM_FOV_COLOR           = Color3.fromRGB(255, 255, 255),
+}
+
+--==================================================
+-- DETECT TEAM - CHAMELEON SPECIFIC
+--==================================================
+
+local function scanChameleonRole(player)
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg then
+        local function deepSearch(parent, depth)
+            if depth > 6 then return nil end
+            for _, child in ipairs(parent:GetChildren()) do
+                if child:IsA("TextLabel") or child:IsA("TextButton") then
+                    local t = child.Text
+                    if t == "H" or t == "Hider" then return "Hider" end
+                    if t == "S" or t == "Seeker" then return "Seeker" end
+                end
+                local found = deepSearch(child, depth + 1)
+                if found then return found end
+            end
+            return nil
+        end
+        local role = deepSearch(pg, 0)
+        if role then return role end
+    end
+
+    local ls = player:FindFirstChild("leaderstats")
+    if ls then
+        local roleVal = ls:FindFirstChild("Role") or ls:FindFirstChild("Team")
+            or ls:FindFirstChild("Side") or ls:FindFirstChild("Job")
+        if roleVal then
+            local v = tostring(roleVal.Value)
+            if v:lower():find("hider") or v == "H" then return "Hider" end
+            if v:lower():find("seeker") or v == "S" then return "Seeker" end
+        end
+    end
+
+    local attrs = {"Role", "Team", "Side", "PlayerRole", "GameRole"}
+    for _, attr in ipairs(attrs) do
+        local val = player:GetAttribute(attr)
+        if val then
+            local s = tostring(val):lower()
+            if s:find("hid") or s == "h" then return "Hider" end
+            if s:find("seek") or s == "s" then return "Seeker" end
+        end
+        local char = player.Character
+        if char then
+            local val2 = char:GetAttribute(attr)
+            if val2 then
+                local s = tostring(val2):lower()
+                if s:find("hid") or s == "h" then return "Hider" end
+                if s:find("seek") or s == "s" then return "Seeker" end
+            end
+        end
+    end
+
+    local team = player.Team
+    if team then
+        local tn = team.Name:lower()
+        if tn:find("hid") then return "Hider" end
+        if tn:find("seek") then return "Seeker" end
+    end
+
+    return nil
+end
+
+local function getRole(player)
+    return scanChameleonRole(player)
+end
+
+local function getMyRole()
+    return getRole(LocalPlayer)
+end
+
+local function isEnemy(player)
+    if player == LocalPlayer then return false end
+    local myRole    = getMyRole()
+    local theirRole = getRole(player)
+    if myRole and theirRole then
+        return myRole ~= theirRole
+    end
+    if LocalPlayer.Team and player.Team then
+        return LocalPlayer.Team ~= player.Team
+    end
+    return true
+end
+
+--==================================================
+-- TRẠNG THÁI (FIX: dùng biến ngoài, không dùng closure lồng nhau)
+--==================================================
+
+local ESP_ENABLED     = false
+local AIM_ENABLED     = false
+local MENU_VISIBLE    = true
+local espObjects      = {}
+local espCount        = 0
+
+-- Sub-options checkbox (tùy chỉnh thủ công, độc lập với toggle ESP)
+local OPT = {
+    name     = true,
+    dist     = true,
+    box      = true,
+    skeleton = true,
+    lines    = false,
+}
+
+--==================================================
+-- TIỆN ÍCH
+--==================================================
+
+local function getDistanceTo(player)
+    local mc = LocalPlayer.Character
+    if not mc then return math.huge end
+    local mr = mc:FindFirstChild("HumanoidRootPart")
+    local tc = player.Character
+    if not tc then return math.huge end
+    local tr = tc:FindFirstChild("HumanoidRootPart")
+    if not mr or not tr then return math.huge end
+    return (tr.Position - mr.Position).Magnitude
+end
+
+local function worldToVP(pos)
+    local sp, on = Camera:WorldToViewportPoint(pos)
+    return Vector2.new(sp.X, sp.Y), on
+end
+
+--==================================================
+-- GUI SETUP
+-- Layout ngang: menu rộng hơn, 2 cột cho checkbox
+--==================================================
+
+local oldGui = LocalPlayer.PlayerGui:FindFirstChild("ChameleonDebug")
+if oldGui then oldGui:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name             = "ChameleonDebug"
+gui.ResetOnSpawn     = false
+gui.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
+gui.IgnoreGuiInset   = true
+gui.Parent           = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Menu ngang: rộng hơn, thấp hơn
+local MENU_W = 360
+local MENU_H = 280
+
+local main = Instance.new("Frame", gui)
+main.Name             = "Main"
+main.Size             = UDim2.fromOffset(MENU_W, MENU_H)
+main.Position         = UDim2.new(0.5, -MENU_W/2, 0.5, -MENU_H/2)
+main.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+main.BorderSizePixel  = 0
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 16)
+local mainStroke = Instance.new("UIStroke", main)
+mainStroke.Color     = Color3.fromRGB(70, 70, 110)
+mainStroke.Thickness = 1.5
+
+-- Header
+local header = Instance.new("Frame", main)
+header.Size             = UDim2.new(1, 0, 0, 46)
+header.BackgroundColor3 = Color3.fromRGB(28, 28, 45)
+header.BorderSizePixel  = 0
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 16)
+-- che góc dưới header
+local hbFix = Instance.new("Frame", header)
+hbFix.Size             = UDim2.new(1, 0, 0.5, 0)
+hbFix.Position         = UDim2.new(0, 0, 0.5, 0)
+hbFix.BackgroundColor3 = Color3.fromRGB(28, 28, 45)
+hbFix.BorderSizePixel  = 0
+
+local titleLbl = Instance.new("TextLabel", header)
+titleLbl.Size             = UDim2.new(1, -50, 1, 0)
+titleLbl.Position         = UDim2.fromOffset(14, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.Text             = "🎨 Chameleon ESP v4"
+titleLbl.TextColor3       = Color3.new(1, 1, 1)
+titleLbl.TextSize         = 15
+titleLbl.Font             = Enum.Font.GothamBold
+titleLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+local collapseBtn = Instance.new("TextButton", header)
+collapseBtn.Size             = UDim2.fromOffset(28, 28)
+collapseBtn.Position         = UDim2.new(1, -36, 0, 9)
+collapseBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
+collapseBtn.Text             = "–"
+collapseBtn.TextColor3       = Color3.new(1, 1, 1)
+collapseBtn.TextSize         = 18
+collapseBtn.Font             = Enum.Font.GothamBold
+collapseBtn.AutoButtonColor  = false
+Instance.new("UICorner", collapseBtn).CornerRadius = UDim.new(0, 8)
+
+-- Content frame
+local content = Instance.new("Frame", main)
+content.Name                  = "Content"
+content.Size                  = UDim2.new(1, 0, 1, -46)
+content.Position              = UDim2.fromOffset(0, 46)
+content.BackgroundTransparency = 1
+
+-- Info labels (1 dòng nằm ngang)
+local countLbl = Instance.new("TextLabel", content)
+countLbl.Size             = UDim2.new(0.5, -8, 0, 18)
+countLbl.Position         = UDim2.fromOffset(14, 6)
+countLbl.BackgroundTransparency = 1
+countLbl.Text             = "👁  ESP: 0 người"
+countLbl.TextColor3       = Color3.fromRGB(170, 170, 210)
+countLbl.TextSize         = 11
+countLbl.Font             = Enum.Font.Gotham
+countLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+local roleLbl = Instance.new("TextLabel", content)
+roleLbl.Size             = UDim2.new(0.5, -8, 0, 18)
+roleLbl.Position         = UDim2.new(0.5, -6, 0, 6)
+roleLbl.BackgroundTransparency = 1
+roleLbl.Text             = "❓ Đang xác định..."
+roleLbl.TextColor3       = Color3.fromRGB(255, 220, 80)
+roleLbl.TextSize         = 11
+roleLbl.Font             = Enum.Font.GothamBold
+roleLbl.TextXAlignment   = Enum.TextXAlignment.Right
+
+--==================================================
+-- TOGGLE FACTORY (FIX: trả về setter/getter dùng biến ngoài)
+-- makeToggle KHÔNG tự quản lý state nữa
+-- Caller truyền vào getter/setter của biến ngoài
+--==================================================
+
+local function makeToggle(parent, label, xPos, yPos, width, getState, setState)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size             = UDim2.fromOffset(width, 44)
+    btn.Position         = UDim2.fromOffset(xPos, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 52)
+    btn.AutoButtonColor  = false
+    btn.BorderSizePixel  = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 12)
+
+    local lbl2 = Instance.new("TextLabel", btn)
+    lbl2.Size             = UDim2.new(1, -56, 1, 0)
+    lbl2.Position         = UDim2.fromOffset(10, 0)
+    lbl2.BackgroundTransparency = 1
+    lbl2.Text             = label
+    lbl2.TextColor3       = Color3.new(1, 1, 1)
+    lbl2.TextSize         = 13
+    lbl2.Font             = Enum.Font.GothamBold
+    lbl2.TextXAlignment   = Enum.TextXAlignment.Left
+
+    local pill = Instance.new("Frame", btn)
+    pill.Size             = UDim2.fromOffset(40, 22)
+    pill.Position         = UDim2.new(1, -48, 0.5, -11)
+    pill.BackgroundColor3 = Color3.fromRGB(70, 70, 95)
+    pill.BorderSizePixel  = 0
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(0.5, 0)
+
+    local dot = Instance.new("Frame", pill)
+    dot.Size             = UDim2.fromOffset(16, 16)
+    dot.Position         = UDim2.fromOffset(3, 3)
+    dot.BackgroundColor3 = Color3.new(1, 1, 1)
+    dot.BorderSizePixel  = 0
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(0.5, 0)
+
+    -- Cập nhật visual từ state ngoài
+    local function refreshVisual()
+        local on = getState()
+        local ti = TweenInfo.new(0.15)
+        TweenService:Create(pill, ti, {
+            BackgroundColor3 = on
+                and Color3.fromRGB(80, 200, 120)
+                or  Color3.fromRGB(70, 70, 95)
+        }):Play()
+        TweenService:Create(dot, ti, {
+            Position = on
+                and UDim2.fromOffset(21, 3)
+                or  UDim2.fromOffset(3, 3)
+        }):Play()
+    end
+
+    -- FIX: click → đổi biến ngoài → cập nhật visual
+    btn.Activated:Connect(function()
+        setState(not getState())
+        refreshVisual()
+    end)
+
+    return btn, refreshVisual  -- trả về btn và hàm để caller có thể force-refresh
+end
+
+--==================================================
+-- TOGGLE ESP + AIMBOT (2 cột ngang)
+--==================================================
+
+local HALF_W = (MENU_W - 42) / 2  -- ~159
+
+local espBtnRef, refreshESPVisual = makeToggle(
+    content, "🔍  ESP", 14, 30, HALF_W,
+    function() return ESP_ENABLED end,
+    function(v) ESP_ENABLED = v end
+)
+
+local aimBtnRef, refreshAIMVisual = makeToggle(
+    content, "🎯  Aimbot", 14 + HALF_W + 8, 30, HALF_W,
+    function() return AIM_ENABLED end,
+    function(v) AIM_ENABLED = v end
+)
+
+-- Separator ngang
+local function sep(y)
+    local f = Instance.new("Frame", content)
+    f.Size             = UDim2.new(1, -28, 0, 1)
+    f.Position         = UDim2.fromOffset(14, y)
+    f.BackgroundColor3 = Color3.fromRGB(45, 45, 68)
+    f.BorderSizePixel  = 0
+end
+
+sep(82)
+
+-- Label "Tùy chỉnh ESP:"
+local optTitle = Instance.new("TextLabel", content)
+optTitle.Size             = UDim2.new(1, -28, 0, 16)
+optTitle.Position         = UDim2.fromOffset(14, 88)
+optTitle.BackgroundTransparency = 1
+optTitle.Text             = "Tùy chỉnh ESP:"
+optTitle.TextColor3       = Color3.fromRGB(140, 140, 170)
+optTitle.TextSize         = 11
+optTitle.Font             = Enum.Font.GothamBold
+optTitle.TextXAlignment   = Enum.TextXAlignment.Left
+
+--==================================================
+-- CHECKBOX FACTORY (FIX: dùng TextButton toàn row để dễ touch)
+-- Tick/bỏ tick hoàn toàn thủ công, độc lập với toggle ESP
+--==================================================
+
+local function makeCheck(label, key, xPos, yPos, width)
+    -- Dùng TextButton toàn row (không dùng Frame bên ngoài nữa)
+    -- → tránh lỗi touch bị chặn trên mobile
+    local btn = Instance.new("TextButton", content)
+    btn.Size             = UDim2.fromOffset(width, 30)
+    btn.Position         = UDim2.fromOffset(xPos, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(22, 22, 34)
+    btn.AutoButtonColor  = false
+    btn.BorderSizePixel  = 0
+    btn.Text             = ""
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    -- Ô tick
+    local box = Instance.new("Frame", btn)
+    box.Size             = UDim2.fromOffset(20, 20)
+    box.Position         = UDim2.fromOffset(8, 5)
+    box.BackgroundColor3 = OPT[key]
+        and Color3.fromRGB(80, 200, 120)
+        or  Color3.fromRGB(50, 50, 72)
+    box.BorderSizePixel  = 0
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
+
+    local tick = Instance.new("TextLabel", box)
+    tick.Size             = UDim2.fromScale(1, 1)
+    tick.BackgroundTransparency = 1
+    tick.Text             = OPT[key] and "✓" or ""
+    tick.TextColor3       = Color3.new(1, 1, 1)
+    tick.TextSize         = 13
+    tick.Font             = Enum.Font.GothamBold
+    tick.TextXAlignment   = Enum.TextXAlignment.Center
+    tick.TextYAlignment   = Enum.TextYAlignment.Center
+
+    local lbl3 = Instance.new("TextLabel", btn)
+    lbl3.Size             = UDim2.new(1, -36, 1, 0)
+    lbl3.Position         = UDim2.fromOffset(34, 0)
+    lbl3.BackgroundTransparency = 1
+    lbl3.Text             = label
+    lbl3.TextColor3       = Color3.fromRGB(200, 200, 220)
+    lbl3.TextSize         = 11
+    lbl3.Font             = Enum.Font.Gotham
+    lbl3.TextXAlignment   = Enum.TextXAlignment.Left
+    lbl3.TextTruncate     = Enum.TextTruncate.AtEnd
+
+    -- FIX: click trực tiếp vào btn (toàn bộ row đều click được)
+    btn.Activated:Connect(function()
+        OPT[key] = not OPT[key]
+        box.BackgroundColor3 = OPT[key]
+            and Color3.fromRGB(80, 200, 120)
+            or  Color3.fromRGB(50, 50, 72)
+        tick.Text = OPT[key] and "✓" or ""
+    end)
+end
+
+-- Layout 2 cột cho 4 checkbox (+ 1 checkbox "Kẻ chỉ" ở dưới)
+local COL1_X = 14
+local COL2_X = 14 + HALF_W + 8
+local CHECK_W = HALF_W
+
+local ROW1_Y = 110
+local ROW2_Y = 146
+local ROW3_Y = 182
+
+makeCheck("Hiện tên nhân vật",    "name",     COL1_X, ROW1_Y, CHECK_W)
+makeCheck("Hiện khoảng cách",     "dist",     COL2_X, ROW1_Y, CHECK_W)
+makeCheck("Khung nhân vật (Box)", "box",      COL1_X, ROW2_Y, CHECK_W)
+makeCheck("Người xương (Skeleton)","skeleton", COL2_X, ROW2_Y, CHECK_W)
+
+sep(218)
+
+makeCheck("Kẻ chỉ (Lines)",       "lines",    COL1_X, 224,    CHECK_W)
+
+--==================================================
+-- FOV CIRCLE
+--==================================================
+
+local fovFrame = Instance.new("Frame", gui)
+fovFrame.Size             = UDim2.fromOffset(CONFIG.AIM_FOV * 2, CONFIG.AIM_FOV * 2)
+fovFrame.Position         = UDim2.new(0.5, -CONFIG.AIM_FOV, 0.5, -CONFIG.AIM_FOV)
+fovFrame.BackgroundTransparency = 1
+fovFrame.BorderSizePixel  = 0
+fovFrame.Visible          = false
+Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(0.5, 0)
+local fovStroke = Instance.new("UIStroke", fovFrame)
+fovStroke.Color     = CONFIG.AIM_FOV_COLOR
+fovStroke.Thickness = 1.5
+
+--==================================================
+-- ESP OBJECTS
+--==================================================
+
+local BONES = {
+    {"Head","UpperTorso"},
+    {"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"},
+    {"LeftUpperArm","LeftLowerArm"},
+    {"LeftLowerArm","LeftHand"},
+    {"UpperTorso","RightUpperArm"},
+    {"RightUpperArm","RightLowerArm"},
+    {"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"},
+    {"LeftUpperLeg","LeftLowerLeg"},
+    {"LeftLowerLeg","LeftFoot"},
+    {"LowerTorso","RightUpperLeg"},
+    {"RightUpperLeg","RightLowerLeg"},
+    {"RightLowerLeg","RightFoot"},
+}
+
+local function makeLine(color)
+    local f = Instance.new("Frame", gui)
+    f.BackgroundColor3 = color or Color3.new(1,1,1)
+    f.BorderSizePixel  = 0
+    f.AnchorPoint      = Vector2.new(0.5, 0.5)
+    f.Visible          = false
+    return f
+end
+
+local function drawLine(f, from2D, to2D, thick)
+    local d = to2D - from2D
+    local len = d.Magnitude
+    if len < 1 then f.Visible = false; return end
+    f.Size     = UDim2.fromOffset(len, thick or 1.5)
+    f.Position = UDim2.fromOffset((from2D.X+to2D.X)/2, (from2D.Y+to2D.Y)/2)
+    f.Rotation = math.deg(math.atan2(d.Y, d.X))
+    f.Visible  = true
+end
+
+local function removeESP(player)
+    local obj = espObjects[player]
+    if not obj then return end
+    if obj.hl      then obj.hl:Destroy() end
+    if obj.bbg     then obj.bbg:Destroy() end
+    if obj.espLine then obj.espLine:Destroy() end
+    for _, b in ipairs(obj.bones or {}) do b:Destroy() end
+    espObjects[player] = nil
+end
+
+local function addESP(player)
+    removeESP(player)
+    local char = player.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local col = CONFIG.ESP_COLOR_ENEMY
+
+    local hl = Instance.new("Highlight")
+    hl.Name                = "ESP_HL"
+    hl.Adornee             = char
+    hl.FillColor           = col
+    hl.OutlineColor        = col
+    hl.FillTransparency    = CONFIG.ESP_FILL_TRANSPARENCY
+    hl.OutlineTransparency = 0
+    hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent              = char
+
+    local bbg = Instance.new("BillboardGui", gui)
+    bbg.Adornee     = root
+    bbg.Size        = UDim2.fromOffset(190, 50)
+    bbg.StudsOffset = Vector3.new(0, 3.2, 0)
+    bbg.AlwaysOnTop = true
+
+    local nameLbl = Instance.new("TextLabel", bbg)
+    nameLbl.Size                   = UDim2.new(1, 0, 0.54, 0)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Text                   = player.DisplayName ~= "" and player.DisplayName or player.Name
+    nameLbl.TextColor3             = col
+    nameLbl.TextStrokeTransparency = 0.4
+    nameLbl.TextStrokeColor3       = Color3.new(0,0,0)
+    nameLbl.TextSize               = CONFIG.NAME_TAG_SIZE + 2
+    nameLbl.Font                   = Enum.Font.GothamBold
+
+    local distLbl = Instance.new("TextLabel", bbg)
+    distLbl.Size                   = UDim2.new(1, 0, 0.46, 0)
+    distLbl.Position               = UDim2.new(0, 0, 0.54, 0)
+    distLbl.BackgroundTransparency = 1
+    distLbl.Text                   = ""
+    distLbl.TextColor3             = Color3.fromRGB(255, 240, 160)
+    distLbl.TextStrokeTransparency = 0.4
+    distLbl.TextStrokeColor3       = Color3.new(0,0,0)
+    distLbl.TextSize               = CONFIG.NAME_TAG_SIZE
+    distLbl.Font                   = Enum.Font.Gotham
+
+    local espLine = makeLine(col)
+
+    local bones = {}
+    for _ = 1, #BONES do
+        table.insert(bones, makeLine(Color3.fromRGB(255, 255, 255)))
+    end
+
+    espObjects[player] = {
+        hl      = hl,
+        bbg     = bbg,
+        nameLbl = nameLbl,
+        distLbl = distLbl,
+        espLine = espLine,
+        bones   = bones,
+        char    = char,
+    }
+end
+
+--==================================================
+-- UPDATE PER FRAME
+--==================================================
+
+local vp = Camera.ViewportSize
+
+RunService.RenderStepped:Connect(function()
+    vp = Camera.ViewportSize
+    local screenCenter = Vector2.new(vp.X / 2, vp.Y - 40)
+    espCount = 0
+
+    fovFrame.Visible = AIM_ENABLED and CONFIG.AIM_SHOW_FOV_CIRCLE
+
+    local myRole = getMyRole()
+    if myRole == "Seeker" then
+        roleLbl.Text      = "🔎 Người Đi Tìm (S)"
+        roleLbl.TextColor3 = Color3.fromRGB(255, 100, 100)
+    elseif myRole == "Hider" then
+        roleLbl.Text      = "🫣 Người Đi Trốn (H)"
+        roleLbl.TextColor3 = Color3.fromRGB(100, 200, 255)
+    else
+        roleLbl.Text      = "❓ Đang xác định..."
+        roleLbl.TextColor3 = Color3.fromRGB(180, 180, 100)
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+
+        local obj = espObjects[player]
+
+        if obj and obj.char ~= player.Character then
+            removeESP(player)
+            obj = nil
+        end
+
+        if not ESP_ENABLED or not isEnemy(player) then
+            if obj then
+                if obj.hl      then obj.hl.Enabled = false end
+                if obj.bbg     then obj.bbg.Enabled = false end
+                if obj.espLine then obj.espLine.Visible = false end
+                for _, b in ipairs(obj.bones or {}) do b.Visible = false end
+            end
+            continue
+        end
+
+        local char = player.Character
+        if not char then continue end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then continue end
+
+        local dist = getDistanceTo(player)
+        if dist > CONFIG.ESP_MAX_DISTANCE then
+            if obj then
+                if obj.hl      then obj.hl.Enabled  = false end
+                if obj.bbg     then obj.bbg.Enabled  = false end
+                if obj.espLine then obj.espLine.Visible = false end
+                for _, b in ipairs(obj.bones or {}) do b.Visible = false end
+            end
+            continue
+        end
+
+        espCount = espCount + 1
+
+        if not obj then
+            addESP(player)
+            obj = espObjects[player]
+        end
+        if not obj then continue end
+
+        -- Đọc trực tiếp từ bảng OPT (thủ công)
+        local showBox  = OPT.box
+        local showName = OPT.name
+        local showDist = OPT.dist
+        local showSkel = OPT.skeleton
+        local showLine = OPT.lines
+
+        if obj.hl then obj.hl.Enabled = showBox end
+
+        if obj.bbg then
+            obj.bbg.Enabled = showName or showDist
+            if obj.nameLbl then obj.nameLbl.Visible = showName end
+            if obj.distLbl then
+                obj.distLbl.Visible = showDist
+                if showDist then
+                    obj.distLbl.Text = string.format("📏 %.0f m", dist)
+                end
+            end
+        end
+
+        if obj.espLine then
+            if showLine then
+                local rp2d, on = worldToVP(root.Position)
+                if on then
+                    drawLine(obj.espLine, screenCenter, rp2d, 1.5)
+                else
+                    obj.espLine.Visible = false
+                end
+            else
+                obj.espLine.Visible = false
+            end
+        end
+
+        for i, bonePair in ipairs(BONES) do
+            local bLine = obj.bones[i]
+            if not bLine then continue end
+            if showSkel then
+                local p1 = char:FindFirstChild(bonePair[1])
+                local p2 = char:FindFirstChild(bonePair[2])
+                if p1 and p2 then
+                    local a2d, on1 = worldToVP(p1.Position)
+                    local b2d, on2 = worldToVP(p2.Position)
+                    if on1 or on2 then
+                        drawLine(bLine, a2d, b2d, 1.2)
+                    else
+                        bLine.Visible = false
+                    end
+                else
+                    bLine.Visible = false
+                end
+            else
+                bLine.Visible = false
+            end
+        end
+    end
+
+    countLbl.Text = "👁  ESP: " .. espCount .. " người"
+
+    if not AIM_ENABLED then return end
+
+    local center  = Vector2.new(vp.X / 2, vp.Y / 2)
+    local nearPart = nil
+    local nearDist = CONFIG.AIM_FOV
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if not isEnemy(player) then continue end
+        local char = player.Character
+        if not char then continue end
+        local part = char:FindFirstChild(CONFIG.AIM_TARGET_PART)
+        if not part then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        local sp, on = worldToVP(part.Position)
+        if not on then continue end
+        local d = (sp - center).Magnitude
+        if d < nearDist then
+            nearDist = d
+            nearPart = part
+        end
+    end
+
+    if nearPart then
+        local cur = Camera.CFrame
+        local tCF = CFrame.lookAt(cur.Position, nearPart.Position)
+        Camera.CFrame = cur:Lerp(tCF, CONFIG.AIM_SMOOTH)
+    end
+end)
+
+--==================================================
+-- BUTTON EVENTS (ESP toggle: bật → addESP, tắt → removeESP)
+--==================================================
+
+-- espBtnRef / aimBtnRef được lưu khi makeToggle tạo
+-- Logic addESP/removeESP thêm vào espBtnRef.Activated
+espBtnRef.Activated:Connect(function()
+    -- ESP_ENABLED đã được cập nhật bởi closure trong makeToggle
+    -- Dùng task.defer để đảm bảo giá trị đã ghi xong
+    task.defer(function()
+        if ESP_ENABLED then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and isEnemy(p) then addESP(p) end
+            end
+        else
+            for _, p in ipairs(Players:GetPlayers()) do removeESP(p) end
+            espCount = 0
+            countLbl.Text = "👁  ESP: 0 người"
+        end
+    end)
+end)
+
+--==================================================
+-- COLLAPSE
+--==================================================
+
+collapseBtn.Activated:Connect(function()
+    MENU_VISIBLE     = not MENU_VISIBLE
+    content.Visible  = MENU_VISIBLE
+    collapseBtn.Text = MENU_VISIBLE and "–" or "+"
+    main.Size = MENU_VISIBLE
+        and UDim2.fromOffset(MENU_W, MENU_H)
+        or  UDim2.fromOffset(MENU_W, 46)
+end)
+
+--==================================================
+-- PLAYER EVENTS
+--==================================================
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        task.wait(1)
+        if ESP_ENABLED and isEnemy(player) then addESP(player) end
+    end)
+end)
+
+Players.PlayerRemoving:Connect(removeESP)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    for _, p in ipairs(Players:GetPlayers()) do removeESP(p) end
+    if ESP_ENABLED then
+        task.wait(0.5)
+        for _, p in ipairs(Players:GetPlayers()) do
+            if isEnemy(p) then addESP(p) end
+        end
+    end
+end)
+
+--==================================================
+-- DRAG MENU
+--==================================================
+
+local dragging, dragStart, startPos = false, nil, nil
+
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging  = true
+        dragStart = input.Position
+        startPos  = main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if not dragging then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+    and input.UserInputType ~= Enum.UserInputType.Touch then return end
+    local d = input.Position - dragStart
+    main.Position = UDim2.new(
+        startPos.X.Scale, startPos.X.Offset + d.X,
+        startPos.Y.Scale, startPos.Y.Offset + d.Y
+    )
+end)
+
+--==================================================
+print("[Chameleon ESP v4] Loaded! PlaceId: 110808833601416")
+print("FIX: Toggle ESP/Aimbot hoạt động đúng")
+print("FIX: Checkbox tùy chỉnh thủ công độc lập")
+print("NEW: Menu ngang 2 cột")
