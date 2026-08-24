@@ -1,0 +1,252 @@
+--// Custom Debug Menu - Roblox Studio
+--// Dùng trong game bạn sở hữu / đang phát triển
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local ESP_ENABLED = false
+local AIM_ENABLED = false
+
+--==================================================
+-- GUI
+--==================================================
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "DebugMenu"
+gui.ResetOnSpawn = false
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(250, 180)
+main.Position = UDim2.new(0.5, -125, 0.5, -90)
+main.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+main.BorderSizePixel = 0
+main.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 14)
+corner.Parent = main
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 45)
+title.BackgroundTransparency = 1
+title.Text = "DEBUG MENU"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.TextSize = 22
+title.Font = Enum.Font.GothamBold
+title.Parent = main
+
+local function createButton(text, y)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, -30, 0, 45)
+    button.Position = UDim2.fromOffset(15, y)
+    button.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    button.Text = text
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.TextSize = 16
+    button.Font = Enum.Font.GothamBold
+    button.AutoButtonColor = true
+    button.Parent = main
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 10)
+    c.Parent = button
+
+    return button
+end
+
+local espButton = createButton("ESP: OFF", 55)
+local aimButton = createButton("AIM ASSIST: OFF", 110)
+
+--==================================================
+-- ESP
+--==================================================
+
+local highlights = {}
+
+local function removeESP(player)
+    if highlights[player] then
+        highlights[player]:Destroy()
+        highlights[player] = nil
+    end
+end
+
+local function addESP(player)
+    if player == LocalPlayer then
+        return
+    end
+
+    local character = player.Character
+    if not character then
+        return
+    end
+
+    removeESP(player)
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "DebugESP"
+    highlight.Adornee = character
+    highlight.FillTransparency = 0.75
+    highlight.OutlineTransparency = 0
+    highlight.Parent = character
+
+    highlights[player] = highlight
+end
+
+local function updateESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if ESP_ENABLED then
+            addESP(player)
+        else
+            removeESP(player)
+        end
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        task.wait(0.5)
+
+        if ESP_ENABLED then
+            addESP(player)
+        end
+    end)
+end)
+
+Players.PlayerRemoving:Connect(removeESP)
+
+--==================================================
+-- AIM ASSIST
+--==================================================
+
+local function getNearestPlayer()
+    local character = LocalPlayer.Character
+    if not character then
+        return nil
+    end
+
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then
+        return nil
+    end
+
+    local nearest
+    local distance = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local targetRoot =
+                player.Character:FindFirstChild("HumanoidRootPart")
+
+            local humanoid =
+                player.Character:FindFirstChildOfClass("Humanoid")
+
+            if targetRoot and humanoid and humanoid.Health > 0 then
+                local d = (targetRoot.Position - root.Position).Magnitude
+
+                if d < distance then
+                    distance = d
+                    nearest = player
+                end
+            end
+        end
+    end
+
+    return nearest
+end
+
+RunService.RenderStepped:Connect(function()
+    if not AIM_ENABLED then
+        return
+    end
+
+    local target = getNearestPlayer()
+
+    if not target or not target.Character then
+        return
+    end
+
+    local targetRoot =
+        target.Character:FindFirstChild("HumanoidRootPart")
+
+    if not targetRoot then
+        return
+    end
+
+    -- Aim-assist nhẹ cho prototype/debug trong game của bạn.
+    local camera = workspace.CurrentCamera
+    local current = camera.CFrame
+
+    local targetCF = CFrame.lookAt(
+        current.Position,
+        targetRoot.Position
+    )
+
+    camera.CFrame = current:Lerp(targetCF, 0.08)
+end)
+
+--==================================================
+-- BUTTONS
+--==================================================
+
+espButton.Activated:Connect(function()
+    ESP_ENABLED = not ESP_ENABLED
+
+    espButton.Text = "ESP: " .. (ESP_ENABLED and "ON" or "OFF")
+
+    updateESP()
+end)
+
+aimButton.Activated:Connect(function()
+    AIM_ENABLED = not AIM_ENABLED
+
+    aimButton.Text =
+        "AIM ASSIST: " .. (AIM_ENABLED and "ON" or "OFF")
+end)
+
+--==================================================
+-- DRAG MENU
+--==================================================
+
+local dragging = false
+local dragStart
+local startPos
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if not dragging then
+        return
+    end
+
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+        and input.UserInputType ~= Enum.UserInputType.Touch then
+        return
+    end
+
+    local delta = input.Position - dragStart
+
+    main.Position = UDim2.new(
+        startPos.X.Scale,
+        startPos.X.Offset + delta.X,
+        startPos.Y.Scale,
+        startPos.Y.Offset + delta.Y
+    )
+end)
