@@ -1,0 +1,2210 @@
+--// Chameleon ESP v14.0 - Fix Đồng Đội ESP + Wallcheck Multi-ray + Silent Aim Cải Tiến + Anti-Lag
+--// PlaceId: 110808833601416
+--// v14: Fix ESP hiện đồng đội (isEnemy strict) | Wallcheck multi-point raycast | Silent Aim tăng tầm đạn + fix giật | Aimbot lock chặt hơn | Anti-lag throttle render
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera      = workspace.CurrentCamera
+
+--==================================================
+-- CẤU HÌNH
+--==================================================
+
+local CONFIG = {
+    ESP_COLOR_ENEMY         = Color3.fromRGB(255, 60, 60),
+    ESP_COLOR_HIDER_ESP     = Color3.fromRGB(255, 215, 0),
+    ESP_COLOR_ALLY          = Color3.fromRGB(60, 180, 255),
+    ESP_FILL_TRANSPARENCY   = 0.60,
+    ESP_MAX_DISTANCE        = 600,
+    NAME_TAG_SIZE           = 14,
+    AIM_FOV_MAX             = 320,
+    AIM_FOV_PCT             = 50,
+    AIM_SMOOTH              = 0.30,       -- v14: tăng smooth → lock chặt hơn (0.10→0.30)
+    AIM_TARGET_PART         = "HumanoidRootPart",
+    AIM_SHOW_FOV_CIRCLE     = true,
+    AIM_FOV_COLOR           = Color3.fromRGB(255, 255, 255),
+    ESP_COLOR_THROUGH_WALL  = Color3.fromRGB(255, 50, 50),
+    ESP_COLOR_VISIBLE       = Color3.fromRGB(50, 220, 120),
+    BULLET_RANGE_BOOST      = 2500,       -- v14: tầm đạn boost thêm (studs) trong FireServer args
+    RENDER_ESP_INTERVAL     = 0.05,       -- v14: throttle ESP update mỗi 50ms thay vì mỗi frame
+    RENDER_BONE_INTERVAL    = 0.08,       -- v14: skeleton update chậm hơn để giảm lag
+}
+
+local function getFOVpx()
+    return math.floor(CONFIG.AIM_FOV_MAX * CONFIG.AIM_FOV_PCT / 100)
+end
+
+--==================================================
+-- DETECT TEAM - CHAMELEON v10
+-- P8 MỚI: Scan Highlight instance màu xanh/đỏ do game gán trực tiếp lên character
+-- Đây là cách chính xác nhất vì game Chameleon dùng Highlight để hiện đội
+--==================================================
+
+local roleCache = {}
+local ROLE_CACHE_TTL     = 1.5   -- v13: giảm TTL để nhận diện nhanh hơn khi role đổi
+local roleVoteCache      = {}    -- v13: vote system - đếm vote từng method
+local ROLE_VOTE_METHODS  = 9     -- tổng số phương pháp
+local roleListeners      = {}    -- v13: realtime attribute listeners per player
+
+-- P1: BillboardGui/SurfaceGui trên Character
+local function scanCharacterBillboards(player)
+    local char = player.Character
+    if not char then return nil end
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            local t = obj.Text
+            if t == "H" or t == "Hider" or t == "HIDER" then return "Hider" end
+            if t == "S" or t == "Seeker" or t == "SEEKER" then return "Seeker" end
+        end
+    end
+    return nil
+end
+
+-- P2: Attribute trên Player hoặc Character
+local function scanAttributes(player)
+    local attrNames = {"Role", "Team", "Side", "PlayerRole", "GameRole", "TeamName", "Job"}
+    for _, attr in ipairs(attrNames) do
+        local val = player:GetAttribute(attr)
+        if val then
+            local s = tostring(val):lower()
+            if s == "h" or s:find("hider") or s:find("trốn") then return "Hider" end
+            if s == "s" or s:find("seeker") or s:find("tìm") or s:find("tim") then return "Seeker" end
+        end
+        local char = player.Character
+        if char then
+            local val2 = char:GetAttribute(attr)
+            if val2 then
+                local s = tostring(val2):lower()
+                if s == "h" or s:find("hider") then return "Hider" end
+                if s == "s" or s:find("seeker") then return "Seeker" end
+            end
+        end
+    end
+    return nil
+end
+
+-- P3: leaderstats
+local function scanLeaderstats(player)
+    local ls = player:FindFirstChild("leaderstats")
+    if not ls then return nil end
+    for _, child in ipairs(ls:GetChildren()) do
+        local v = tostring(child.Value):lower()
+        if v == "h" or v:find("hider") then return "Hider" end
+        if v == "s" or v:find("seeker") then return "Seeker" end
+    end
+    return nil
+end
+
+-- P4: Roblox Team service
+local function scanTeam(player)
+    local team = player.Team
+    if not team then return nil end
+    local tn = team.Name:lower()
+    if tn:find("hid") or tn:find("trốn") or tn:find("blue") then return "Hider" end
+    if tn:find("seek") or tn:find("tìm") or tn:find("tim") or tn:find("red") then return "Seeker" end
+    local tc = team.TeamColor
+    if tc then
+        local r, g, b = tc.Color.R, tc.Color.G, tc.Color.B
+        if b > 0.4 and b > r * 1.5 and b > g * 1.2 then return "Hider" end
+        if r > 0.4 and r > b * 1.5 then return "Seeker" end
+    end
+    return nil
+end
+
+-- P5: Màu nhân vật (BodyColors / parts)
+local function scanCharacterColor(player)
+    local char = player.Character
+    if not char then return nil end
+    local bc = char:FindFirstChildOfClass("BodyColors")
+    if bc then
+        local torsoColor = bc.TorsoColor3 or bc.TorsoColor
+        if torsoColor then
+            local col = typeof(torsoColor) == "BrickColor" and torsoColor.Color or torsoColor
+            local r, g, b = col.R, col.G, col.B
+            if b > 0.35 and b > r * 1.3 then return "Hider" end
+            if r > 0.35 and r > b * 1.3 then return "Seeker" end
+        end
+    end
+    local parts = {"HumanoidRootPart", "UpperTorso", "Torso"}
+    for _, pname in ipairs(parts) do
+        local part = char:FindFirstChild(pname)
+        if part and part:IsA("BasePart") then
+            local r, g, b = part.Color.R, part.Color.G, part.Color.B
+            if b > 0.35 and b > r * 1.3 then return "Hider" end
+            if r > 0.35 and r > b * 1.3 then return "Seeker" end
+        end
+    end
+    return nil
+end
+
+-- P6: PlayerGui LocalPlayer HUD scan
+local hudRoleMap = {}
+local lastHudScan = 0
+local HUD_SCAN_INTERVAL = 1.5
+
+local function scanLocalHUD()
+    local now = tick()
+    if now - lastHudScan < HUD_SCAN_INTERVAL then return end
+    lastHudScan = now
+    hudRoleMap = {}
+
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return end
+
+    local function deepScan(parent, depth)
+        if depth > 10 then return end
+        for _, child in ipairs(parent:GetChildren()) do
+            if child:IsA("TextLabel") or child:IsA("TextButton") then
+                local t = (child.Text or ""):match("^%s*(.-)%s*$")
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LocalPlayer then
+                        local pname = p.Name:lower()
+                        local dname = p.DisplayName:lower()
+                        local tl = t:lower()
+                        if tl:find(pname, 1, true) or tl:find(dname, 1, true) then
+                            if tl:find("%bh%b") or tl:find("hider") then
+                                hudRoleMap[p.Name] = "Hider"
+                            elseif tl:find("%bs%b") or tl:find("seeker") then
+                                hudRoleMap[p.Name] = "Seeker"
+                            end
+                        end
+                    end
+                end
+                if t == "H" or t == "Hider" or t == "HIDER" then
+                    local sib = parent
+                    if sib then
+                        for _, s in ipairs(sib:GetChildren()) do
+                            if s ~= child and (s:IsA("TextLabel") or s:IsA("TextButton")) then
+                                local st = s.Text or ""
+                                for _, p in ipairs(Players:GetPlayers()) do
+                                    if st:lower():find(p.Name:lower(), 1, true)
+                                    or st:lower():find(p.DisplayName:lower(), 1, true) then
+                                        hudRoleMap[p.Name] = "Hider"
+                                    end
+                                end
+                            end
+                        end
+                    end
+                elseif t == "S" or t == "Seeker" or t == "SEEKER" then
+                    local sib = parent
+                    if sib then
+                        for _, s in ipairs(sib:GetChildren()) do
+                            if s ~= child and (s:IsA("TextLabel") or s:IsA("TextButton")) then
+                                local st = s.Text or ""
+                                for _, p in ipairs(Players:GetPlayers()) do
+                                    if st:lower():find(p.Name:lower(), 1, true)
+                                    or st:lower():find(p.DisplayName:lower(), 1, true) then
+                                        hudRoleMap[p.Name] = "Seeker"
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            deepScan(child, depth + 1)
+        end
+    end
+    deepScan(pg, 0)
+end
+
+-- P7: Scan workspace BillboardGui
+local wsRoleMap = {}
+local lastWsScan = 0
+local WS_SCAN_INTERVAL = 1.0
+
+local function scanWorkspaceBillboards()
+    local now = tick()
+    if now - lastWsScan < WS_SCAN_INTERVAL then return end
+    lastWsScan = now
+    wsRoleMap = {}
+
+    local playerNames = {}
+    local displayNames = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        playerNames[p.Name:lower()] = p
+        if p.DisplayName ~= "" then
+            displayNames[p.DisplayName:lower()] = p
+        end
+    end
+
+    local function scanNode(node, depth)
+        if depth > 8 then return end
+        for _, child in ipairs(node:GetChildren()) do
+            if child:IsA("BillboardGui") or child:IsA("SurfaceGui") then
+                local foundHS = nil
+                local allTexts = {}
+                for _, lbl in ipairs(child:GetDescendants()) do
+                    if lbl:IsA("TextLabel") or lbl:IsA("TextButton") then
+                        local t = (lbl.Text or ""):match("^%s*(.-)%s*$")
+                        table.insert(allTexts, t)
+                        if t == "H" or t == "Hider" or t == "HIDER" then foundHS = "Hider" end
+                        if t == "S" or t == "Seeker" or t == "SEEKER" then foundHS = "Seeker" end
+                    end
+                end
+                if foundHS then
+                    local adornee = child.Adornee
+                    if adornee then
+                        local char = adornee:IsA("Model") and adornee or adornee.Parent
+                        if char then
+                            for _, p in ipairs(Players:GetPlayers()) do
+                                if p.Character == char then
+                                    wsRoleMap[p.Name] = foundHS
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    for _, t in ipairs(allTexts) do
+                        local tl = t:lower()
+                        for name, p in pairs(playerNames) do
+                            if tl:find(name, 1, true) then wsRoleMap[p.Name] = foundHS end
+                        end
+                        for dname, p in pairs(displayNames) do
+                            if tl:find(dname, 1, true) then wsRoleMap[p.Name] = foundHS end
+                        end
+                    end
+                end
+            end
+            if child:IsA("Model") then
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p.Character == child then
+                        for _, desc in ipairs(child:GetDescendants()) do
+                            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                                local t = (desc.Text or ""):match("^%s*(.-)%s*$")
+                                if t == "H" or t == "Hider" or t == "HIDER" then
+                                    wsRoleMap[p.Name] = "Hider"
+                                elseif t == "S" or t == "Seeker" or t == "SEEKER" then
+                                    wsRoleMap[p.Name] = "Seeker"
+                                end
+                            end
+                        end
+                        break
+                    end
+                end
+                scanNode(child, depth + 1)
+            end
+        end
+    end
+    scanNode(workspace, 0)
+end
+
+-- P9 MỚI v13: Scan IntValue / StringValue / NumberValue tên "Role","Team","Side" trên Player và Character
+local ivRoleMap  = {}
+local lastIvScan = 0
+local IV_SCAN_INTERVAL = 0.6
+
+local function scanIntValues()
+    local now = tick()
+    if now - lastIvScan < IV_SCAN_INTERVAL then return end
+    lastIvScan = now
+    ivRoleMap = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        local sources = {p}
+        if p.Character then table.insert(sources, p.Character) end
+        for _, src in ipairs(sources) do
+            for _, child in ipairs(src:GetChildren()) do
+                local n = child.Name:lower()
+                if n == "role" or n == "team" or n == "side" or n == "playerrole" or n == "gamerole" then
+                    if child:IsA("StringValue") or child:IsA("IntValue") or child:IsA("NumberValue") then
+                        local v = tostring(child.Value):lower()
+                        if v == "h" or v:find("hider") or v:find("trốn") then
+                            ivRoleMap[p.Name] = "Hider"
+                        elseif v == "s" or v:find("seeker") or v:find("tìm") or v:find("tim") then
+                            ivRoleMap[p.Name] = "Seeker"
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- P8 MỚI: Scan Highlight instance màu do game gán trực tiếp lên character
+-- Game Chameleon thường gán Highlight xanh dương = Hider, đỏ/cam = Seeker
+local hlRoleMap = {}  -- [playerName] = "Hider"/"Seeker"
+local lastHlScan = 0
+local HL_SCAN_INTERVAL = 0.8
+
+local function scanHighlights()
+    local now = tick()
+    if now - lastHlScan < HL_SCAN_INTERVAL then return end
+    lastHlScan = now
+    hlRoleMap = {}
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        local char = p.Character
+        if not char then continue end
+
+        -- Tìm tất cả Highlight KHÔNG phải do chính script tạo
+        for _, obj in ipairs(char:GetDescendants()) do
+            if obj:IsA("Highlight") and obj.Name ~= "ESP_HL" then
+                local fc = obj.FillColor
+                local oc = obj.OutlineColor
+                -- Kiểm tra màu Fill hoặc Outline
+                local function checkColor(c)
+                    local r, g, b = c.R, c.G, c.B
+                    -- Xanh dương/xanh lá → Hider
+                    if (b > 0.35 and b > r * 1.25) or (g > 0.5 and g > r * 1.4 and b > 0.3) then
+                        return "Hider"
+                    end
+                    -- Đỏ/cam → Seeker
+                    if r > 0.45 and r > b * 1.5 and r > g * 0.9 then
+                        return "Seeker"
+                    end
+                    return nil
+                end
+                local role = checkColor(fc) or checkColor(oc)
+                if role then
+                    hlRoleMap[p.Name] = role
+                    break
+                end
+            end
+        end
+
+        -- Cũng scan parent (workspace/model) chứa Highlight adornee = char
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Highlight") and obj.Name ~= "ESP_HL" then
+                local adornee = obj.Adornee
+                if adornee == char or (adornee and adornee.Parent == char) then
+                    local fc = obj.FillColor
+                    local oc = obj.OutlineColor
+                    local function checkColor2(c)
+                        local r, g, b = c.R, c.G, c.B
+                        if (b > 0.35 and b > r * 1.25) or (g > 0.5 and g > r * 1.4 and b > 0.3) then
+                            return "Hider"
+                        end
+                        if r > 0.45 and r > b * 1.5 and r > g * 0.9 then
+                            return "Seeker"
+                        end
+                        return nil
+                    end
+                    local role = checkColor2(fc) or checkColor2(oc)
+                    if role then
+                        hlRoleMap[p.Name] = role
+                        break
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- v13: VOTE SYSTEM - Tổng hợp tất cả phương pháp, vote đa số
+-- Trọng số: P8(Highlight)=4, P1(Billboard)=4, P2(Attr)=3, P9(IntValue)=3,
+--           P3(Leaderstats)=2, P4(Team)=2, P7(WsBoard)=2, P6(HUD)=1, P5(Color)=1
+local function detectRole(player)
+    local cached = roleCache[player]
+    if cached and (tick() - cached.time) < ROLE_CACHE_TTL and cached.role then
+        return cached.role
+    end
+
+    -- Chạy tất cả scan cần thiết
+    scanHighlights()
+    scanLocalHUD()
+    scanWorkspaceBillboards()
+    scanIntValues()
+
+    local votes = {Hider = 0, Seeker = 0}
+    local function addVote(role, weight)
+        if role == "Hider" or role == "Seeker" then
+            votes[role] = votes[role] + (weight or 1)
+        end
+    end
+
+    -- P8: Highlight màu (weight 4)
+    addVote(hlRoleMap[player.Name], 4)
+
+    -- P1: Billboard character (weight 4)
+    addVote(scanCharacterBillboards(player), 4)
+
+    -- P2: Attributes (weight 3)
+    addVote(scanAttributes(player), 3)
+
+    -- P9: IntValue/StringValue (weight 3)
+    addVote(ivRoleMap[player.Name], 3)
+
+    -- P3: leaderstats (weight 2)
+    addVote(scanLeaderstats(player), 2)
+
+    -- P4: Team service (weight 2)
+    addVote(scanTeam(player), 2)
+
+    -- P7: Workspace BillboardGui (weight 2)
+    addVote(wsRoleMap[player.Name], 2)
+
+    -- P6: HUD (weight 1)
+    addVote(hudRoleMap[player.Name], 1)
+
+    -- P5: Màu nhân vật (weight 1)
+    addVote(scanCharacterColor(player), 1)
+
+    -- Quyết định: cần ít nhất 2 vote, và phải vượt hơn đội kia ít nhất 1
+    local winner = nil
+    if votes.Hider >= 2 and votes.Hider > votes.Seeker then
+        winner = "Hider"
+    elseif votes.Seeker >= 2 and votes.Seeker > votes.Hider then
+        winner = "Seeker"
+    elseif votes.Hider == 1 and votes.Seeker == 0 then
+        winner = "Hider"  -- chỉ có 1 vote nhưng đủ tin
+    elseif votes.Seeker == 1 and votes.Hider == 0 then
+        winner = "Seeker"
+    end
+
+    if winner then
+        roleCache[player] = {role = winner, time = tick(), votes = votes}
+        return winner
+    end
+
+    -- Giữ cache cũ nếu chưa expire hẳn (trong 5s)
+    if cached and cached.role and (tick() - cached.time) < 5.0 then
+        return cached.role
+    end
+
+    return nil
+end
+
+-- v13: Realtime attribute listener - invalidate cache ngay khi attribute thay đổi
+local function setupRoleListener(player)
+    if roleListeners[player] then return end  -- đã setup rồi
+    local conns = {}
+    local function invalidate()
+        roleCache[player] = nil  -- force re-detect ngay lần sau
+    end
+    -- Lắng nghe attribute changed trên Player
+    table.insert(conns, player.AttributeChanged:Connect(invalidate))
+    -- Lắng nghe character
+    local function watchChar(char)
+        if not char then return end
+        table.insert(conns, char.AttributeChanged:Connect(invalidate))
+        -- Watch ChildAdded trên char để bắt IntValue/StringValue mới
+        table.insert(conns, char.ChildAdded:Connect(function(child)
+            local n = child.Name:lower()
+            if n == "role" or n == "team" or n == "side" or n == "playerrole" then
+                if child:IsA("ValueBase") then
+                    table.insert(conns, child:GetPropertyChangedSignal("Value"):Connect(invalidate))
+                end
+            end
+        end))
+    end
+    if player.Character then watchChar(player.Character) end
+    table.insert(conns, player.CharacterAdded:Connect(watchChar))
+    roleListeners[player] = conns
+end
+
+Players.PlayerAdded:Connect(function(p)
+    setupRoleListener(p)
+end)
+Players.PlayerRemoving:Connect(function(p)
+    -- Cleanup listeners
+    local conns = roleListeners[p]
+    if conns then
+        for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+        roleListeners[p] = nil
+    end
+end)
+-- Setup cho players đã online
+for _, p in ipairs(Players:GetPlayers()) do
+    setupRoleListener(p)
+end
+
+local function getRole(player) return detectRole(player) end
+local function getMyRole()     return getRole(LocalPlayer) end
+
+Players.PlayerRemoving:Connect(function(p)
+    roleCache[p] = nil
+end)
+
+-- v14: isEnemy STRICT - không bao giờ show đồng đội
+-- Logic: chỉ hiện nếu CHẮC CHẮN là kẻ địch (role khác), còn lại ẩn
+local function isEnemy(player)
+    if player == LocalPlayer then return false end
+    local myRole    = getMyRole()
+    local theirRole = getRole(player)
+
+    -- TRƯỜNG HỢP 1: Biết cả 2 role → so sánh thẳng
+    if myRole and theirRole then
+        return myRole ~= theirRole
+    end
+
+    -- TRƯỜNG HỢP 2: Biết role mình, chưa biết họ
+    if myRole then
+        -- Mình là Hider: Hider ẩn náu, Seeker truy đuổi → chưa rõ thì KHÔNG hiện (tránh show đồng đội)
+        if myRole == "Hider" then return false end
+        -- Mình là Seeker: các Hider là mục tiêu → chưa rõ có thể hiện (Hider ẩn chưa detect được)
+        -- NHƯNG v14: nếu đang có nhiều đồng đội S hiện trong HUD → kiểm tra bằng team service trước
+        if myRole == "Seeker" then
+            -- Ưu tiên kiểm tra Team service để tránh show đồng đội S
+            if LocalPlayer.Team and player.Team then
+                return LocalPlayer.Team ~= player.Team
+            end
+            -- Chưa có team service → hiện (khả năng là Hider chưa detect)
+            return true
+        end
+    end
+
+    -- TRƯỜNG HỢP 3: Không biết role mình
+    -- Dùng Roblox Team service
+    if LocalPlayer.Team and player.Team then
+        return LocalPlayer.Team ~= player.Team
+    end
+
+    -- TRƯỜNG HỢP 4: Không có đủ thông tin → AN TOÀN: KHÔNG hiện
+    -- v14: đổi từ return true → return false để tránh show đồng đội
+    return false
+end
+
+-- Hàm kiểm tra có phải kẻ địch VÀ đang ngoài tường không (cho Aimbot)
+local function isEnemyAndVisible(player)
+    if not isEnemy(player) then return false end
+    if AIM_OPT.wallcheck then
+        return isPlayerVisible(player)
+    end
+    return true
+end
+
+--==================================================
+-- CHECK TƯỜNG v14 - Multi-Point Raycast
+-- Bắn 5 tia từ mắt mình đến 5 điểm khác nhau trên người địch
+-- Chỉ cần 1 tia xuyên qua → coi là thấy được (more accurate)
+--==================================================
+
+local wallCache     = {}
+local WALL_INTERVAL = 0.08   -- v14: giảm interval → phản hồi nhanh hơn
+
+local function isPlayerVisible(targetPlayer)
+    local now = tick()
+    local cache = wallCache[targetPlayer]
+    if cache and (now - cache.lastCheck) < WALL_INTERVAL then
+        return cache.visible
+    end
+
+    local myChar = LocalPlayer.Character
+    if not myChar then
+        wallCache[targetPlayer] = {visible = false, lastCheck = now}
+        return false
+    end
+    local myEye = myChar:FindFirstChild("Head") or myChar:FindFirstChild("HumanoidRootPart")
+    if not myEye then
+        wallCache[targetPlayer] = {visible = false, lastCheck = now}
+        return false
+    end
+
+    local targetChar = targetPlayer.Character
+    if not targetChar then
+        wallCache[targetPlayer] = {visible = false, lastCheck = now}
+        return false
+    end
+
+    -- v14: Thu thập nhiều điểm mục tiêu trên người địch
+    local checkParts = {"Head", "HumanoidRootPart", "UpperTorso", "Torso", "LeftUpperArm", "RightUpperArm"}
+    local targetPoints = {}
+    for _, pname in ipairs(checkParts) do
+        local p = targetChar:FindFirstChild(pname)
+        if p and p:IsA("BasePart") then
+            table.insert(targetPoints, p.Position)
+            if #targetPoints >= 5 then break end  -- tối đa 5 điểm
+        end
+    end
+    if #targetPoints == 0 then
+        wallCache[targetPlayer] = {visible = false, lastCheck = now}
+        return false
+    end
+
+    local origin = myEye.Position
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {myChar, targetChar}
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+    -- Bắn 1 tia đến mỗi điểm, chỉ cần 1 xuyên qua → visible
+    for _, targetPos in ipairs(targetPoints) do
+        local direction = targetPos - origin
+        local result = workspace:Raycast(origin, direction, rayParams)
+        if result == nil then
+            -- Không có vật cản → thấy được
+            wallCache[targetPlayer] = {visible = true, lastCheck = now}
+            return true
+        end
+    end
+
+    -- Tất cả tia đều bị chặn → sau tường
+    wallCache[targetPlayer] = {visible = false, lastCheck = now}
+    return false
+end
+
+Players.PlayerRemoving:Connect(function(p)
+    wallCache[p] = nil
+end)
+
+--==================================================
+-- TRẠNG THÁI
+--==================================================
+
+local ESP_ENABLED  = false
+local AIM_ENABLED  = false
+local MENU_VISIBLE = true
+
+local AIM_OPT = {
+    manual       = false,
+    fireOnly     = false,
+    always       = false,
+    wallcheck    = false,   -- bật = không aimbot người sau tường
+    silentAim    = false,   -- bật = đạn ma thuật tự bay vào target
+    headAim      = true,    -- v13: aim vào Head thay vì HumanoidRootPart
+}
+local isFiring       = false
+local silentAimTarget = nil   -- lưu part cần silent aim (Head ưu tiên)
+local silentAimPlayer = nil   -- v13: lưu player tương ứng để fallback
+-- v13: lưu CFrame gốc camera để restore sau silent aim frame
+local _saOrigCF       = nil
+local _saFrameCount   = 0
+local espObjects   = {}
+local lastMyRole   = nil
+
+local totalH  = 0
+local totalS  = 0
+local espCountVisible = 0
+
+local OPT = {
+    name      = true,
+    dist      = true,
+    box       = true,
+    skeleton  = true,
+    lines     = false,
+    fov       = true,
+    wallcheck = true,
+}
+
+--==================================================
+-- TIỆN ÍCH
+--==================================================
+
+local function getDistanceTo(player)
+    local mc = LocalPlayer.Character
+    if not mc then return math.huge end
+    local mr = mc:FindFirstChild("HumanoidRootPart")
+    local tc = player.Character
+    if not tc then return math.huge end
+    local tr = tc:FindFirstChild("HumanoidRootPart")
+    if not mr or not tr then return math.huge end
+    return (tr.Position - mr.Position).Magnitude
+end
+
+local function worldToVP(pos)
+    local sp, on = Camera:WorldToViewportPoint(pos)
+    return Vector2.new(sp.X, sp.Y), on
+end
+
+local vp = Camera.ViewportSize
+
+--==================================================
+-- GUI
+--==================================================
+
+local oldGui = LocalPlayer.PlayerGui:FindFirstChild("ChameleonDebug")
+if oldGui then oldGui:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name             = "ChameleonDebug"
+gui.ResetOnSpawn     = false
+gui.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
+gui.IgnoreGuiInset   = true
+gui.Parent           = LocalPlayer:WaitForChild("PlayerGui")
+
+--==================================================
+-- HUD NGOÀI MÀN HÌNH - KIỂU FREE FIRE
+--==================================================
+
+--==================================================
+-- NÚT VUÔNG TOGGLE MENU (luôn hiển thị góc phải)
+--==================================================
+
+-- v13: Nút vuông CÓ THỂ KÉO được tùy ý trên màn hình
+local menuToggleBtn = Instance.new("TextButton", gui)
+menuToggleBtn.Name             = "MenuToggleBtn"
+menuToggleBtn.Size             = UDim2.fromOffset(52, 52)   -- vuông hơn v12
+menuToggleBtn.Position         = UDim2.new(1, -62, 0, 70)
+menuToggleBtn.BackgroundColor3 = Color3.fromRGB(18, 28, 60)
+menuToggleBtn.AutoButtonColor  = false
+menuToggleBtn.Text             = "☰"
+menuToggleBtn.TextColor3       = Color3.fromRGB(120, 190, 255)
+menuToggleBtn.TextSize         = 22
+menuToggleBtn.Font             = Enum.Font.GothamBold
+menuToggleBtn.BorderSizePixel  = 0
+menuToggleBtn.ZIndex           = 20
+-- v13: KHÔNG bo tròn → vuông hoàn toàn (CornerRadius = 0)
+local mtbCorner = Instance.new("UICorner", menuToggleBtn)
+mtbCorner.CornerRadius = UDim.new(0, 6)  -- bo nhẹ 6px thôi cho đẹp
+local mtbStroke = Instance.new("UIStroke", menuToggleBtn)
+mtbStroke.Color     = Color3.fromRGB(60, 130, 255)
+mtbStroke.Thickness = 1.8
+
+-- v13: Drag cho menuToggleBtn
+local _mtbDragging   = false
+local _mtbDragStart  = nil
+local _mtbStartPos   = nil
+local _mtbMoved      = false   -- phân biệt click vs drag
+
+menuToggleBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        _mtbDragging  = true
+        _mtbMoved     = false
+        _mtbDragStart = input.Position
+        _mtbStartPos  = menuToggleBtn.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                _mtbDragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if not _mtbDragging then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+    and input.UserInputType ~= Enum.UserInputType.Touch then return end
+    local d = input.Position - _mtbDragStart
+    if d.Magnitude > 4 then _mtbMoved = true end
+    menuToggleBtn.Position = UDim2.new(
+        _mtbStartPos.X.Scale, _mtbStartPos.X.Offset + d.X,
+        _mtbStartPos.Y.Scale, _mtbStartPos.Y.Offset + d.Y
+    )
+end)
+
+-- HUD ESP RADAR đã bị xóa theo yêu cầu v11
+-- (Giữ biến dummy để tránh lỗi reference bên dưới)
+local hudHNum = {Text = "0", TextColor3 = Color3.new(1,1,1)}
+local hudSNum = {Text = "0", TextColor3 = Color3.new(1,1,1)}
+local hudFrame = {Visible = false}  -- dummy, không render
+
+--==================================================
+-- MENU CHÍNH v10 - THIẾT KẾ 3 TRANG
+--==================================================
+
+local MENU_W = 400
+local MENU_H = 400
+
+local main = Instance.new("Frame", gui)
+main.Name             = "Main"
+main.Size             = UDim2.fromOffset(MENU_W, MENU_H)
+main.Position         = UDim2.new(0.5, -MENU_W/2, 0.5, -MENU_H/2)
+main.BackgroundColor3 = Color3.fromRGB(9, 10, 20)
+main.BorderSizePixel  = 0
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 16)
+local mainStroke = Instance.new("UIStroke", main)
+mainStroke.Color     = Color3.fromRGB(50, 130, 255)
+mainStroke.Thickness = 1.8
+
+local mainGrad = Instance.new("UIGradient", main)
+mainGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   Color3.fromRGB(14, 16, 32)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(9, 10, 20)),
+    ColorSequenceKeypoint.new(1,   Color3.fromRGB(12, 8, 25)),
+})
+mainGrad.Rotation = 135
+
+-- HEADER
+local header = Instance.new("Frame", main)
+header.Size             = UDim2.new(1, 0, 0, 48)
+header.BackgroundColor3 = Color3.fromRGB(15, 20, 45)
+header.BorderSizePixel  = 0
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 16)
+local headerFix = Instance.new("Frame", header)
+headerFix.Size             = UDim2.new(1, 0, 0.5, 0)
+headerFix.Position         = UDim2.new(0, 0, 0.5, 0)
+headerFix.BackgroundColor3 = Color3.fromRGB(15, 20, 45)
+headerFix.BorderSizePixel  = 0
+
+local headerGrad = Instance.new("UIGradient", header)
+headerGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   Color3.fromRGB(30, 60, 120)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(15, 20, 45)),
+    ColorSequenceKeypoint.new(1,   Color3.fromRGB(60, 20, 90)),
+})
+headerGrad.Rotation = 90
+
+local titleLbl = Instance.new("TextLabel", header)
+titleLbl.Size             = UDim2.new(1, -60, 1, 0)
+titleLbl.Position         = UDim2.fromOffset(14, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.Text             = "⚡ Chameleon ESP v12"
+titleLbl.TextColor3       = Color3.new(1, 1, 1)
+titleLbl.TextSize         = 15
+titleLbl.Font             = Enum.Font.GothamBold
+titleLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+local collapseBtn = Instance.new("TextButton", header)
+collapseBtn.Size             = UDim2.fromOffset(30, 30)
+collapseBtn.Position         = UDim2.new(1, -38, 0, 9)
+collapseBtn.BackgroundColor3 = Color3.fromRGB(40, 60, 120)
+collapseBtn.Text             = "–"
+collapseBtn.TextColor3       = Color3.new(1, 1, 1)
+collapseBtn.TextSize         = 18
+collapseBtn.Font             = Enum.Font.GothamBold
+collapseBtn.AutoButtonColor  = false
+Instance.new("UICorner", collapseBtn).CornerRadius = UDim.new(0, 8)
+local cbStroke = Instance.new("UIStroke", collapseBtn)
+cbStroke.Color = Color3.fromRGB(80, 130, 255)
+cbStroke.Thickness = 1
+
+-- CONTENT AREA (phần dưới header)
+local content = Instance.new("Frame", main)
+content.Name                   = "Content"
+content.Size                   = UDim2.new(1, 0, 1, -48)
+content.Position               = UDim2.fromOffset(0, 48)
+content.BackgroundTransparency = 1
+content.ClipsDescendants       = true
+
+--==================================================
+-- TAB BAR (3 tabs: ESP | Aimbot | Cài đặt)
+--==================================================
+
+local TAB_H = 44
+local tabBar = Instance.new("Frame", content)
+tabBar.Name             = "TabBar"
+tabBar.Size             = UDim2.new(1, 0, 0, TAB_H)
+tabBar.Position         = UDim2.fromOffset(0, 0)
+tabBar.BackgroundColor3 = Color3.fromRGB(10, 12, 28)
+tabBar.BorderSizePixel  = 0
+
+-- Tab underline decoration
+local tabBarLine = Instance.new("Frame", tabBar)
+tabBarLine.Size             = UDim2.new(1, 0, 0, 1)
+tabBarLine.Position         = UDim2.new(0, 0, 1, -1)
+tabBarLine.BackgroundColor3 = Color3.fromRGB(40, 80, 180)
+tabBarLine.BorderSizePixel  = 0
+
+-- PAGE CONTAINER (dưới tab bar)
+local pageContainer = Instance.new("Frame", content)
+pageContainer.Name                   = "PageContainer"
+pageContainer.Size                   = UDim2.new(1, 0, 1, -TAB_H)
+pageContainer.Position               = UDim2.fromOffset(0, TAB_H)
+pageContainer.BackgroundTransparency = 1
+pageContainer.ClipsDescendants       = true
+
+-- Tạo 3 pages (ScrollingFrame)
+local function makePage()
+    local sf = Instance.new("ScrollingFrame", pageContainer)
+    sf.Size                   = UDim2.fromScale(1, 1)
+    sf.BackgroundTransparency = 1
+    sf.BorderSizePixel        = 0
+    sf.ScrollBarThickness     = 3
+    sf.ScrollBarImageColor3   = Color3.fromRGB(80, 130, 255)
+    sf.CanvasSize             = UDim2.fromOffset(0, 0)
+    sf.AutomaticCanvasSize    = Enum.AutomaticSize.Y
+    sf.Visible                = false
+    return sf
+end
+
+local pageESP     = makePage()
+local pageAimbot  = makePage()
+local pageSettings= makePage()
+
+-- Current tab state
+local currentTab = "ESP"
+
+-- Tạo tab buttons
+local TAB_NAMES = {"ESP", "Aimbot", "Cài đặt"}
+local TAB_ICONS = {"🔍", "🎯", "⚙️"}
+local tabBtns = {}
+local tabIndicators = {}
+
+local tabW = math.floor(MENU_W / #TAB_NAMES)
+
+for i, name in ipairs(TAB_NAMES) do
+    local btn = Instance.new("TextButton", tabBar)
+    btn.Size             = UDim2.fromOffset(tabW, TAB_H)
+    btn.Position         = UDim2.fromOffset((i-1) * tabW, 0)
+    btn.BackgroundTransparency = 1
+    btn.AutoButtonColor  = false
+    btn.Text             = TAB_ICONS[i] .. "  " .. name
+    btn.TextColor3       = Color3.fromRGB(120, 140, 180)
+    btn.TextSize         = 12
+    btn.Font             = Enum.Font.GothamBold
+    btn.BorderSizePixel  = 0
+    tabBtns[name] = btn
+
+    -- Active indicator line (bottom)
+    local ind = Instance.new("Frame", btn)
+    ind.Name             = "Indicator"
+    ind.Size             = UDim2.new(0.7, 0, 0, 2)
+    ind.Position         = UDim2.new(0.15, 0, 1, -2)
+    ind.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
+    ind.BorderSizePixel  = 0
+    Instance.new("UICorner", ind).CornerRadius = UDim.new(0.5, 0)
+    ind.Visible          = false
+    tabIndicators[name] = ind
+end
+
+local pageMap = {
+    ESP      = pageESP,
+    Aimbot   = pageAimbot,
+    ["Cài đặt"] = pageSettings,
+}
+
+local function switchTab(tabName)
+    currentTab = tabName
+    for _, name in ipairs(TAB_NAMES) do
+        local isActive = (name == tabName)
+        tabBtns[name].TextColor3 = isActive
+            and Color3.fromRGB(80, 180, 255)
+            or  Color3.fromRGB(120, 140, 180)
+        tabBtns[name].Font = isActive and Enum.Font.GothamBold or Enum.Font.Gotham
+        tabIndicators[name].Visible = isActive
+        pageMap[name].Visible = isActive
+    end
+end
+
+for _, name in ipairs(TAB_NAMES) do
+    tabBtns[name].Activated:Connect(function()
+        switchTab(name)
+    end)
+end
+
+-- Khởi tạo tab mặc định
+switchTab("ESP")
+
+--==================================================
+-- HELPER FACTORIES
+--==================================================
+
+local HALF_W = math.floor((MENU_W - 42) / 2)
+
+local function makeSep(parent, y)
+    local f = Instance.new("Frame", parent)
+    f.Size             = UDim2.new(1, -28, 0, 1)
+    f.Position         = UDim2.fromOffset(14, y)
+    f.BackgroundColor3 = Color3.fromRGB(35, 50, 100)
+    f.BorderSizePixel  = 0
+    local g = Instance.new("UIGradient", f)
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0,0,0)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(80,130,255)),
+        ColorSequenceKeypoint.new(1,   Color3.fromRGB(0,0,0)),
+    })
+    return f
+end
+
+local function makeSection(parent, label, y)
+    local lbl = Instance.new("TextLabel", parent)
+    lbl.Size             = UDim2.new(1, -28, 0, 18)
+    lbl.Position         = UDim2.fromOffset(14, y)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = label
+    lbl.TextColor3       = Color3.fromRGB(100, 160, 255)
+    lbl.TextSize         = 11
+    lbl.Font             = Enum.Font.GothamBold
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+    return lbl
+end
+
+local function makeCheck(parent, label, key, xPos, yPos, width, optTable)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size             = UDim2.fromOffset(width, 34)
+    btn.Position         = UDim2.fromOffset(xPos, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(14, 18, 36)
+    btn.AutoButtonColor  = false
+    btn.BorderSizePixel  = 0
+    btn.Text             = ""
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    local bS2 = Instance.new("UIStroke", btn)
+    bS2.Color = Color3.fromRGB(35, 50, 100)
+    bS2.Thickness = 1
+
+    local box = Instance.new("Frame", btn)
+    box.Size             = UDim2.fromOffset(20, 20)
+    box.Position         = UDim2.fromOffset(7, 7)
+    box.BackgroundColor3 = optTable[key] and Color3.fromRGB(60, 180, 255) or Color3.fromRGB(40, 40, 65)
+    box.BorderSizePixel  = 0
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
+
+    local tick2 = Instance.new("TextLabel", box)
+    tick2.Size             = UDim2.fromScale(1, 1)
+    tick2.BackgroundTransparency = 1
+    tick2.Text             = optTable[key] and "✓" or ""
+    tick2.TextColor3       = Color3.new(1, 1, 1)
+    tick2.TextSize         = 13
+    tick2.Font             = Enum.Font.GothamBold
+    tick2.TextXAlignment   = Enum.TextXAlignment.Center
+    tick2.TextYAlignment   = Enum.TextYAlignment.Center
+
+    local lbl3 = Instance.new("TextLabel", btn)
+    lbl3.Size             = UDim2.new(1, -34, 1, 0)
+    lbl3.Position         = UDim2.fromOffset(32, 0)
+    lbl3.BackgroundTransparency = 1
+    lbl3.Text             = label
+    lbl3.TextColor3       = Color3.fromRGB(180, 200, 240)
+    lbl3.TextSize         = 11
+    lbl3.Font             = Enum.Font.Gotham
+    lbl3.TextXAlignment   = Enum.TextXAlignment.Left
+    lbl3.TextTruncate     = Enum.TextTruncate.AtEnd
+
+    btn.Activated:Connect(function()
+        optTable[key] = not optTable[key]
+        box.BackgroundColor3 = optTable[key] and Color3.fromRGB(60, 180, 255) or Color3.fromRGB(40, 40, 65)
+        tick2.Text = optTable[key] and "✓" or ""
+    end)
+
+    return btn
+end
+
+local function makeToggle(parent, label, xPos, yPos, width, getState, setState)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size             = UDim2.fromOffset(width, 46)
+    btn.Position         = UDim2.fromOffset(xPos, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(18, 22, 42)
+    btn.AutoButtonColor  = false
+    btn.BorderSizePixel  = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 12)
+    local bS = Instance.new("UIStroke", btn)
+    bS.Color = Color3.fromRGB(45, 65, 130)
+    bS.Thickness = 1
+
+    local lbl2 = Instance.new("TextLabel", btn)
+    lbl2.Size             = UDim2.new(1, -58, 1, 0)
+    lbl2.Position         = UDim2.fromOffset(10, 0)
+    lbl2.BackgroundTransparency = 1
+    lbl2.Text             = label
+    lbl2.TextColor3       = Color3.new(1, 1, 1)
+    lbl2.TextSize         = 13
+    lbl2.Font             = Enum.Font.GothamBold
+    lbl2.TextXAlignment   = Enum.TextXAlignment.Left
+
+    local pill = Instance.new("Frame", btn)
+    pill.Size             = UDim2.fromOffset(42, 22)
+    pill.Position         = UDim2.new(1, -50, 0.5, -11)
+    pill.BackgroundColor3 = Color3.fromRGB(50, 50, 75)
+    pill.BorderSizePixel  = 0
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(0.5, 0)
+
+    local dot = Instance.new("Frame", pill)
+    dot.Size             = UDim2.fromOffset(16, 16)
+    dot.Position         = UDim2.fromOffset(3, 3)
+    dot.BackgroundColor3 = Color3.new(1, 1, 1)
+    dot.BorderSizePixel  = 0
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(0.5, 0)
+
+    local function refreshVisual()
+        local on = getState()
+        local ti = TweenInfo.new(0.15)
+        TweenService:Create(pill, ti, {
+            BackgroundColor3 = on and Color3.fromRGB(60, 180, 255) or Color3.fromRGB(50, 50, 75)
+        }):Play()
+        TweenService:Create(dot, ti, {
+            Position = on and UDim2.fromOffset(23, 3) or UDim2.fromOffset(3, 3)
+        }):Play()
+        bS.Color = on and Color3.fromRGB(60, 180, 255) or Color3.fromRGB(45, 65, 130)
+    end
+
+    btn.Activated:Connect(function()
+        setState(not getState())
+        refreshVisual()
+    end)
+
+    refreshVisual()
+    return btn, refreshVisual
+end
+
+--==================================================
+-- BADGE "THẤY X NGƯỜI" TRÊN MÀN HÌNH
+--==================================================
+
+local screenBadgeFrame = Instance.new("Frame", gui)
+screenBadgeFrame.Name                   = "ScreenCountBadge"
+screenBadgeFrame.Size                   = UDim2.fromOffset(180, 28)
+screenBadgeFrame.AnchorPoint            = Vector2.new(0.5, 0)
+screenBadgeFrame.Position               = UDim2.new(0.5, 0, 0, 68)
+screenBadgeFrame.BackgroundColor3       = Color3.fromRGB(8, 20, 50)
+screenBadgeFrame.BackgroundTransparency = 0.15
+screenBadgeFrame.BorderSizePixel        = 0
+screenBadgeFrame.Visible                = false
+Instance.new("UICorner", screenBadgeFrame).CornerRadius = UDim.new(0, 10)
+local scBadgeStroke = Instance.new("UIStroke", screenBadgeFrame)
+scBadgeStroke.Color     = Color3.fromRGB(60, 160, 255)
+scBadgeStroke.Thickness = 1.5
+
+local countLbl = Instance.new("TextLabel", screenBadgeFrame)
+countLbl.Size                   = UDim2.fromScale(1, 1)
+countLbl.BackgroundTransparency = 1
+countLbl.Text                   = "👁  Thấy: 0 người"
+countLbl.TextColor3             = Color3.fromRGB(120, 210, 255)
+countLbl.TextSize               = 12
+countLbl.Font                   = Enum.Font.GothamBold
+countLbl.TextXAlignment         = Enum.TextXAlignment.Center
+
+--==================================================
+-- PAGE 1: ESP
+--==================================================
+
+local COL1_X = 14
+local COL2_X = 14 + HALF_W + 8
+local CHECK_W = HALF_W
+
+-- Role label
+local roleLbl = Instance.new("TextLabel", pageESP)
+roleLbl.Size             = UDim2.new(1, -28, 0, 24)
+roleLbl.Position         = UDim2.fromOffset(14, 8)
+roleLbl.BackgroundTransparency = 1
+roleLbl.Text             = "❓ Xác định..."
+roleLbl.TextColor3       = Color3.fromRGB(255, 220, 80)
+roleLbl.TextSize         = 11
+roleLbl.Font             = Enum.Font.GothamBold
+roleLbl.TextXAlignment   = Enum.TextXAlignment.Right
+
+-- Toggle ESP button
+local espBtnRef, refreshESPVisual = makeToggle(
+    pageESP, "🔍  ESP", COL1_X, 36, MENU_W - 28,
+    function() return ESP_ENABLED end,
+    function(v) ESP_ENABLED = v end
+)
+
+makeSep(pageESP, 88)
+makeSection(pageESP, "▸ ESP OPTIONS", 96)
+
+makeCheck(pageESP, "Tên nhân vật",    "name",      COL1_X, 118, CHECK_W, OPT)
+makeCheck(pageESP, "Khoảng cách",     "dist",      COL2_X, 118, CHECK_W, OPT)
+makeCheck(pageESP, "Khung (Box)",     "box",       COL1_X, 156, CHECK_W, OPT)
+makeCheck(pageESP, "Xương (Skeleton)","skeleton",  COL2_X, 156, CHECK_W, OPT)
+makeCheck(pageESP, "Kẻ chỉ (Lines)", "lines",     COL1_X, 194, CHECK_W, OPT)
+makeCheck(pageESP, "🧱 Check Tường", "wallcheck", COL2_X, 194, CHECK_W, OPT)
+
+makeSep(pageESP, 234)
+
+-- Thêm note về màu ESP v12
+local espColorNote = Instance.new("TextLabel", pageESP)
+espColorNote.Size             = UDim2.new(1, -28, 0, 80)
+espColorNote.Position         = UDim2.fromOffset(14, 240)
+espColorNote.BackgroundColor3 = Color3.fromRGB(10, 18, 40)
+espColorNote.BackgroundTransparency = 0.3
+espColorNote.Text             = "🟡 Người Trốn (H)  |  🔴 Người Tìm (S)\n🔵 Chưa xác định role\n✅ Màu xanh = Thấy được  |  🧱 Màu đỏ = Sau tường\nESP chỉ hiện KẺ ĐỊCH (đội đối lập với bạn)"
+espColorNote.TextColor3       = Color3.fromRGB(160, 190, 240)
+espColorNote.TextSize         = 10
+espColorNote.Font             = Enum.Font.Gotham
+espColorNote.TextXAlignment   = Enum.TextXAlignment.Center
+espColorNote.TextWrapped      = true
+espColorNote.BorderSizePixel  = 0
+Instance.new("UICorner", espColorNote).CornerRadius = UDim.new(0, 8)
+
+--==================================================
+-- PAGE 2: AIMBOT
+--==================================================
+
+-- Toggle Aimbot button
+local aimBtnRef, refreshAIMVisual = makeToggle(
+    pageAimbot, "🎯  Aimbot", COL1_X, 14, MENU_W - 28,
+    function() return AIM_ENABLED end,
+    function(v)
+        AIM_ENABLED = v
+        if not v then
+            AIM_OPT.manual   = false
+            AIM_OPT.fireOnly = false
+            AIM_OPT.always   = false
+        end
+    end
+)
+
+makeSep(pageAimbot, 66)
+makeSection(pageAimbot, "▸ AIMBOT OPTIONS", 74)
+
+makeCheck(pageAimbot, "✋ Aimbot thủ công", "manual",   COL1_X, 96,  CHECK_W, AIM_OPT)
+makeCheck(pageAimbot, "🔫 Bắn khi aim",    "fireOnly", COL2_X, 96,  CHECK_W, AIM_OPT)
+makeCheck(pageAimbot, "♾️ Luôn aimbot",    "always",   COL1_X, 134, CHECK_W, AIM_OPT)
+makeCheck(pageAimbot, "Hiện vòng FOV",     "fov",      COL2_X, 134, CHECK_W, OPT)
+
+makeSep(pageAimbot, 174)
+makeSection(pageAimbot, "▸ TÍNH NĂNG MỚI v12", 182)
+
+-- v12: Check Tường cho Aimbot (không aim người sau tường)
+makeCheck(pageAimbot, "🧱 Check Tường (không aim qua tường)",  "wallcheck",  COL1_X, 204, MENU_W - 28, AIM_OPT)
+
+-- v13: Silent Aim (đạn ma thuật) + Head Aim
+makeCheck(pageAimbot, "🔮 Silent Aim (đạn tự bay vào địch)",  "silentAim",  COL1_X, 242, MENU_W - 28, AIM_OPT)
+makeCheck(pageAimbot, "🎯 Aim vào Đầu (Head)",               "headAim",    COL1_X, 280, MENU_W - 28, AIM_OPT)
+
+-- Note giải thích Silent Aim v13
+local silentNote = Instance.new("TextLabel", pageAimbot)
+silentNote.Size             = UDim2.new(1, -28, 0, 40)
+silentNote.Position         = UDim2.fromOffset(14, 318)
+silentNote.BackgroundColor3 = Color3.fromRGB(20, 12, 40)
+silentNote.BackgroundTransparency = 0.3
+silentNote.Text             = "💡 Silent Aim v13: Bắn chỗ khác, đạn tự trúng địch trong FOV\n3 lớp hook + Camera snap ma thuật cực mạnh"
+silentNote.TextColor3       = Color3.fromRGB(180, 140, 255)
+silentNote.TextSize         = 9
+silentNote.Font             = Enum.Font.Gotham
+silentNote.TextXAlignment   = Enum.TextXAlignment.Center
+silentNote.TextWrapped      = true
+silentNote.BorderSizePixel  = 0
+Instance.new("UICorner", silentNote).CornerRadius = UDim.new(0, 8)
+
+makeSep(pageAimbot, 364)
+makeSection(pageAimbot, "▸ FOV", 372)
+
+local fovLabel = Instance.new("TextLabel", pageAimbot)
+fovLabel.Size             = UDim2.fromOffset(90, 24)
+fovLabel.Position         = UDim2.fromOffset(COL1_X, 394)
+fovLabel.BackgroundTransparency = 1
+fovLabel.Text             = string.format("FOV: %d%%", CONFIG.AIM_FOV_PCT)
+fovLabel.TextColor3       = Color3.fromRGB(180, 200, 240)
+fovLabel.TextSize         = 11
+fovLabel.Font             = Enum.Font.GothamBold
+fovLabel.TextXAlignment   = Enum.TextXAlignment.Left
+
+local SLIDER_X  = COL1_X
+local SLIDER_Y  = 422
+local SLIDER_W  = MENU_W - 28 - 68
+local SLIDER_H  = 16
+
+local sliderTrack = Instance.new("TextButton", pageAimbot)
+sliderTrack.Size             = UDim2.fromOffset(SLIDER_W, SLIDER_H)
+sliderTrack.Position         = UDim2.fromOffset(SLIDER_X, SLIDER_Y)
+sliderTrack.BackgroundColor3 = Color3.fromRGB(25, 30, 60)
+sliderTrack.BorderSizePixel  = 0
+sliderTrack.Text             = ""
+sliderTrack.AutoButtonColor  = false
+Instance.new("UICorner", sliderTrack).CornerRadius = UDim.new(0.5, 0)
+
+local sliderFill = Instance.new("Frame", sliderTrack)
+sliderFill.Size             = UDim2.new(CONFIG.AIM_FOV_PCT / 100, 0, 1, 0)
+sliderFill.BackgroundColor3 = Color3.fromRGB(60, 130, 255)
+sliderFill.BorderSizePixel  = 0
+Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(0.5, 0)
+
+local sliderThumb = Instance.new("Frame", sliderTrack)
+sliderThumb.Size             = UDim2.fromOffset(20, 20)
+sliderThumb.AnchorPoint      = Vector2.new(0.5, 0.5)
+sliderThumb.Position         = UDim2.new(CONFIG.AIM_FOV_PCT / 100, 0, 0.5, 0)
+sliderThumb.BackgroundColor3 = Color3.new(1, 1, 1)
+sliderThumb.BorderSizePixel  = 0
+Instance.new("UICorner", sliderThumb).CornerRadius = UDim.new(0.5, 0)
+
+-- FOV Circle overlay
+local fovFrame = Instance.new("Frame", gui)
+fovFrame.BackgroundTransparency = 1
+fovFrame.BorderSizePixel        = 0
+fovFrame.Visible                = false
+Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(0.5, 0)
+local fovStroke = Instance.new("UIStroke", fovFrame)
+fovStroke.Color     = CONFIG.AIM_FOV_COLOR
+fovStroke.Thickness = 1.5
+
+local function updateFOVCircle()
+    local px = getFOVpx()
+    fovFrame.Size     = UDim2.fromOffset(px * 2, px * 2)
+    fovFrame.Position = UDim2.new(0.5, -px, 0.5, -px)
+end
+updateFOVCircle()
+
+local sliderDragging = false
+
+local function setFOVPct(pct)
+    pct = math.clamp(math.floor(pct), 1, 100)
+    CONFIG.AIM_FOV_PCT = pct
+    local t = pct / 100
+    sliderFill.Size      = UDim2.new(t, 0, 1, 0)
+    sliderThumb.Position = UDim2.new(t, 0, 0.5, 0)
+    fovLabel.Text = string.format("FOV: %d%%", pct)
+    updateFOVCircle()
+end
+
+local function sliderFromInput(input)
+    local trackPos  = sliderTrack.AbsolutePosition
+    local trackSize = sliderTrack.AbsoluteSize
+    local relX = input.Position.X - trackPos.X
+    local pct  = (relX / trackSize.X) * 100
+    setFOVPct(pct)
+end
+
+sliderTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        sliderDragging = true
+        sliderFromInput(input)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if not sliderDragging then return end
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch then
+        sliderFromInput(input)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        sliderDragging = false
+    end
+end)
+
+local function makeNudgeBtn(label, dx, xOff)
+    local btn = Instance.new("TextButton", pageAimbot)
+    btn.Size             = UDim2.fromOffset(28, 22)
+    btn.Position         = UDim2.fromOffset(SLIDER_X + SLIDER_W + xOff, SLIDER_Y - 3)  -- SLIDER_Y = 422
+    btn.BackgroundColor3 = Color3.fromRGB(30, 45, 100)
+    btn.Text             = label
+    btn.TextColor3       = Color3.new(1, 1, 1)
+    btn.TextSize         = 14
+    btn.Font             = Enum.Font.GothamBold
+    btn.AutoButtonColor  = false
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    btn.Activated:Connect(function() setFOVPct(CONFIG.AIM_FOV_PCT + dx) end)
+end
+makeNudgeBtn("–", -5, 4)
+makeNudgeBtn("+",  5, 36)
+
+--==================================================
+-- PAGE 3: CÀI ĐẶT (trống)
+--==================================================
+
+local settingsPlaceholder = Instance.new("TextLabel", pageSettings)
+settingsPlaceholder.Size             = UDim2.new(1, -28, 0, 60)
+settingsPlaceholder.Position         = UDim2.fromOffset(14, 30)
+settingsPlaceholder.BackgroundTransparency = 1
+settingsPlaceholder.Text             = "⚙️ Cài đặt\n(Đang cập nhật...)"
+settingsPlaceholder.TextColor3       = Color3.fromRGB(100, 130, 180)
+settingsPlaceholder.TextSize         = 13
+settingsPlaceholder.Font             = Enum.Font.GothamBold
+settingsPlaceholder.TextXAlignment   = Enum.TextXAlignment.Center
+settingsPlaceholder.TextWrapped      = true
+
+--==================================================
+-- ESP OBJECTS
+--==================================================
+
+local BONES = {
+    {"Head","UpperTorso"},
+    {"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"},
+    {"LeftUpperArm","LeftLowerArm"},
+    {"LeftLowerArm","LeftHand"},
+    {"UpperTorso","RightUpperArm"},
+    {"RightUpperArm","RightLowerArm"},
+    {"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"},
+    {"LeftUpperLeg","LeftLowerLeg"},
+    {"LeftLowerLeg","LeftFoot"},
+    {"LowerTorso","RightUpperLeg"},
+    {"RightUpperLeg","RightLowerLeg"},
+    {"RightLowerLeg","RightFoot"},
+}
+
+local function makeLine(color)
+    local f = Instance.new("Frame", gui)
+    f.BackgroundColor3 = color or Color3.new(1,1,1)
+    f.BorderSizePixel  = 0
+    f.AnchorPoint      = Vector2.new(0.5, 0.5)
+    f.Visible          = false
+    return f
+end
+
+local function drawLine(f, from2D, to2D, thick)
+    local d = to2D - from2D
+    local len = d.Magnitude
+    if len < 1 then f.Visible = false; return end
+    f.Size     = UDim2.fromOffset(len, thick or 1.5)
+    f.Position = UDim2.fromOffset((from2D.X+to2D.X)/2, (from2D.Y+to2D.Y)/2)
+    f.Rotation = math.deg(math.atan2(d.Y, d.X))
+    f.Visible  = true
+end
+
+local function removeESP(player)
+    local obj = espObjects[player]
+    if not obj then return end
+    if obj.hl      then obj.hl:Destroy() end
+    if obj.bbg     then obj.bbg:Destroy() end
+    if obj.espLine then obj.espLine:Destroy() end
+    for _, b in ipairs(obj.bones or {}) do b:Destroy() end
+    espObjects[player] = nil
+    wallCache[player]  = nil
+end
+
+local function getEnemyESPColor(player)
+    -- Màu dựa trên role của TARGET (kẻ địch):
+    -- Mình là Hider, kẻ địch là Seeker → đỏ
+    -- Mình là Seeker, kẻ địch là Hider → vàng
+    -- Chưa xác định → xanh dương
+    local role   = getRole(player)
+    local myRole = getMyRole()
+    if myRole == "Hider" then
+        -- Kẻ địch của Hider là Seeker
+        if role == "Seeker" then return CONFIG.ESP_COLOR_ENEMY end   -- đỏ
+        return CONFIG.ESP_COLOR_ALLY                                  -- xanh chưa rõ
+    elseif myRole == "Seeker" then
+        -- Kẻ địch của Seeker là Hider
+        if role == "Hider" then return CONFIG.ESP_COLOR_HIDER_ESP end -- vàng
+        return CONFIG.ESP_COLOR_ALLY                                   -- xanh chưa rõ
+    else
+        -- Chưa biết mình là ai
+        if role == "Seeker" then return CONFIG.ESP_COLOR_ENEMY end
+        if role == "Hider"  then return CONFIG.ESP_COLOR_HIDER_ESP end
+        return CONFIG.ESP_COLOR_ALLY
+    end
+end
+
+local function addESP(player)
+    removeESP(player)
+    local char = player.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    -- v12: Chỉ ESP kẻ địch thật sự (đội đối lập)
+    -- Nếu biết role rõ ràng và đây là đồng đội → bỏ qua
+    local myRole    = getMyRole()
+    local theirRole = getRole(player)
+    if myRole and theirRole and myRole == theirRole then return end
+
+    local role = theirRole
+    local col  = getEnemyESPColor(player)
+
+    local hl = Instance.new("Highlight")
+    hl.Name                = "ESP_HL"
+    hl.Adornee             = char
+    hl.FillColor           = col
+    hl.OutlineColor        = col
+    hl.FillTransparency    = CONFIG.ESP_FILL_TRANSPARENCY
+    hl.OutlineTransparency = 0
+    hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent              = char
+
+    local bbg = Instance.new("BillboardGui", gui)
+    bbg.Adornee     = root
+    bbg.Size        = UDim2.fromOffset(190, 50)
+    bbg.StudsOffset = Vector3.new(0, 3.2, 0)
+    bbg.AlwaysOnTop = true
+
+    local nameLbl = Instance.new("TextLabel", bbg)
+    nameLbl.Size                   = UDim2.new(1, 0, 0.54, 0)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Text                   = player.DisplayName ~= "" and player.DisplayName or player.Name
+    nameLbl.TextColor3             = col
+    nameLbl.TextStrokeTransparency = 0.4
+    nameLbl.TextStrokeColor3       = Color3.new(0,0,0)
+    nameLbl.TextSize               = CONFIG.NAME_TAG_SIZE + 2
+    nameLbl.Font                   = Enum.Font.GothamBold
+
+    local distLbl = Instance.new("TextLabel", bbg)
+    distLbl.Size                   = UDim2.new(1, 0, 0.46, 0)
+    distLbl.Position               = UDim2.new(0, 0, 0.54, 0)
+    distLbl.BackgroundTransparency = 1
+    distLbl.Text                   = ""
+    distLbl.TextColor3             = Color3.fromRGB(255, 240, 160)
+    distLbl.TextStrokeTransparency = 0.4
+    distLbl.TextStrokeColor3       = Color3.new(0,0,0)
+    distLbl.TextSize               = CONFIG.NAME_TAG_SIZE
+    distLbl.Font                   = Enum.Font.Gotham
+
+    -- Role tag (H/S) bên cạnh tên
+    -- H = nền vàng tối, S = nền đỏ
+    local roleTag = Instance.new("TextLabel", bbg)
+    roleTag.Size                   = UDim2.fromOffset(20, 20)
+    roleTag.Position               = UDim2.new(1, -22, 0, 0)
+    roleTag.BackgroundColor3       = role == "Seeker"
+        and Color3.fromRGB(180, 40, 30)
+        or (role == "Hider" and Color3.fromRGB(160, 130, 0) or Color3.fromRGB(30, 60, 120))
+    roleTag.BackgroundTransparency = 0
+    roleTag.Text                   = role == "Hider" and "H"
+        or (role == "Seeker" and "S" or "?")
+    roleTag.TextColor3             = Color3.new(1,1,1)
+    roleTag.TextSize               = 11
+    roleTag.Font                   = Enum.Font.GothamBold
+    roleTag.TextXAlignment         = Enum.TextXAlignment.Center
+    Instance.new("UICorner", roleTag).CornerRadius = UDim.new(0, 4)
+
+    local wallLbl = Instance.new("TextLabel", bbg)
+    wallLbl.Size                   = UDim2.new(1, 0, 0, 14)
+    wallLbl.Position               = UDim2.new(0, 0, 1, 2)
+    wallLbl.BackgroundTransparency = 1
+    wallLbl.Text                   = ""
+    wallLbl.TextColor3             = Color3.fromRGB(255, 80, 80)
+    wallLbl.TextStrokeTransparency = 0.3
+    wallLbl.TextStrokeColor3       = Color3.new(0,0,0)
+    wallLbl.TextSize               = 10
+    wallLbl.Font                   = Enum.Font.GothamBold
+
+    local espLine = makeLine(col)
+
+    local bones = {}
+    for _ = 1, #BONES do
+        table.insert(bones, makeLine(Color3.fromRGB(255, 255, 255)))
+    end
+
+    espObjects[player] = {
+        hl      = hl,
+        bbg     = bbg,
+        nameLbl = nameLbl,
+        distLbl = distLbl,
+        wallLbl = wallLbl,
+        roleTag = roleTag,
+        espLine = espLine,
+        bones   = bones,
+        char    = char,
+    }
+end
+
+local function rebuildAllESP()
+    for _, p in ipairs(Players:GetPlayers()) do removeESP(p) end
+    espCountVisible = 0
+    if not ESP_ENABLED then return end
+    task.wait(0.2)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then addESP(p) end
+    end
+end
+
+--==================================================
+-- ĐẾM H/S SERVER
+--==================================================
+
+local lastCountTick = 0
+local COUNT_INTERVAL = 1.0
+
+local function updateServerCount()
+    local now = tick()
+    for p, cached in pairs(roleCache) do
+        if (now - cached.time) >= ROLE_CACHE_TTL then
+            roleCache[p] = nil
+        end
+    end
+    lastWsScan  = 0
+    lastHudScan = 0
+    lastHlScan  = 0
+    scanHighlights()
+    scanWorkspaceBillboards()
+    scanLocalHUD()
+
+    local h, s, unknown = 0, 0, 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        local r = getRole(p)
+        if r == "Hider"  then h = h + 1
+        elseif r == "Seeker" then s = s + 1
+        else unknown = unknown + 1
+        end
+    end
+    totalH = h
+    totalS = s
+
+    hudHNum.Text = tostring(totalH)
+    hudSNum.Text = tostring(totalS)
+    hudHNum.TextColor3 = totalH > 0 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(130, 150, 180)
+    hudSNum.TextColor3 = totalS > 0 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 130, 130)
+
+    -- Rebuild ESP màu khi role thay đổi
+    if ESP_ENABLED then
+        local myRole = getMyRole()
+        if myRole ~= lastMyRole then
+            lastMyRole = myRole
+            rebuildAllESP()
+        end
+    end
+end
+
+--==================================================
+-- RENDER LOOP v14 - Anti-Lag Throttle
+--==================================================
+
+-- v14: throttle timers để giảm lag
+local _lastESPUpdate  = 0
+local _lastBoneUpdate = 0
+local _espDirty       = true   -- flag: cần update esp ngay lần tới
+
+RunService.Heartbeat:Connect(function()
+    local now = tick()
+    vp = Camera.ViewportSize
+
+    if now - lastCountTick >= COUNT_INTERVAL then
+        lastCountTick = now
+        updateServerCount()
+        screenBadgeFrame.Visible = ESP_ENABLED
+        _espDirty = true  -- role có thể đổi → cần update ESP
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    local now = tick()
+    vp = Camera.ViewportSize
+
+    -- v14: FOV circle chỉ update khi cần (nhẹ)
+    fovFrame.Visible = AIM_ENABLED and OPT.fov
+
+    -- Role label (nhẹ, giữ mỗi frame)
+    local myRole = getMyRole()
+    if myRole == "Seeker" then
+        roleLbl.Text       = "🔴 Bạn đang: Người Tìm (S)"
+        roleLbl.TextColor3 = Color3.fromRGB(255, 100, 100)
+    elseif myRole == "Hider" then
+        roleLbl.Text       = "🔵 Bạn đang: Người Trốn (H)"
+        roleLbl.TextColor3 = Color3.fromRGB(100, 180, 255)
+    else
+        roleLbl.Text       = "❓ Xác định role..."
+        roleLbl.TextColor3 = Color3.fromRGB(255, 220, 80)
+    end
+
+    if not ESP_ENABLED then
+        -- v14: chỉ ẩn khi mới tắt (dùng dirty flag)
+        if _espDirty then
+            _espDirty = false
+            for _, obj in pairs(espObjects) do
+                if obj.bbg then obj.bbg.Enabled = false end
+                if obj.hl  then obj.hl.Enabled  = false end
+                if obj.espLine then obj.espLine.Visible = false end
+                for _, b in ipairs(obj.bones or {}) do b.Visible = false end
+            end
+        end
+        -- Vẫn chạy aimbot khi ESP tắt
+        goto aimbot_section
+    end
+
+    -- v14: Throttle ESP update (50ms) để giảm lag mobile
+    if now - _lastESPUpdate < CONFIG.RENDER_ESP_INTERVAL and not _espDirty then
+        goto aimbot_section
+    end
+    _lastESPUpdate = now
+    _espDirty = false
+
+    do  -- scope ESP loop
+    local lineOrigin = Vector2.new(vp.X / 2, 0)
+    espCountVisible = 0
+
+    for player, obj in pairs(espObjects) do
+        local char = obj.char
+        if not char or not char.Parent then
+            removeESP(player)
+            if ESP_ENABLED then
+                task.defer(function() addESP(player) end)
+            end
+            continue
+        end
+
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local head = char:FindFirstChild("Head")
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then continue end
+        if hum.Health <= 0 then
+            if obj.hl      then obj.hl.Enabled     = false end
+            if obj.bbg     then obj.bbg.Enabled     = false end
+            if obj.espLine then obj.espLine.Visible = false end
+            for _, b in ipairs(obj.bones or {}) do b.Visible = false end
+            continue
+        end
+
+        -- v12: Lọc đồng đội khỏi ESP real-time
+        local myRole    = getMyRole()
+        local theirRole = getRole(player)
+        if myRole and theirRole and myRole == theirRole then
+            -- Đồng đội → ẩn hoàn toàn
+            if obj.bbg  then obj.bbg.Enabled  = false end
+            if obj.hl   then obj.hl.Enabled   = false end
+            if obj.espLine then obj.espLine.Visible = false end
+            for _, b in ipairs(obj.bones or {}) do b.Visible = false end
+            continue
+        end
+
+        -- Màu cơ bản theo phe
+        local role = theirRole
+        local col  = getEnemyESPColor(player)
+
+        -- Cập nhật roleTag
+        if obj.roleTag then
+            obj.roleTag.Text = role == "Hider" and "H" or (role == "Seeker" and "S" or "?")
+            obj.roleTag.BackgroundColor3 = role == "Seeker"
+                and Color3.fromRGB(180, 40, 30)
+                or (role == "Hider" and Color3.fromRGB(160, 130, 0) or Color3.fromRGB(30, 60, 120))
+        end
+        if obj.nameLbl then obj.nameLbl.TextColor3 = col end
+        if obj.espLine then obj.espLine.BackgroundColor3 = col end
+
+        local dist = getDistanceTo(player)
+        if dist > CONFIG.ESP_MAX_DISTANCE then
+            if obj.bbg     then obj.bbg.Enabled     = false end
+            if obj.espLine then obj.espLine.Visible  = false end
+            if obj.hl      then obj.hl.Enabled       = false end
+            for _, b in ipairs(obj.bones or {}) do b.Visible = false end
+            continue
+        end
+
+        -- v12 FIX CHECK TƯỜNG: Kiểm tra thấy hay sau tường
+        local isVis = isPlayerVisible(player)  -- luôn tính, dùng cho cả màu lẫn badge
+
+        local showSkel = OPT.skeleton
+        local showBox  = OPT.box
+        local showName = OPT.name
+        local showDist = OPT.dist
+        local showLine = OPT.lines
+
+        -- v12 FIX: Màu Highlight theo check tường
+        -- Nếu OPT.wallcheck bật:
+        --   isVis = true  → màu XANH (thấy được)
+        --   isVis = false → màu ĐỎ (sau tường)
+        -- Nếu OPT.wallcheck tắt: dùng màu phe bình thường
+        local espCol
+        if OPT.wallcheck then
+            espCol = isVis and CONFIG.ESP_COLOR_VISIBLE or CONFIG.ESP_COLOR_THROUGH_WALL
+        else
+            espCol = col
+        end
+
+        if showBox and obj.hl then
+            obj.hl.FillColor    = espCol
+            obj.hl.OutlineColor = espCol
+            obj.hl.Enabled      = true
+        elseif obj.hl then
+            obj.hl.Enabled = false
+        end
+
+        if obj.bbg then obj.bbg.Enabled = true end
+
+        espCountVisible = espCountVisible + 1
+
+        if showName then
+            obj.nameLbl.Visible = true
+        else
+            obj.nameLbl.Visible = false
+        end
+
+        if showDist then
+            obj.distLbl.Text    = string.format("%.0f m", dist)
+            obj.distLbl.Visible = true
+        else
+            obj.distLbl.Visible = false
+        end
+
+        -- v12: Wall label luôn hiện khi wallcheck bật
+        if OPT.wallcheck then
+            obj.wallLbl.Text       = isVis and "● Thấy" or "● Tường"
+            obj.wallLbl.TextColor3 = isVis and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,80,80)
+            obj.wallLbl.Visible    = true
+        else
+            obj.wallLbl.Text    = ""
+            obj.wallLbl.Visible = false
+        end
+
+        local headPos2D
+        if head then
+            local h2d, hOn = worldToVP(head.Position)
+            headPos2D = hOn and h2d or nil
+        end
+        local rootPos2D, rootOn = worldToVP(root.Position)
+
+        if showLine and rootOn then
+            drawLine(obj.espLine, lineOrigin, rootPos2D, 1.2)
+        else
+            obj.espLine.Visible = false
+        end
+
+        -- v14: throttle skeleton update riêng (nặng nhất)
+        local doBone = (now - _lastBoneUpdate >= CONFIG.RENDER_BONE_INTERVAL)
+        for i, bonePair in ipairs(BONES) do
+            local bLine = obj.bones[i]
+            if not bLine then continue end
+            if showSkel and doBone then
+                local p1 = char:FindFirstChild(bonePair[1])
+                local p2 = char:FindFirstChild(bonePair[2])
+                if p1 and p2 then
+                    local a2d, on1 = worldToVP(p1.Position)
+                    local b2d, on2 = worldToVP(p2.Position)
+                    if on1 or on2 then
+                        drawLine(bLine, a2d, b2d, 1.2)
+                    else
+                        bLine.Visible = false
+                    end
+                else
+                    bLine.Visible = false
+                end
+            elseif not showSkel then
+                bLine.Visible = false
+            end
+        end
+    end
+    if now - _lastBoneUpdate >= CONFIG.RENDER_BONE_INTERVAL then
+        _lastBoneUpdate = now
+    end
+
+    -- Cập nhật badge
+    if espCountVisible > 0 then
+        countLbl.Text                        = string.format("👁  Thấy: %d người", espCountVisible)
+        screenBadgeFrame.BackgroundColor3    = Color3.fromRGB(10, 40, 90)
+        scBadgeStroke.Color                  = Color3.fromRGB(60, 180, 255)
+    else
+        countLbl.Text                        = "👁  Thấy: 0 người"
+        screenBadgeFrame.BackgroundColor3    = Color3.fromRGB(8, 20, 50)
+        scBadgeStroke.Color                  = Color3.fromRGB(40, 100, 180)
+    end
+    end  -- end do ESP scope
+
+    ::aimbot_section::
+    -- AIMBOT (chạy mỗi frame, không throttle vì cần chính xác)
+    if not AIM_ENABLED then
+        silentAimTarget = nil
+        return
+    end
+
+    local shouldAim = false
+    if AIM_OPT.always then
+        shouldAim = true
+    elseif AIM_OPT.fireOnly then
+        shouldAim = isFiring
+    elseif AIM_OPT.manual then
+        shouldAim = true
+    end
+
+    if not shouldAim then
+        silentAimTarget = nil
+        return
+    end
+
+    local center     = Vector2.new(vp.X / 2, vp.Y / 2)
+    local fovPx      = getFOVpx()
+    local nearPart   = nil
+    local nearPlayer = nil
+    local nearDist   = fovPx
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        -- v13: dùng isEnemyAndVisible nếu AIM_OPT.wallcheck bật
+        if AIM_OPT.wallcheck then
+            if not isEnemyAndVisible(player) then continue end
+        else
+            if not isEnemy(player) then continue end
+        end
+        local char = player.Character
+        if not char then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+
+        -- v13: ưu tiên Head nếu AIM_OPT.headAim bật
+        local part
+        if AIM_OPT.headAim then
+            part = char:FindFirstChild("Head") or char:FindFirstChild(CONFIG.AIM_TARGET_PART)
+        else
+            part = char:FindFirstChild(CONFIG.AIM_TARGET_PART)
+        end
+        if not part then continue end
+
+        local sp, on = worldToVP(part.Position)
+        if not on then continue end
+        local d = (sp - center).Magnitude
+        if d < nearDist then
+            nearDist   = d
+            nearPart   = part
+            nearPlayer = player
+        end
+    end
+
+    -- Lưu target cho Silent Aim
+    silentAimTarget = nearPart
+    silentAimPlayer = nearPlayer
+
+    if nearPart then
+        -- v14: Silent Aim bật → KHÔNG xoay camera (Layer 3 xử lý riêng)
+        if not AIM_OPT.silentAim then
+            local cur = Camera.CFrame
+            local tCF = CFrame.lookAt(cur.Position, nearPart.Position)
+            -- v14: Adaptive smooth - gần center FOV thì lock chặt hơn
+            local distRatio = math.clamp(nearDist / fovPx, 0, 1)
+            -- distRatio = 0 → tâm FOV → smooth cao (lock cứng)
+            -- distRatio = 1 → rìa FOV → smooth thấp hơn (kéo vào)
+            local adaptiveSmooth = CONFIG.AIM_SMOOTH + (1 - distRatio) * 0.50
+            adaptiveSmooth = math.clamp(adaptiveSmooth, CONFIG.AIM_SMOOTH, 0.85)
+            Camera.CFrame = cur:Lerp(tCF, adaptiveSmooth)
+        end
+    end
+end)
+
+--==================================================
+-- INPUT (bắn súng)
+--==================================================
+
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        isFiring = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        isFiring = false
+    end
+end)
+
+--==================================================
+-- SILENT AIM v14 - Đạn Ma Thuật + Tăng Tầm Đạn
+-- Layer 1: Global __namecall hook (redirect Vector3/CFrame + tăng tầm đạn)
+-- Layer 2: Per-tool hook backup
+-- Layer 3: Camera snap frame khi bắn (không giật)
+--==================================================
+
+-- Hàm redirect args khi FireServer (dùng chung cho Layer 1 & 2)
+local function redirectShootArgs(args)
+    if not (AIM_ENABLED and AIM_OPT.silentAim and silentAimTarget) then return args, false end
+    local targetPos = silentAimTarget.Position
+    local replaced  = false
+    for i, v in ipairs(args) do
+        if typeof(v) == "Vector3" then
+            -- v14: thay vị trí BẮN → vị trí target (silent aim)
+            args[i]  = targetPos
+            replaced = true
+        elseif typeof(v) == "CFrame" then
+            args[i]  = CFrame.new(targetPos)
+            replaced = true
+        elseif typeof(v) == "Instance" and v:IsA("BasePart") then
+            args[i]  = silentAimTarget
+            replaced = true
+        elseif typeof(v) == "number" and v > 10 and v < 5000 then
+            -- v14: Tăng tầm đạn - nếu arg là số trong range hợp lý (range/damage)
+            -- chỉ boost nếu đây là "range" (dưới CONFIG.BULLET_RANGE_BOOST)
+            if v < CONFIG.BULLET_RANGE_BOOST then
+                args[i]  = CONFIG.BULLET_RANGE_BOOST
+                replaced = true
+            end
+        end
+    end
+    return args, replaced
+end
+
+-- Layer 1: Hook global __namecall
+local _saHooked = false
+
+local function tryHookGlobalNamecall()
+    if _saHooked then return end
+    pcall(function()
+        local mt = getrawmetatable(game)
+        if not mt then return end
+        local oldNc = mt.__namecall
+        if not oldNc then return end
+        if setreadonly then setreadonly(mt, false) end
+        local function newNc(self, ...)
+            local method = getnamecallmethod and getnamecallmethod() or ""
+            if method == "FireServer" or method == "InvokeServer" then
+                local args = {...}
+                local newArgs, replaced = redirectShootArgs(args)
+                if replaced then
+                    return oldNc(self, table.unpack(newArgs))
+                end
+            end
+            return oldNc(self, ...)
+        end
+        mt.__namecall = (newcclosure and newcclosure(newNc)) or newNc
+        if setreadonly then setreadonly(mt, true) end
+        _saHooked = true
+    end)
+end
+
+-- Layer 2: Per-tool hook backup
+local function hookToolRemotes(tool)
+    if not tool or not tool:IsA("Tool") then return end
+    local function patchRemote(re)
+        if not re:IsA("RemoteEvent") and not re:IsA("RemoteFunction") then return end
+        pcall(function()
+            local mt = getrawmetatable and getrawmetatable(re)
+            if not mt then return end
+            local old = mt.__namecall
+            if not old then return end
+            if setreadonly then setreadonly(mt, false) end
+            mt.__namecall = function(self, ...)
+                if self == re then
+                    local m = getnamecallmethod and getnamecallmethod() or ""
+                    if m == "FireServer" or m == "InvokeServer" then
+                        local args = {...}
+                        local newArgs, replaced = redirectShootArgs(args)
+                        if replaced then
+                            return old(self, table.unpack(newArgs))
+                        end
+                    end
+                end
+                return old(self, ...)
+            end
+            if setreadonly then setreadonly(mt, true) end
+        end)
+    end
+    for _, child in ipairs(tool:GetDescendants()) do patchRemote(child) end
+    tool.DescendantAdded:Connect(patchRemote)
+end
+
+local function hookSilentAim(char)
+    if not char then return end
+    for _, obj in ipairs(char:GetChildren()) do
+        if obj:IsA("Tool") then hookToolRemotes(obj) end
+    end
+    char.ChildAdded:Connect(function(obj)
+        if obj:IsA("Tool") then hookToolRemotes(obj) end
+    end)
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do hookToolRemotes(t) end
+        bp.ChildAdded:Connect(hookToolRemotes)
+    end
+end
+
+pcall(tryHookGlobalNamecall)
+local function setupSilentAimForPlayer()
+    local char = LocalPlayer.Character
+    if char then hookSilentAim(char) end
+    LocalPlayer.CharacterAdded:Connect(hookSilentAim)
+end
+pcall(setupSilentAimForPlayer)
+
+-- Layer 3: Camera snap KHÔNG GIẬT v14
+-- Snap camera đúng frame bắn, restore NGAY lập tức sau khi engine đọc hướng
+-- Không có delay frame → camera không "nhảy" nhìn thấy được
+local _prevCF     = nil
+local _snapActive = false
+
+RunService.RenderStepped:Connect(function()
+    if not (AIM_ENABLED and AIM_OPT.silentAim and silentAimTarget) then
+        _snapActive = false
+        _prevCF     = nil
+        return
+    end
+
+    if isFiring then
+        -- Snap camera về địch đúng 1 frame (engine đọc CFrame để tính bullet direction)
+        local cur       = Camera.CFrame
+        local targetPos = silentAimTarget.Position
+        _prevCF         = cur
+        _snapActive     = true
+        Camera.CFrame   = CFrame.lookAt(cur.Position, targetPos)
+    elseif _snapActive and _prevCF then
+        -- Không bắn nữa → restore ngay frame tiếp theo
+        Camera.CFrame = _prevCF
+        _prevCF       = nil
+        _snapActive   = false
+    end
+end)
+
+--==================================================
+-- ESP BUTTON EVENTS
+--==================================================
+
+espBtnRef.Activated:Connect(function()
+    task.defer(function()
+        if ESP_ENABLED then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then addESP(p) end
+            end
+            screenBadgeFrame.Visible = true
+        else
+            for _, p in ipairs(Players:GetPlayers()) do removeESP(p) end
+            espCountVisible = 0
+            countLbl.Text = "👁  Thấy: 0 người"
+            -- hudFrame đã xóa (v11)
+            screenBadgeFrame.Visible = false
+        end
+    end)
+end)
+
+--==================================================
+-- COLLAPSE
+--==================================================
+
+collapseBtn.Activated:Connect(function()
+    MENU_VISIBLE     = not MENU_VISIBLE
+    content.Visible  = MENU_VISIBLE
+    collapseBtn.Text = MENU_VISIBLE and "–" or "+"
+    main.Size = MENU_VISIBLE
+        and UDim2.fromOffset(MENU_W, MENU_H)
+        or  UDim2.fromOffset(MENU_W, 48)
+end)
+
+-- Nút vuông: ấn 1 lần = ẩn menu chính, ấn lần nữa = hiện menu chính
+local MAIN_HIDDEN = false  -- trạng thái ẩn hoàn toàn menu chính
+
+local function refreshToggleBtnStyle()
+    if MAIN_HIDDEN then
+        menuToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 20, 60)
+        menuToggleBtn.TextColor3       = Color3.fromRGB(255, 120, 255)
+        mtbStroke.Color                = Color3.fromRGB(180, 80, 255)
+        menuToggleBtn.Text             = "▣"
+    else
+        menuToggleBtn.BackgroundColor3 = Color3.fromRGB(18, 28, 60)
+        menuToggleBtn.TextColor3       = Color3.fromRGB(120, 190, 255)
+        mtbStroke.Color                = Color3.fromRGB(60, 130, 255)
+        menuToggleBtn.Text             = "☰"
+    end
+end
+
+menuToggleBtn.Activated:Connect(function()
+    if _mtbMoved then return end  -- v13: drag thì không toggle
+    MAIN_HIDDEN = not MAIN_HIDDEN
+    main.Visible = not MAIN_HIDDEN
+    refreshToggleBtnStyle()
+end)
+
+refreshToggleBtnStyle()
+
+--==================================================
+-- PLAYER EVENTS
+--==================================================
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        task.wait(1)
+        if ESP_ENABLED then addESP(player) end
+    end)
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    removeESP(p)
+    wallCache[p] = nil
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    for _, p in ipairs(Players:GetPlayers()) do removeESP(p) end
+    if ESP_ENABLED then
+        task.wait(0.5)
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then addESP(p) end
+        end
+    end
+end)
+
+--==================================================
+-- DRAG MENU
+--==================================================
+
+local dragging, dragStart, startPos = false, nil, nil
+
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging  = true
+        dragStart = input.Position
+        startPos  = main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if sliderDragging then return end
+    if not dragging then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+    and input.UserInputType ~= Enum.UserInputType.Touch then return end
+    local d = input.Position - dragStart
+    main.Position = UDim2.new(
+        startPos.X.Scale, startPos.X.Offset + d.X,
+        startPos.Y.Scale, startPos.Y.Offset + d.Y
+    )
+end)
+
+-- Init
+updateServerCount()
+-- hudFrame đã xóa (v11)
+screenBadgeFrame.Visible = false
+
+print("[Chameleon ESP v14.0] Loaded!")
+print("v14: Fix đồng đội ESP (isEnemy strict) | Wallcheck multi-point 5 tia | Silent Aim tăng tầm đạn + no-jitter snap | Aimbot adaptive lock | Anti-lag throttle 50ms")
