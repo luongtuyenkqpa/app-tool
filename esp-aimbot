@@ -1,0 +1,1295 @@
+--// Dogs of War - ESP + Aimbot
+--// PlaceId: 70816182080869
+--// Giao diện menu NGANG | ESP thông minh | Aimbot 3 chế độ | v1.0
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera      = workspace.CurrentCamera
+
+--==================================================
+-- CONFIG
+--==================================================
+local CFG = {
+    -- ESP màu sắc
+    ESP_ENEMY_COLOR     = Color3.fromRGB(255, 55, 55),    -- đỏ địch
+    ESP_ALLY_COLOR      = Color3.fromRGB(60, 200, 255),   -- xanh đồng đội
+    ESP_VISIBLE_COLOR   = Color3.fromRGB(50, 230, 110),   -- xanh lá = thấy thẳng
+    ESP_FILL_ALPHA      = 0.65,
+    ESP_MAX_DIST        = 800,
+
+    -- Aimbot
+    AIM_SMOOTH          = 0.12,
+    AIM_TARGET          = "Head",  -- "Head" hoặc "HumanoidRootPart"
+    AIM_FOV_MAX         = 400,
+    AIM_FOV_PCT         = 45,      -- % của AIM_FOV_MAX
+    AIM_FOV_COLOR       = Color3.fromRGB(255, 255, 255),
+}
+
+local function getFOVpx() return math.floor(CFG.AIM_FOV_MAX * CFG.AIM_FOV_PCT / 100) end
+
+--==================================================
+-- STATE
+--==================================================
+local ESP_ON      = false
+local AIM_ON      = false
+local MENU_OPEN   = true
+
+-- ESP Options
+local OPT = {
+    name     = true,
+    dist     = true,
+    box      = true,
+    skeleton = false,
+    lines    = true,
+    wallchk  = true,
+    health   = true,
+    weapon   = false,
+}
+
+-- Aimbot Options
+local AOPT = {
+    manual   = false,  -- chỉ aimbot khi tick
+    wallchk  = false,  -- chỉ aimbot khi thấy thẳng (không qua tường)
+    fov      = true,   -- hiện vòng FOV
+    always   = false,  -- luôn aimbot
+    fireOnly = false,  -- chỉ khi đang bắn
+}
+
+local isFiring = false
+
+--==================================================
+-- TEAM DETECT (Dogs of War: xanh lá vs đỏ cam)
+-- Đội xanh (Star) vs Đội đỏ (Iron)
+--==================================================
+local teamCache = {}
+local teamTime  = {}
+local CACHE_TTL = 3.0
+
+local function clearTeamCache(p) teamCache[p]=nil teamTime[p]=nil end
+
+-- P1: Roblox Team service (DoW dùng Teams)
+local function detectViaTeam(player)
+    local t = player.Team
+    if not t then return nil end
+    local tn = t.Name:lower()
+    if tn:find("star") or tn:find("green") or tn:find("xanh") then return "Star" end
+    if tn:find("iron") or tn:find("red")  or tn:find("đỏ")   then return "Iron" end
+    -- TeamColor fallback
+    local ok, col = pcall(function() return t.TeamColor.Color end)
+    if ok and col then
+        if col.G > 0.4 and col.G > col.R * 1.3 then return "Star" end
+        if col.R > 0.4 and col.R > col.G * 1.3 then return "Iron" end
+    end
+    return nil
+end
+
+-- P2: Character tags / attributes
+local ATTR_KEYS = {"Team","Side","Faction","Camp","Role"}
+local function detectViaAttr(player)
+    local sources = {player, player.Character}
+    for _, src in ipairs(sources) do
+        if not src then continue end
+        for _, k in ipairs(ATTR_KEYS) do
+            local ok, v = pcall(function() return src:GetAttribute(k) end)
+            if ok and v then
+                local s = tostring(v):lower()
+                if s:find("star") or s:find("green") then return "Star" end
+                if s:find("iron") or s:find("red")   then return "Iron" end
+            end
+        end
+    end
+    return nil
+end
+
+-- P3: Workspace grouping
+local function detectViaFolder(player)
+    local char = player.Character
+    if not char then return nil end
+    local par = char.Parent
+    if not par or par == workspace then return nil end
+    local n = par.Name:lower()
+    if n:find("star") or n:find("green") then return "Star" end
+    if n:find("iron") or n:find("red")   then return "Iron" end
+    return nil
+end
+
+-- P4: leaderstats
+local function detectViaLeaderstats(player)
+    local ls = player:FindFirstChild("leaderstats")
+    if not ls then return nil end
+    for _, child in ipairs(ls:GetChildren()) do
+        local v = tostring(child.Value):lower()
+        if v:find("star") then return "Star" end
+        if v:find("iron") then return "Iron" end
+    end
+    return nil
+end
+
+local function getTeam(player)
+    local cached = teamCache[player]
+    if cached and teamTime[player] and (tick()-teamTime[player]) < CACHE_TTL then
+        return cached
+    end
+    local function cache(r)
+        if r then teamCache[player]=r teamTime[player]=tick() end
+        return r
+    end
+    local r
+    r = detectViaTeam(player);        if r then return cache(r) end
+    r = detectViaAttr(player);         if r then return cache(r) end
+    r = detectViaFolder(player);       if r then return cache(r) end
+    r = detectViaLeaderstats(player);  if r then return cache(r) end
+    -- fallback: sama TeamColor HRP
+    if cached then return cached end
+    return nil
+end
+
+local function getMyTeam() return getTeam(LocalPlayer) end
+
+local function isEnemy(player)
+    if player == LocalPlayer then return false end
+    local mt = getMyTeam()
+    local tt = getTeam(player)
+    if mt and tt then return mt ~= tt end
+    if LocalPlayer.Team and player.Team then return LocalPlayer.Team ~= player.Team end
+    return true
+end
+
+-- Reset cache khi character đổi
+local function hookPlayer(p)
+    p.CharacterAdded:Connect(function() clearTeamCache(p) end)
+end
+Players.PlayerAdded:Connect(hookPlayer)
+for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
+Players.PlayerRemoving:Connect(clearTeamCache)
+
+--==================================================
+-- HELPERS
+--==================================================
+local function worldToVP(pos)
+    local vp = Camera.ViewportSize
+    local ok, sp = pcall(function()
+        return Camera:WorldToViewportPoint(pos)
+    end)
+    if not ok then return Vector2.zero, false end
+    return Vector2.new(sp.X, sp.Y), sp.Z > 0
+end
+
+local RAYCAST_PARAMS = RaycastParams.new()
+RAYCAST_PARAMS.FilterType = Enum.RaycastFilterType.Exclude
+
+local visCache = {}  -- [player] = {result, time}
+local VIS_TTL  = 0.1
+
+local function isVisible(player)
+    local cached = visCache[player]
+    if cached and (tick()-cached.time) < VIS_TTL then return cached.v end
+
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return false end
+
+    local exclude = {workspace}
+    if myChar then table.insert(exclude, myChar) end
+    RAYCAST_PARAMS.FilterDescendantsInstances = exclude
+
+    local origin = myRoot.Position
+    local target = root.Position
+    local dir    = target - origin
+
+    local result = workspace:Raycast(origin, dir, RAYCAST_PARAMS)
+    local visible = result == nil or result.Instance:IsDescendantOf(char)
+    visCache[player] = {v = visible, time = tick()}
+    return visible
+end
+
+local function getDist(player)
+    local char   = player.Character
+    local root   = char and char:FindFirstChild("HumanoidRootPart")
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not root or not myRoot then return 9999 end
+    return (root.Position - myRoot.Position).Magnitude
+end
+
+local function getHealth(player)
+    local char = player.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return 0, 100 end
+    return hum.Health, hum.MaxHealth
+end
+
+--==================================================
+-- ESP OBJECTS
+--==================================================
+local espObjects = {}
+
+local function removeESP(player)
+    local obj = espObjects[player]
+    if obj then
+        if obj.billboard and obj.billboard.Parent then obj.billboard:Destroy() end
+        for _, line in ipairs(obj.lines or {}) do
+            if line.Parent then line:Destroy() end
+        end
+        for _, skel in ipairs(obj.skelLines or {}) do
+            if skel.Parent then skel:Destroy() end
+        end
+        if obj.fovCircle and obj.fovCircle.Parent then obj.fovCircle:Destroy() end
+    end
+    espObjects[player] = nil
+end
+
+local function addESP(player)
+    removeESP(player)
+    local char = player.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local enemy  = isEnemy(player)
+    local baseCol = enemy and CFG.ESP_ENEMY_COLOR or CFG.ESP_ALLY_COLOR
+
+    local gui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not gui then return end
+
+    -- BillboardGui chứa tên + máu + dist
+    local bbg = Instance.new("BillboardGui")
+    bbg.Name           = "DOW_ESP_BB_" .. player.Name
+    bbg.Adornee        = root
+    bbg.Size           = UDim2.fromOffset(180, 70)
+    bbg.StudsOffset    = Vector3.new(0, 3.2, 0)
+    bbg.AlwaysOnTop    = true
+    bbg.ResetOnSpawn   = false
+    bbg.Parent         = gui
+
+    -- Tên
+    local nameLbl = Instance.new("TextLabel", bbg)
+    nameLbl.Name              = "NameLbl"
+    nameLbl.Size              = UDim2.new(1, 0, 0, 22)
+    nameLbl.Position          = UDim2.fromOffset(0, 0)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Text              = player.DisplayName ~= "" and player.DisplayName or player.Name
+    nameLbl.TextColor3        = baseCol
+    nameLbl.TextSize          = 13
+    nameLbl.Font              = Enum.Font.GothamBold
+    nameLbl.TextStrokeTransparency = 0.4
+    nameLbl.TextXAlignment    = Enum.TextXAlignment.Center
+
+    -- Thanh máu
+    local hpBg = Instance.new("Frame", bbg)
+    hpBg.Name             = "HPBg"
+    hpBg.Size             = UDim2.new(1, 0, 0, 7)
+    hpBg.Position         = UDim2.fromOffset(0, 24)
+    hpBg.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    hpBg.BorderSizePixel  = 0
+    Instance.new("UICorner", hpBg).CornerRadius = UDim.new(0, 3)
+
+    local hpBar = Instance.new("Frame", hpBg)
+    hpBar.Name             = "HPBar"
+    hpBar.Size             = UDim2.fromScale(1, 1)
+    hpBar.BackgroundColor3 = Color3.fromRGB(50, 220, 80)
+    hpBar.BorderSizePixel  = 0
+    Instance.new("UICorner", hpBar).CornerRadius = UDim.new(0, 3)
+
+    -- Khoảng cách
+    local distLbl = Instance.new("TextLabel", bbg)
+    distLbl.Name              = "DistLbl"
+    distLbl.Size              = UDim2.new(1, 0, 0, 16)
+    distLbl.Position          = UDim2.fromOffset(0, 34)
+    distLbl.BackgroundTransparency = 1
+    distLbl.Text              = "0 m"
+    distLbl.TextColor3        = Color3.fromRGB(210, 210, 210)
+    distLbl.TextSize          = 11
+    distLbl.Font              = Enum.Font.Gotham
+    distLbl.TextStrokeTransparency = 0.5
+    distLbl.TextXAlignment    = Enum.TextXAlignment.Center
+
+    -- Trạng thái tường
+    local wallLbl = Instance.new("TextLabel", bbg)
+    wallLbl.Name              = "WallLbl"
+    wallLbl.Size              = UDim2.new(1, 0, 0, 14)
+    wallLbl.Position          = UDim2.fromOffset(0, 52)
+    wallLbl.BackgroundTransparency = 1
+    wallLbl.Text              = ""
+    wallLbl.TextColor3        = Color3.fromRGB(180, 180, 180)
+    wallLbl.TextSize          = 10
+    wallLbl.Font              = Enum.Font.Gotham
+    wallLbl.TextStrokeTransparency = 0.5
+    wallLbl.TextXAlignment    = Enum.TextXAlignment.Center
+
+    -- Screen-space line (kẻ xuống chân)
+    -- Dùng Frame trên ScreenGui thay vì Drawing (tương thích mọi device)
+    local screenGui = LocalPlayer:FindFirstChild("PlayerGui"):FindFirstChild("DOW_ESP_Screen")
+    if not screenGui then
+        screenGui = Instance.new("ScreenGui")
+        screenGui.Name           = "DOW_ESP_Screen"
+        screenGui.ResetOnSpawn   = false
+        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        screenGui.IgnoreGuiInset = true
+        screenGui.Parent         = LocalPlayer:FindFirstChild("PlayerGui")
+    end
+
+    local lineFrame = Instance.new("Frame", screenGui)
+    lineFrame.Name             = "Line_" .. player.Name
+    lineFrame.BackgroundColor3 = baseCol
+    lineFrame.BorderSizePixel  = 0
+    lineFrame.Size             = UDim2.fromOffset(1, 1)
+    lineFrame.AnchorPoint      = Vector2.new(0.5, 0.5)
+    lineFrame.Visible          = false
+
+    espObjects[player] = {
+        billboard = bbg,
+        nameLbl   = nameLbl,
+        hpBar     = hpBar,
+        distLbl   = distLbl,
+        wallLbl   = wallLbl,
+        lineFrame = lineFrame,
+        char      = char,
+        enemy     = enemy,
+        baseCol   = baseCol,
+    }
+end
+
+local function rebuildESP()
+    for _, p in ipairs(Players:GetPlayers()) do removeESP(p) end
+    if not ESP_ON then return end
+    task.wait(0.15)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then addESP(p) end
+    end
+end
+
+--==================================================
+-- GUI - MENU NGANG
+--==================================================
+local GUI_W  = 620    -- menu ngang rộng
+local GUI_H  = 210    -- menu ngang thấp
+local TAB_W  = 90     -- độ rộng tab bên trái
+
+local rootGui = Instance.new("ScreenGui")
+rootGui.Name           = "DOW_Menu"
+rootGui.ResetOnSpawn   = false
+rootGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+rootGui.IgnoreGuiInset = true
+rootGui.Parent         = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Main frame
+local mainF = Instance.new("Frame", rootGui)
+mainF.Name             = "Main"
+mainF.Size             = UDim2.fromOffset(GUI_W, GUI_H)
+mainF.Position         = UDim2.new(0.5, -GUI_W/2, 0.5, -GUI_H/2)
+mainF.BackgroundColor3 = Color3.fromRGB(10, 11, 22)
+mainF.BorderSizePixel  = 0
+mainF.ClipsDescendants = true
+Instance.new("UICorner", mainF).CornerRadius = UDim.new(0, 14)
+
+local mainStroke = Instance.new("UIStroke", mainF)
+mainStroke.Color     = Color3.fromRGB(200, 60, 60)
+mainStroke.Thickness = 1.8
+
+local mainGrad = Instance.new("UIGradient", mainF)
+mainGrad.Color    = ColorSequence.new{
+    ColorSequenceKeypoint.new(0,   Color3.fromRGB(14, 14, 30)),
+    ColorSequenceKeypoint.new(1,   Color3.fromRGB(8,  8,  18)),
+}
+mainGrad.Rotation = 135
+
+-- Header bar (top strip)
+local headerF = Instance.new("Frame", mainF)
+headerF.Size             = UDim2.new(1, 0, 0, 36)
+headerF.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+headerF.BorderSizePixel  = 0
+
+local headerGrad = Instance.new("UIGradient", headerF)
+headerGrad.Color    = ColorSequence.new{
+    ColorSequenceKeypoint.new(0,   Color3.fromRGB(220, 50, 50)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(160, 30, 30)),
+    ColorSequenceKeypoint.new(1,   Color3.fromRGB(120, 20, 20)),
+}
+
+local titleLbl = Instance.new("TextLabel", headerF)
+titleLbl.Size             = UDim2.new(1, -100, 1, 0)
+titleLbl.Position         = UDim2.fromOffset(14, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.Text             = "🐾  Dogs of War  |  ESP + Aimbot  v1.0"
+titleLbl.TextColor3       = Color3.fromRGB(255, 255, 255)
+titleLbl.TextSize         = 13
+titleLbl.Font             = Enum.Font.GothamBold
+titleLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+-- Nút minimize
+local minBtn = Instance.new("TextButton", headerF)
+minBtn.Size             = UDim2.fromOffset(56, 26)
+minBtn.Position         = UDim2.new(1, -64, 0.5, -13)
+minBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 20)
+minBtn.BorderSizePixel  = 0
+minBtn.Text             = "−"
+minBtn.TextColor3       = Color3.fromRGB(255, 180, 180)
+minBtn.TextSize         = 16
+minBtn.Font             = Enum.Font.GothamBold
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+
+-- Drag header
+do
+    local dragging, dragStart, startPos = false, nil, nil
+    headerF.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            dragStart = i.Position
+            startPos  = mainF.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if not dragging then return end
+        if i.UserInputType == Enum.UserInputType.MouseMovement
+        or i.UserInputType == Enum.UserInputType.Touch then
+            local d = i.Position - dragStart
+            mainF.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y
+            )
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+-- Body (bên dưới header)
+local bodyF = Instance.new("Frame", mainF)
+bodyF.Size             = UDim2.new(1, 0, 1, -36)
+bodyF.Position         = UDim2.fromOffset(0, 36)
+bodyF.BackgroundTransparency = 1
+
+-- TAB sidebar (bên trái)
+local tabBar = Instance.new("Frame", bodyF)
+tabBar.Size             = UDim2.fromOffset(TAB_W, GUI_H - 36)
+tabBar.BackgroundColor3 = Color3.fromRGB(14, 14, 30)
+tabBar.BorderSizePixel  = 0
+
+local tabBarLine = Instance.new("Frame", tabBar)
+tabBarLine.Size             = UDim2.fromOffset(1, GUI_H - 36)
+tabBarLine.Position         = UDim2.new(1, -1, 0, 0)
+tabBarLine.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+tabBarLine.BackgroundTransparency = 0.6
+
+-- Content panel (bên phải tab)
+local contentF = Instance.new("Frame", bodyF)
+contentF.Size             = UDim2.new(1, -TAB_W, 1, 0)
+contentF.Position         = UDim2.fromOffset(TAB_W, 0)
+contentF.BackgroundTransparency = 1
+contentF.ClipsDescendants = true
+
+-- Minimize logic
+local collapsed = false
+local function setCollapsed(v)
+    collapsed = v
+    bodyF.Visible = not v
+    mainF.Size    = v and UDim2.fromOffset(GUI_W, 36) or UDim2.fromOffset(GUI_W, GUI_H)
+    minBtn.Text   = v and "+" or "−"
+end
+minBtn.Activated:Connect(function() setCollapsed(not collapsed) end)
+
+--==================================================
+-- TAB SYSTEM
+--==================================================
+local TABS = {"ESP", "AIMBOT", "INFO"}
+local tabBtns   = {}
+local tabPanels = {}
+local activeTab = nil
+
+local TAB_COLORS = {
+    ESP    = Color3.fromRGB(255, 65, 65),
+    AIMBOT = Color3.fromRGB(255, 140, 30),
+    INFO   = Color3.fromRGB(100, 180, 255),
+}
+
+local function switchTab(name)
+    activeTab = name
+    for _, n in ipairs(TABS) do
+        local btn = tabBtns[n]
+        local pan = tabPanels[n]
+        if n == name then
+            btn.BackgroundColor3 = TAB_COLORS[n]
+            btn.TextColor3       = Color3.fromRGB(255, 255, 255)
+            pan.Visible          = true
+        else
+            btn.BackgroundColor3 = Color3.fromRGB(20, 20, 38)
+            btn.TextColor3       = Color3.fromRGB(140, 140, 160)
+            pan.Visible          = false
+        end
+    end
+end
+
+local TAB_ICONS = {ESP = "🔍", AIMBOT = "🎯", INFO = "ℹ️"}
+
+for i, name in ipairs(TABS) do
+    local btn = Instance.new("TextButton", tabBar)
+    btn.Size             = UDim2.fromOffset(TAB_W, 46)
+    btn.Position         = UDim2.fromOffset(0, (i-1) * 46)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 38)
+    btn.BorderSizePixel  = 0
+    btn.Text             = TAB_ICONS[name] .. "\n" .. name
+    btn.TextColor3       = Color3.fromRGB(140, 140, 160)
+    btn.TextSize         = 11
+    btn.Font             = Enum.Font.GothamBold
+    btn.AutoButtonColor  = false
+    tabBtns[name] = btn
+
+    local pan = Instance.new("Frame", contentF)
+    pan.Size             = UDim2.fromScale(1, 1)
+    pan.BackgroundTransparency = 1
+    pan.Visible          = false
+    pan.ClipsDescendants = true
+    tabPanels[name] = pan
+
+    btn.Activated:Connect(function() switchTab(name) end)
+end
+
+--==================================================
+-- UI HELPER FUNCTIONS
+--==================================================
+
+-- Tạo toggle switch
+local function makeToggle(parent, label, xPos, yPos, w, getState, setState, onLabel, offLabel)
+    onLabel  = onLabel  or "BẬT"
+    offLabel = offLabel or "TẮT"
+
+    local row = Instance.new("Frame", parent)
+    row.Size             = UDim2.fromOffset(w, 30)
+    row.Position         = UDim2.fromOffset(xPos, yPos)
+    row.BackgroundTransparency = 1
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size             = UDim2.new(1, -68, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = label
+    lbl.TextColor3       = Color3.fromRGB(210, 210, 220)
+    lbl.TextSize         = 12
+    lbl.Font             = Enum.Font.GothamBold
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+    local track = Instance.new("Frame", row)
+    track.Size             = UDim2.fromOffset(58, 26)
+    track.Position         = UDim2.new(1, -60, 0.5, -13)
+    track.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    track.BorderSizePixel  = 0
+    Instance.new("UICorner", track).CornerRadius = UDim.new(0, 13)
+
+    local knob = Instance.new("TextLabel", track)
+    knob.Size             = UDim2.fromOffset(30, 22)
+    knob.Position         = UDim2.fromOffset(2, 2)
+    knob.BackgroundColor3 = Color3.fromRGB(120, 120, 140)
+    knob.BorderSizePixel  = 0
+    knob.Text             = offLabel
+    knob.TextColor3       = Color3.fromRGB(255, 255, 255)
+    knob.TextSize         = 8
+    knob.Font             = Enum.Font.GothamBold
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(0, 11)
+
+    local function refresh()
+        local on = getState()
+        if on then
+            track.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            knob.Position          = UDim2.fromOffset(26, 2)
+            knob.BackgroundColor3  = Color3.fromRGB(255, 255, 255)
+            knob.Text              = onLabel
+            knob.TextColor3        = Color3.fromRGB(180, 30, 30)
+        else
+            track.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+            knob.Position          = UDim2.fromOffset(2, 2)
+            knob.BackgroundColor3  = Color3.fromRGB(120, 120, 140)
+            knob.Text              = offLabel
+            knob.TextColor3        = Color3.fromRGB(255, 255, 255)
+        end
+    end
+
+    local btn = Instance.new("TextButton", row)
+    btn.Size             = UDim2.fromScale(1, 1)
+    btn.BackgroundTransparency = 1
+    btn.Text             = ""
+    btn.Activated:Connect(function()
+        setState(not getState())
+        refresh()
+    end)
+
+    refresh()
+    return btn, refresh
+end
+
+-- Checkbox
+local function makeCheck(parent, label, key, xPos, yPos, w, optTable)
+    local row = Instance.new("Frame", parent)
+    row.Size             = UDim2.fromOffset(w, 26)
+    row.Position         = UDim2.fromOffset(xPos, yPos)
+    row.BackgroundTransparency = 1
+
+    local box = Instance.new("Frame", row)
+    box.Size             = UDim2.fromOffset(16, 16)
+    box.Position         = UDim2.fromOffset(0, 5)
+    box.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    box.BorderSizePixel  = 0
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+    local boxStroke = Instance.new("UIStroke", box)
+    boxStroke.Color = Color3.fromRGB(120, 120, 160)
+
+    local check = Instance.new("TextLabel", box)
+    check.Size             = UDim2.fromScale(1, 1)
+    check.BackgroundTransparency = 1
+    check.Text             = ""
+    check.TextColor3       = Color3.fromRGB(255, 80, 80)
+    check.TextSize         = 13
+    check.Font             = Enum.Font.GothamBold
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size             = UDim2.new(1, -22, 1, 0)
+    lbl.Position         = UDim2.fromOffset(22, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = label
+    lbl.TextColor3       = Color3.fromRGB(190, 190, 205)
+    lbl.TextSize         = 12
+    lbl.Font             = Enum.Font.Gotham
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+    local function refresh()
+        if optTable[key] then
+            check.Text             = "✓"
+            box.BackgroundColor3   = Color3.fromRGB(200, 50, 50)
+            boxStroke.Color        = Color3.fromRGB(255, 80, 80)
+        else
+            check.Text             = ""
+            box.BackgroundColor3   = Color3.fromRGB(40, 40, 60)
+            boxStroke.Color        = Color3.fromRGB(100, 100, 140)
+        end
+    end
+
+    local btn = Instance.new("TextButton", row)
+    btn.Size             = UDim2.fromScale(1, 1)
+    btn.BackgroundTransparency = 1
+    btn.Text             = ""
+    btn.Activated:Connect(function()
+        optTable[key] = not optTable[key]
+        refresh()
+    end)
+
+    refresh()
+    return btn, refresh
+end
+
+-- Section header
+local function makeSection(parent, label, xPos, yPos, w)
+    local bg = Instance.new("Frame", parent)
+    bg.Size             = UDim2.fromOffset(w, 18)
+    bg.Position         = UDim2.fromOffset(xPos, yPos)
+    bg.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+    bg.BackgroundTransparency = 0.75
+    bg.BorderSizePixel  = 0
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 5)
+
+    local lbl = Instance.new("TextLabel", bg)
+    lbl.Size             = UDim2.fromScale(1, 1)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = label
+    lbl.TextColor3       = Color3.fromRGB(255, 150, 150)
+    lbl.TextSize         = 10
+    lbl.Font             = Enum.Font.GothamBold
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+    lbl.Position         = UDim2.fromOffset(6, 0)
+end
+
+-- Divider line
+local function makeDivider(parent, xPos, yPos, w)
+    local f = Instance.new("Frame", parent)
+    f.Size             = UDim2.fromOffset(w, 1)
+    f.Position         = UDim2.fromOffset(xPos, yPos)
+    f.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+    f.BackgroundTransparency = 0.7
+    f.BorderSizePixel  = 0
+end
+
+--==================================================
+-- TAB: ESP
+--==================================================
+local espPanel = tabPanels["ESP"]
+
+-- Layout: 3 cột trong panel ngang
+local COL = {14, 180, 346}
+local PW  = GUI_W - TAB_W - 14  -- panel width ~516
+local CW  = math.floor((PW - 30) / 3)  -- column width
+
+-- Toggle ESP chính
+local espToggleRef, refreshESPToggle = makeToggle(
+    espPanel, "ESP TẤT CẢ", COL[1], 8, CW*2,
+    function() return ESP_ON end,
+    function(v)
+        ESP_ON = v
+        rebuildESP()
+    end
+)
+
+makeSection(espPanel, "▸ HIỂN THỊ",     COL[1], 46, CW - 6)
+makeSection(espPanel, "▸ KẾT QUẢ",       COL[2], 46, CW - 6)
+makeSection(espPanel, "▸ TÙYCHỈNH",      COL[3], 46, CW - 6)
+
+-- Cột 1: Hiển thị options
+makeCheck(espPanel, "Tên nhân vật",   "name",    COL[1], 68,  CW, OPT)
+makeCheck(espPanel, "Thanh máu",      "health",  COL[1], 96,  CW, OPT)
+makeCheck(espPanel, "Khoảng cách",    "dist",    COL[1], 124, CW, OPT)
+makeCheck(espPanel, "Kẻ chỉ (Lines)","lines",   COL[1], 152, CW, OPT)
+
+-- Cột 2
+makeCheck(espPanel, "Xương (Skeleton)","skeleton", COL[2], 68,  CW, OPT)
+makeCheck(espPanel, "🧱 Check Tường", "wallchk",  COL[2], 96,  CW, OPT)
+makeCheck(espPanel, "Tên vũ khí",     "weapon",   COL[2], 124, CW, OPT)
+
+-- Cột 3: max dist (info chỉ đọc)
+local maxDistLbl = Instance.new("TextLabel", espPanel)
+maxDistLbl.Size             = UDim2.fromOffset(CW - 6, 22)
+maxDistLbl.Position         = UDim2.fromOffset(COL[3], 68)
+maxDistLbl.BackgroundTransparency = 1
+maxDistLbl.Text             = string.format("Tầm xa: %d m", CFG.ESP_MAX_DIST)
+maxDistLbl.TextColor3       = Color3.fromRGB(160, 160, 180)
+maxDistLbl.TextSize         = 11
+maxDistLbl.Font             = Enum.Font.Gotham
+maxDistLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+local visCountLbl = Instance.new("TextLabel", espPanel)
+visCountLbl.Size             = UDim2.fromOffset(CW - 6, 22)
+visCountLbl.Position         = UDim2.fromOffset(COL[3], 96)
+visCountLbl.BackgroundTransparency = 1
+visCountLbl.Text             = "👁  Thấy: 0 người"
+visCountLbl.TextColor3       = Color3.fromRGB(100, 220, 255)
+visCountLbl.TextSize         = 11
+visCountLbl.Font             = Enum.Font.GothamBold
+visCountLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+local enemyCountLbl = Instance.new("TextLabel", espPanel)
+enemyCountLbl.Size             = UDim2.fromOffset(CW - 6, 22)
+enemyCountLbl.Position         = UDim2.fromOffset(COL[3], 124)
+enemyCountLbl.BackgroundTransparency = 1
+enemyCountLbl.Text             = "⚔️  Địch: 0 người"
+enemyCountLbl.TextColor3       = Color3.fromRGB(255, 100, 100)
+enemyCountLbl.TextSize         = 11
+enemyCountLbl.Font             = Enum.Font.GothamBold
+enemyCountLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+--==================================================
+-- TAB: AIMBOT
+--==================================================
+local aimPanel = tabPanels["AIMBOT"]
+
+-- Toggle Aimbot chính
+local aimToggleRef, refreshAIMToggle = makeToggle(
+    aimPanel, "AIMBOT", COL[1], 8, CW*2,
+    function() return AIM_ON end,
+    function(v)
+        AIM_ON = v
+        if not v then
+            AOPT.manual   = false
+            AOPT.always   = false
+            AOPT.fireOnly = false
+        end
+    end
+)
+
+makeSection(aimPanel, "▸ CHẾ ĐỘ AIM",  COL[1], 46, CW - 6)
+makeSection(aimPanel, "▸ ĐIỀU KIỆN",    COL[2], 46, CW - 6)
+makeSection(aimPanel, "▸ FOV",           COL[3], 46, CW - 6)
+
+-- Cột 1: chế độ
+makeCheck(aimPanel, "✋ Aimbot thủ công", "manual",   COL[1], 68,  CW, AOPT)
+makeCheck(aimPanel, "♾️ Luôn aimbot",    "always",   COL[1], 96,  CW, AOPT)
+makeCheck(aimPanel, "🔫 Khi đang bắn",  "fireOnly", COL[1], 124, CW, AOPT)
+
+-- Cột 2: điều kiện
+makeCheck(aimPanel, "🧱 Check tường aim","wallchk", COL[2], 68, CW, AOPT)
+
+local aimTargetLbl = Instance.new("TextLabel", aimPanel)
+aimTargetLbl.Size             = UDim2.fromOffset(CW-6, 22)
+aimTargetLbl.Position         = UDim2.fromOffset(COL[2], 96)
+aimTargetLbl.BackgroundTransparency = 1
+aimTargetLbl.Text             = "🎯 Mục tiêu: Đầu"
+aimTargetLbl.TextColor3       = Color3.fromRGB(160, 160, 180)
+aimTargetLbl.TextSize         = 11
+aimTargetLbl.Font             = Enum.Font.Gotham
+aimTargetLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+local aimSwitchBtn = Instance.new("TextButton", aimPanel)
+aimSwitchBtn.Size             = UDim2.fromOffset(CW-6, 22)
+aimSwitchBtn.Position         = UDim2.fromOffset(COL[2], 122)
+aimSwitchBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 20)
+aimSwitchBtn.BorderSizePixel  = 0
+aimSwitchBtn.Text             = "Đổi: Đầu ↔ Thân"
+aimSwitchBtn.TextColor3       = Color3.fromRGB(255, 160, 160)
+aimSwitchBtn.TextSize         = 10
+aimSwitchBtn.Font             = Enum.Font.GothamBold
+Instance.new("UICorner", aimSwitchBtn).CornerRadius = UDim.new(0, 5)
+aimSwitchBtn.Activated:Connect(function()
+    if CFG.AIM_TARGET == "Head" then
+        CFG.AIM_TARGET = "HumanoidRootPart"
+        aimTargetLbl.Text = "🎯 Mục tiêu: Thân"
+    else
+        CFG.AIM_TARGET = "Head"
+        aimTargetLbl.Text = "🎯 Mục tiêu: Đầu"
+    end
+end)
+
+-- Cột 3: FOV controls
+makeCheck(aimPanel, "Hiện vòng FOV", "fov", COL[3], 68, CW, AOPT)
+
+local fovValLbl = Instance.new("TextLabel", aimPanel)
+fovValLbl.Size             = UDim2.fromOffset(CW-6, 18)
+fovValLbl.Position         = UDim2.fromOffset(COL[3], 96)
+fovValLbl.BackgroundTransparency = 1
+fovValLbl.Text             = string.format("FOV: %d px", getFOVpx())
+fovValLbl.TextColor3       = Color3.fromRGB(180, 180, 200)
+fovValLbl.TextSize         = 11
+fovValLbl.Font             = Enum.Font.GothamBold
+fovValLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+-- FOV slider track
+local fovTrack = Instance.new("Frame", aimPanel)
+fovTrack.Size             = UDim2.fromOffset(CW-6, 8)
+fovTrack.Position         = UDim2.fromOffset(COL[3], 118)
+fovTrack.BackgroundColor3 = Color3.fromRGB(40, 40, 65)
+fovTrack.BorderSizePixel  = 0
+Instance.new("UICorner", fovTrack).CornerRadius = UDim.new(0, 4)
+
+local fovFill = Instance.new("Frame", fovTrack)
+fovFill.Size             = UDim2.fromScale(CFG.AIM_FOV_PCT/100, 1)
+fovFill.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+fovFill.BorderSizePixel  = 0
+Instance.new("UICorner", fovFill).CornerRadius = UDim.new(0, 4)
+
+local fovKnob = Instance.new("Frame", fovTrack)
+fovKnob.Size             = UDim2.fromOffset(14, 14)
+fovKnob.AnchorPoint      = Vector2.new(0.5, 0.5)
+fovKnob.Position         = UDim2.new(CFG.AIM_FOV_PCT/100, 0, 0.5, 0)
+fovKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+fovKnob.BorderSizePixel  = 0
+Instance.new("UICorner", fovKnob).CornerRadius = UDim.new(0, 7)
+
+-- Slider drag
+do
+    local sliding = false
+    local function setFOV(px)
+        local pct = math.clamp(px / fovTrack.AbsoluteSize.X, 0, 1)
+        CFG.AIM_FOV_PCT = math.floor(pct * 100)
+        fovFill.Size    = UDim2.fromScale(pct, 1)
+        fovKnob.Position = UDim2.new(pct, 0, 0.5, 0)
+        fovValLbl.Text  = string.format("FOV: %d px", getFOVpx())
+    end
+    local sliderBtn = Instance.new("TextButton", fovTrack)
+    sliderBtn.Size             = UDim2.fromScale(1, 1)
+    sliderBtn.BackgroundTransparency = 1
+    sliderBtn.Text             = ""
+    sliderBtn.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            sliding = true
+            setFOV(i.Position.X - fovTrack.AbsolutePosition.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if not sliding then return end
+        if i.UserInputType == Enum.UserInputType.MouseMovement
+        or i.UserInputType == Enum.UserInputType.Touch then
+            setFOV(i.Position.X - fovTrack.AbsolutePosition.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            sliding = false
+        end
+    end)
+end
+
+-- Smooth slider
+local smTrack = Instance.new("Frame", aimPanel)
+smTrack.Size             = UDim2.fromOffset(CW-6, 8)
+smTrack.Position         = UDim2.fromOffset(COL[3], 148)
+smTrack.BackgroundColor3 = Color3.fromRGB(40, 40, 65)
+smTrack.BorderSizePixel  = 0
+Instance.new("UICorner", smTrack).CornerRadius = UDim.new(0, 4)
+
+local smFill = Instance.new("Frame", smTrack)
+smFill.Size             = UDim2.fromScale(CFG.AIM_SMOOTH / 0.3, 1)
+smFill.BackgroundColor3 = Color3.fromRGB(255, 140, 40)
+smFill.BorderSizePixel  = 0
+Instance.new("UICorner", smFill).CornerRadius = UDim.new(0, 4)
+
+local smKnob = Instance.new("Frame", smTrack)
+smKnob.Size             = UDim2.fromOffset(14, 14)
+smKnob.AnchorPoint      = Vector2.new(0.5, 0.5)
+smKnob.Position         = UDim2.new(CFG.AIM_SMOOTH / 0.3, 0, 0.5, 0)
+smKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+smKnob.BorderSizePixel  = 0
+Instance.new("UICorner", smKnob).CornerRadius = UDim.new(0, 7)
+
+local smLbl = Instance.new("TextLabel", aimPanel)
+smLbl.Size             = UDim2.fromOffset(CW-6, 18)
+smLbl.Position         = UDim2.fromOffset(COL[3], 130)
+smLbl.BackgroundTransparency = 1
+smLbl.Text             = string.format("Smooth: %.2f", CFG.AIM_SMOOTH)
+smLbl.TextColor3       = Color3.fromRGB(180, 180, 200)
+smLbl.TextSize         = 11
+smLbl.Font             = Enum.Font.GothamBold
+smLbl.TextXAlignment   = Enum.TextXAlignment.Left
+
+do
+    local sliding = false
+    local function setSmooth(px)
+        local pct = math.clamp(px / smTrack.AbsoluteSize.X, 0, 1)
+        CFG.AIM_SMOOTH = pct * 0.3
+        smFill.Size    = UDim2.fromScale(pct, 1)
+        smKnob.Position = UDim2.new(pct, 0, 0.5, 0)
+        smLbl.Text     = string.format("Smooth: %.2f", CFG.AIM_SMOOTH)
+    end
+    local smBtn = Instance.new("TextButton", smTrack)
+    smBtn.Size             = UDim2.fromScale(1, 1)
+    smBtn.BackgroundTransparency = 1
+    smBtn.Text             = ""
+    smBtn.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            sliding = true
+            setSmooth(i.Position.X - smTrack.AbsolutePosition.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if not sliding then return end
+        if i.UserInputType == Enum.UserInputType.MouseMovement
+        or i.UserInputType == Enum.UserInputType.Touch then
+            setSmooth(i.Position.X - smTrack.AbsolutePosition.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            sliding = false
+        end
+    end)
+end
+
+--==================================================
+-- TAB: INFO
+--==================================================
+local infoPanel = tabPanels["INFO"]
+
+local infoLbls = {}
+local INFO_LINES = {
+    "🐾 Dogs of War ESP + Aimbot v1.0",
+    "PlaceId: 70816182080869",
+    "",
+    "📌 Cách dùng:",
+    "  • Tab ESP: bật toggle để thấy địch",
+    "  • Tab AIMBOT: chọn chế độ aim",
+    "  • Check tường: chỉ aim khi thấy địch",
+    "  • Kéo thanh FOV để điều chỉnh tầm",
+    "  • Kéo header để di chuyển menu",
+    "",
+    "🔴 Địch   🔵 Đồng đội",
+}
+
+for i, line in ipairs(INFO_LINES) do
+    local lbl = Instance.new("TextLabel", infoPanel)
+    lbl.Size             = UDim2.fromOffset(PW - 14, 16)
+    lbl.Position         = UDim2.fromOffset(10, (i-1)*15 + 8)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = line
+    lbl.TextColor3       = (i == 1) and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(170, 170, 185)
+    lbl.TextSize         = (i == 1) and 12 or 11
+    lbl.Font             = (i == 1) and Enum.Font.GothamBold or Enum.Font.Gotham
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+    table.insert(infoLbls, lbl)
+end
+
+--==================================================
+-- FOV CIRCLE (ScreenGui overlay)
+--==================================================
+local fovGui = Instance.new("ScreenGui")
+fovGui.Name           = "DOW_FOV"
+fovGui.ResetOnSpawn   = false
+fovGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+fovGui.IgnoreGuiInset = true
+fovGui.Parent         = LocalPlayer:WaitForChild("PlayerGui")
+
+local fovCircle = Instance.new("Frame", fovGui)
+fovCircle.AnchorPoint      = Vector2.new(0.5, 0.5)
+fovCircle.BackgroundTransparency = 1
+fovCircle.BorderSizePixel  = 0
+
+local fovUICorner = Instance.new("UICorner", fovCircle)
+fovUICorner.CornerRadius = UDim.new(0.5, 0)
+
+local fovStroke = Instance.new("UIStroke", fovCircle)
+fovStroke.Thickness = 1.5
+fovStroke.Color     = CFG.AIM_FOV_COLOR
+
+fovCircle.Visible = false
+
+--==================================================
+-- PLAYER EVENTS
+--==================================================
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(1)
+        if ESP_ON then addESP(p) end
+    end)
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    removeESP(p)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    rebuildESP()
+end)
+
+--==================================================
+-- DETECT BẮN SÚNG
+--==================================================
+UserInputService.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then
+        isFiring = true
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then
+        isFiring = false
+    end
+end)
+
+--==================================================
+-- MAIN LOOP
+--==================================================
+local lastCountTick = 0
+local espVisible    = 0
+
+RunService.Heartbeat:Connect(function()
+    -- Cập nhật đếm địch mỗi 1 giây
+    local now = tick()
+    if now - lastCountTick >= 1.0 then
+        lastCountTick = now
+        local vis, enemy = 0, 0
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                if isEnemy(p) then enemy = enemy + 1 end
+            end
+        end
+        espVisible = vis
+        enemyCountLbl.Text = string.format("⚔️  Địch: %d người", enemy)
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    local vp     = Camera.ViewportSize
+    local center = Vector2.new(vp.X/2, vp.Y/2)
+    local visCount = 0
+
+    -- ESP loop
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+
+        local obj = espObjects[player]
+
+        -- Char thay đổi → rebuild
+        if obj and player.Character and obj.char ~= player.Character then
+            removeESP(player)
+            obj = nil
+        end
+
+        if not ESP_ON then
+            if obj then
+                if obj.billboard then obj.billboard.Enabled = false end
+                if obj.lineFrame  then obj.lineFrame.Visible  = false end
+            end
+            continue
+        end
+
+        local char = player.Character
+        if not char then continue end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then continue end
+
+        local dist = getDist(player)
+        if dist > CFG.ESP_MAX_DIST then
+            if obj then
+                if obj.billboard then obj.billboard.Enabled = false end
+                if obj.lineFrame  then obj.lineFrame.Visible  = false end
+            end
+            continue
+        end
+
+        -- Add ESP nếu chưa có
+        if not obj then
+            addESP(player)
+            obj = espObjects[player]
+            if not obj then continue end
+        end
+
+        -- Màu theo team
+        local enemy    = isEnemy(player)
+        local baseCol  = enemy and CFG.ESP_ENEMY_COLOR or CFG.ESP_ALLY_COLOR
+        local vis      = OPT.wallchk and isVisible(player) or true
+        local espCol   = OPT.wallchk and (vis and CFG.ESP_VISIBLE_COLOR or baseCol) or baseCol
+
+        if vis then visCount = visCount + 1 end
+
+        -- Update billboard
+        if obj.billboard then
+            obj.billboard.Enabled = true
+            -- Tên
+            if obj.nameLbl then
+                obj.nameLbl.Visible    = OPT.name
+                obj.nameLbl.TextColor3 = espCol
+                local teamTag = (getTeam(player) == "Star") and " [★]" or (getTeam(player) == "Iron") and " [⚙]" or " [?]"
+                obj.nameLbl.Text = (player.DisplayName ~= "" and player.DisplayName or player.Name) .. teamTag
+            end
+
+            -- Máu
+            if obj.hpBar then
+                obj.hpBar.Parent.Visible = OPT.health
+                local hp, maxhp = getHealth(player)
+                local pct = maxhp > 0 and hp/maxhp or 0
+                obj.hpBar.Size = UDim2.fromScale(pct, 1)
+                obj.hpBar.BackgroundColor3 = Color3.fromRGB(
+                    math.floor((1-pct)*255),
+                    math.floor(pct*210),
+                    40
+                )
+            end
+
+            -- Khoảng cách
+            if obj.distLbl then
+                obj.distLbl.Visible = OPT.dist
+                obj.distLbl.Text    = string.format("📏 %.0f m", dist)
+            end
+
+            -- Tường status
+            if obj.wallLbl then
+                obj.wallLbl.Visible = OPT.wallchk
+                if OPT.wallchk then
+                    if vis then
+                        obj.wallLbl.Text       = "✅ Thấy thẳng"
+                        obj.wallLbl.TextColor3 = Color3.fromRGB(60, 230, 100)
+                    else
+                        obj.wallLbl.Text       = "🧱 Qua tường"
+                        obj.wallLbl.TextColor3 = Color3.fromRGB(255, 80, 80)
+                    end
+                end
+            end
+        end
+
+        -- Line từ giữa màn hình đến chân nhân vật
+        if obj.lineFrame then
+            if OPT.lines then
+                local feet = root.Position - Vector3.new(0, 3, 0)
+                local sp, onScreen = worldToVP(feet)
+                if onScreen then
+                    local dx   = sp.X - center.X
+                    local dy   = sp.Y - center.Y
+                    local len  = math.sqrt(dx*dx + dy*dy)
+                    local ang  = math.atan2(dy, dx)
+                    obj.lineFrame.Visible         = true
+                    obj.lineFrame.Size            = UDim2.fromOffset(math.max(1, len), 1)
+                    obj.lineFrame.Position        = UDim2.fromOffset(center.X, center.Y)
+                    obj.lineFrame.Rotation        = math.deg(ang)
+                    obj.lineFrame.BackgroundColor3 = espCol
+                else
+                    obj.lineFrame.Visible = false
+                end
+            else
+                obj.lineFrame.Visible = false
+            end
+        end
+    end
+
+    -- Cập nhật label thấy
+    visCountLbl.Text = string.format("👁  Thấy: %d người", visCount)
+
+    -- FOV Circle
+    do
+        local fovPx = getFOVpx()
+        if AIM_ON and AOPT.fov then
+            fovCircle.Visible  = true
+            fovCircle.Size     = UDim2.fromOffset(fovPx*2, fovPx*2)
+            fovCircle.Position = UDim2.fromOffset(center.X, center.Y)
+            fovStroke.Color    = CFG.AIM_FOV_COLOR
+        else
+            fovCircle.Visible = false
+        end
+    end
+
+    -- AIMBOT
+    if not AIM_ON then return end
+
+    local shouldAim = false
+    if AOPT.always   then shouldAim = true
+    elseif AOPT.fireOnly then shouldAim = isFiring
+    elseif AOPT.manual   then shouldAim = true
+    end
+    if not shouldAim then return end
+
+    local fovPx    = getFOVpx()
+    local bestPart = nil
+    local bestDist = fovPx
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if not isEnemy(player) then continue end
+        local char = player.Character
+        if not char then continue end
+        local part = char:FindFirstChild(CFG.AIM_TARGET)
+                  or char:FindFirstChild("HumanoidRootPart")
+        if not part then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+
+        -- Wall check for aimbot
+        if AOPT.wallchk and not isVisible(player) then continue end
+
+        local sp, onScreen = worldToVP(part.Position)
+        if not onScreen then continue end
+        local d = (sp - center).Magnitude
+        if d < bestDist then
+            bestDist = d
+            bestPart = part
+        end
+    end
+
+    if bestPart then
+        local cur  = Camera.CFrame
+        local tgt  = CFrame.lookAt(cur.Position, bestPart.Position)
+        Camera.CFrame = cur:Lerp(tgt, CFG.AIM_SMOOTH)
+    end
+end)
+
+--==================================================
+-- INIT
+--==================================================
+switchTab("ESP")
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(1)
+        if ESP_ON then addESP(p) end
+    end)
+end)
+
+print("[DoW ESP v1.0] Loaded! PlaceId: 70816182080869")
+print("Menu ngang | ESP thông minh | Aimbot 3 chế độ | Check tường | FOV slider")
